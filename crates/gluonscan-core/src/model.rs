@@ -200,13 +200,69 @@ pub struct WalletBalance {
     pub amount: Amount,
 }
 
+/// A supplied (deposited) lending asset with its collateral risk parameters and supply rate.
+///
+/// The risk fields let a consumer recompute the health factor offline (capture-once, reprice-later)
+/// and render risk without a second round trip. Fractions are `0..1` (e.g. `0.83` = 83%).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuppliedAsset {
+    /// The supplied amount.
+    pub amount: Amount,
+    /// Liquidation threshold as a fraction, when known.
+    pub liquidation_threshold: Option<Decimal>,
+    /// Maximum loan-to-value as a fraction, when known.
+    pub max_ltv: Option<Decimal>,
+    /// Whether this asset is currently enabled as collateral.
+    pub is_collateral: bool,
+    /// Whether this asset is eligible to be collateral.
+    pub can_be_collateral: bool,
+    /// Supply APY as a fraction (e.g. `0.031` = 3.1%), when known.
+    pub apy: Option<Decimal>,
+}
+
+impl SuppliedAsset {
+    /// A supplied asset with no risk metadata yet (all optionals absent, not collateral).
+    pub fn new(amount: Amount) -> Self {
+        SuppliedAsset {
+            amount,
+            liquidation_threshold: None,
+            max_ltv: None,
+            is_collateral: false,
+            can_be_collateral: false,
+            apy: None,
+        }
+    }
+}
+
+/// A borrowed lending asset (debt) with its borrow factor and rate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BorrowedAsset {
+    /// The borrowed amount (debt).
+    pub amount: Amount,
+    /// Borrow factor as a fraction (Aave pins `1.0`; Kamino per-reserve), when known.
+    pub borrow_factor: Option<Decimal>,
+    /// Borrow APY as a fraction, when known.
+    pub apy: Option<Decimal>,
+}
+
+impl BorrowedAsset {
+    /// A borrowed asset with no rate/factor metadata yet.
+    pub fn new(amount: Amount) -> Self {
+        BorrowedAsset {
+            amount,
+            borrow_factor: None,
+            apy: None,
+        }
+    }
+}
+
 /// A lending position (supplies and/or borrows) with an optional account health factor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LendingPosition {
-    /// Supplied (deposited) assets.
-    pub supplied: Vec<Amount>,
+    /// Supplied (deposited) assets with per-asset risk parameters.
+    pub supplied: Vec<SuppliedAsset>,
     /// Borrowed assets (debt).
-    pub borrowed: Vec<Amount>,
+    pub borrowed: Vec<BorrowedAsset>,
     /// Account health factor, when the account carries debt.
     pub health_factor: Option<Decimal>,
 }

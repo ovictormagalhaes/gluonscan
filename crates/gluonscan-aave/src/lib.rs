@@ -12,8 +12,9 @@ use std::str::FromStr;
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Currency, Detail, Error, LendingPosition, Money,
-    Position, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
+    Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Currency, Detail, Error,
+    LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
+    Staleness, SuppliedAsset, Token, Wallet,
 };
 use rust_decimal::Decimal;
 
@@ -110,8 +111,8 @@ impl ProtocolAdapter for AaveApi {
             message: "Aave response missing `data`".into(),
         })?;
 
-        let supplied = parse_amounts(data.get("userSupplies"), "balance")?;
-        let borrowed = parse_amounts(data.get("userBorrows"), "debt")?;
+        let supplied = parse_supplied(data.get("userSupplies"))?;
+        let borrowed = parse_borrowed(data.get("userBorrows"))?;
 
         let has_debt = !borrowed.is_empty();
         let health_factor = parse_health_factor(data.get("userMarketState"));
@@ -149,9 +150,11 @@ fn query_body(market: &str, chain_id: u64, user: &str) -> String {
     let query = r#"query($market:String!,$chainId:Int!,$user:String!){
       userSupplies(request:{markets:[{address:$market,chainId:$chainId}],user:$user}){
         currency{symbol address decimals} balance{amount{value} usd}
+        apy{value} isCollateral canBeCollateral
+        reserve{supplyInfo{maxLTV{value} liquidationThreshold{value}}}
       }
       userBorrows(request:{markets:[{address:$market,chainId:$chainId}],user:$user}){
-        currency{symbol address decimals} debt{amount{value} usd}
+        currency{symbol address decimals} debt{amount{value} usd} apy{value}
       }
       userMarketState(request:{market:$market,chainId:$chainId,user:$user}){ healthFactor }
     }"#;
@@ -162,68 +165,108 @@ fn query_body(market: &str, chain_id: u64, user: &str) -> String {
     payload.to_string()
 }
 
-fn parse_amounts(
-    list: Option<&serde_json::Value>,
-    balance_key: &str,
-) -> Result<Vec<Amount>, Error> {
+/// Build the [`Amount`] from an entry's `currency` + the `balance`/`debt` sub-object.
+fn parse_amount_entry(item: &serde_json::Value, balance_key: &str) -> Result<Amount, Error> {
+    let currency = item.get("currency").ok_or_else(|| Error::Integrity {
+        message: "Aave entry missing `currency`".into(),
+    })?;
+    let symbol = currency
+        .get("symbol")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let decimals = currency
+        .get("decimals")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("Aave currency `{symbol}` missing decimals"),
+        })? as u8;
+    let address = currency
+        .get("address")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Address::from_str(s).ok());
+
+    let balance = item.get(balance_key).ok_or_else(|| Error::Integrity {
+        message: format!("Aave entry missing `{balance_key}`"),
+    })?;
+    let amount = balance
+        .get("amount")
+        .and_then(|a| a.get("value"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("Aave `{symbol}` missing amount value"),
+        })?;
+    let amount = Decimal::from_str(amount).map_err(|e| Error::Integrity {
+        message: format!("Aave `{symbol}` amount not a decimal: {e}"),
+    })?;
+
+    // A present-but-null usd is "not priced" (kept as None); we never fabricate a value.
+    let usd = balance
+        .get("usd")
+        .and_then(json_decimal)
+        .map(|amount| Money {
+            amount,
+            currency: Currency::Usd,
+        });
+
+    Ok(Amount::from_decimal(
+        Token {
+            symbol,
+            address,
+            decimals,
+        },
+        amount,
+    )?
+    .with_usd(usd))
+}
+
+/// Read `apy { value }` as a fraction, when present.
+fn parse_apy(item: &serde_json::Value) -> Option<Decimal> {
+    item.pointer("/apy/value").and_then(json_decimal)
+}
+
+fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>, Error> {
     let Some(items) = list.and_then(|v| v.as_array()) else {
         return Ok(Vec::new());
     };
     let mut out = Vec::with_capacity(items.len());
     for item in items {
-        let currency = item.get("currency").ok_or_else(|| Error::Integrity {
-            message: "Aave entry missing `currency`".into(),
-        })?;
-        let symbol = currency
-            .get("symbol")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let decimals = currency
-            .get("decimals")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| Error::Integrity {
-                message: format!("Aave currency `{symbol}` missing decimals"),
-            })? as u8;
-        let address = currency
-            .get("address")
-            .and_then(|v| v.as_str())
-            .and_then(|s| Address::from_str(s).ok());
+        let amount = parse_amount_entry(item, "balance")?;
+        out.push(SuppliedAsset {
+            amount,
+            liquidation_threshold: item
+                .pointer("/reserve/supplyInfo/liquidationThreshold/value")
+                .and_then(json_decimal),
+            max_ltv: item
+                .pointer("/reserve/supplyInfo/maxLTV/value")
+                .and_then(json_decimal),
+            is_collateral: item
+                .get("isCollateral")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            can_be_collateral: item
+                .get("canBeCollateral")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            apy: parse_apy(item),
+        });
+    }
+    Ok(out)
+}
 
-        let balance = item.get(balance_key).ok_or_else(|| Error::Integrity {
-            message: format!("Aave entry missing `{balance_key}`"),
-        })?;
-        let amount = balance
-            .get("amount")
-            .and_then(|a| a.get("value"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| Error::Integrity {
-                message: format!("Aave `{symbol}` missing amount value"),
-            })?;
-        let amount = Decimal::from_str(amount).map_err(|e| Error::Integrity {
-            message: format!("Aave `{symbol}` amount not a decimal: {e}"),
-        })?;
-
-        // A present-but-null usd is "not priced" (kept as None); we never fabricate a value.
-        let usd = balance
-            .get("usd")
-            .and_then(json_decimal)
-            .map(|amount| Money {
-                amount,
-                currency: Currency::Usd,
-            });
-
-        out.push(
-            Amount::from_decimal(
-                Token {
-                    symbol,
-                    address,
-                    decimals,
-                },
-                amount,
-            )?
-            .with_usd(usd),
-        );
+fn parse_borrowed(list: Option<&serde_json::Value>) -> Result<Vec<BorrowedAsset>, Error> {
+    let Some(items) = list.and_then(|v| v.as_array()) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let amount = parse_amount_entry(item, "debt")?;
+        out.push(BorrowedAsset {
+            amount,
+            // Aave V3 pins the borrow factor to 1.0 (no borrow-factor haircut).
+            borrow_factor: Some(Decimal::ONE),
+            apy: parse_apy(item),
+        });
     }
     Ok(out)
 }

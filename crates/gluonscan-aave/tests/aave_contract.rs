@@ -38,9 +38,21 @@ async fn aave_ethereum_reads_from_contract() {
     let Position::Lending(pos) = &reading.positions[0] else {
         panic!("expected a lending position");
     };
-    assert_eq!(pos.supplied[0].token.symbol, "WETH");
-    assert_eq!(pos.supplied[0].amount, Decimal::from_str("1.5").unwrap());
-    assert_eq!(pos.borrowed[0].token.symbol, "USDC");
+    let weth = &pos.supplied[0];
+    assert_eq!(weth.amount.token.symbol, "WETH");
+    assert_eq!(weth.amount.amount, Decimal::from_str("1.5").unwrap());
+    assert_eq!(
+        weth.liquidation_threshold,
+        Some(Decimal::from_str("0.83").unwrap())
+    );
+    assert_eq!(weth.max_ltv, Some(Decimal::from_str("0.805").unwrap()));
+    assert!(weth.is_collateral && weth.can_be_collateral);
+    assert_eq!(weth.apy, Some(Decimal::from_str("0.021").unwrap()));
+
+    let usdc = &pos.borrowed[0];
+    assert_eq!(usdc.amount.token.symbol, "USDC");
+    assert_eq!(usdc.borrow_factor, Some(Decimal::from_str("1").unwrap()));
+    assert_eq!(usdc.apy, Some(Decimal::from_str("0.055").unwrap()));
     assert_eq!(pos.health_factor, Some(Decimal::from_str("2.35").unwrap()));
 }
 

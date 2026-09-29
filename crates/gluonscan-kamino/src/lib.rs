@@ -10,8 +10,9 @@
 
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Currency, Detail, Error, LendingPosition, Money,
-    Position, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
+    Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Currency, Detail, Error,
+    LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
+    Staleness, SuppliedAsset, Token, Wallet,
 };
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -123,8 +124,8 @@ impl ProtocolAdapter for KaminoApi {
 }
 
 fn parse_obligation(ob: &serde_json::Value) -> Result<LendingPosition, Error> {
-    let supplied = parse_amounts(ob.get("deposits"))?;
-    let borrowed = parse_amounts(ob.get("borrows"))?;
+    let supplied = parse_supplied(ob.get("deposits"))?;
+    let borrowed = parse_borrowed(ob.get("borrows"))?;
     let health_factor = ob
         .pointer("/refreshedStats/healthFactor")
         .and_then(json_decimal);
@@ -142,47 +143,81 @@ fn parse_obligation(ob: &serde_json::Value) -> Result<LendingPosition, Error> {
     })
 }
 
-fn parse_amounts(list: Option<&serde_json::Value>) -> Result<Vec<Amount>, Error> {
+/// Build the [`Amount`] from a deposit/borrow item (symbol + decimals + amount + usdValue).
+fn parse_amount_entry(item: &serde_json::Value) -> Result<Amount, Error> {
+    let symbol = item
+        .get("symbol")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let decimals = item
+        .get("decimals")
+        .and_then(|d| d.as_u64())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("Kamino asset `{symbol}` missing decimals"),
+        })? as u8;
+    let amount = item
+        .get("amount")
+        .and_then(json_decimal)
+        .ok_or_else(|| Error::Integrity {
+            message: format!("Kamino asset `{symbol}` missing amount"),
+        })?;
+    let usd = item
+        .get("usdValue")
+        .and_then(json_decimal)
+        .map(|amount| Money {
+            amount,
+            currency: Currency::Usd,
+        });
+    Ok(Amount::from_decimal(
+        Token {
+            symbol,
+            address: None,
+            decimals,
+        },
+        amount,
+    )?
+    .with_usd(usd))
+}
+
+fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>, Error> {
     let Some(items) = list.and_then(|v| v.as_array()) else {
         return Ok(Vec::new());
     };
     let mut out = Vec::with_capacity(items.len());
     for item in items {
-        let symbol = item
-            .get("symbol")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .to_string();
-        let decimals = item
-            .get("decimals")
-            .and_then(|d| d.as_u64())
-            .ok_or_else(|| Error::Integrity {
-                message: format!("Kamino asset `{symbol}` missing decimals"),
-            })? as u8;
-        let amount = item
-            .get("amount")
-            .and_then(json_decimal)
-            .ok_or_else(|| Error::Integrity {
-                message: format!("Kamino asset `{symbol}` missing amount"),
-            })?;
-        let usd = item
-            .get("usdValue")
-            .and_then(json_decimal)
-            .map(|amount| Money {
-                amount,
-                currency: Currency::Usd,
-            });
-        out.push(
-            Amount::from_decimal(
-                Token {
-                    symbol,
-                    address: None,
-                    decimals,
-                },
-                amount,
-            )?
-            .with_usd(usd),
-        );
+        let amount = parse_amount_entry(item)?;
+        out.push(SuppliedAsset {
+            amount,
+            liquidation_threshold: item.get("liquidationThreshold").and_then(json_decimal),
+            max_ltv: item.get("maxLtv").and_then(json_decimal),
+            // Kamino deposits back the loan; treat as collateral unless the reserve says otherwise.
+            is_collateral: item
+                .get("isCollateral")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            can_be_collateral: item
+                .get("canBeCollateral")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            apy: item.get("apy").and_then(json_decimal),
+        });
+    }
+    Ok(out)
+}
+
+fn parse_borrowed(list: Option<&serde_json::Value>) -> Result<Vec<BorrowedAsset>, Error> {
+    let Some(items) = list.and_then(|v| v.as_array()) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let amount = parse_amount_entry(item)?;
+        out.push(BorrowedAsset {
+            amount,
+            borrow_factor: item.get("borrowFactor").and_then(json_decimal),
+            apy: item.get("apy").and_then(json_decimal),
+        });
     }
     Ok(out)
 }

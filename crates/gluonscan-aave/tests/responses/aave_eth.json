@@ -3,13 +3,18 @@
     "userSupplies": [
       {
         "currency": { "symbol": "WETH", "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "decimals": 18 },
-        "balance": { "amount": { "value": "1.5" }, "usd": "4500.00" }
+        "balance": { "amount": { "value": "1.5" }, "usd": "4500.00" },
+        "apy": { "value": "0.021" },
+        "isCollateral": true,
+        "canBeCollateral": true,
+        "reserve": { "supplyInfo": { "maxLTV": { "value": "0.805" }, "liquidationThreshold": { "value": "0.83" } } }
       }
     ],
     "userBorrows": [
       {
         "currency": { "symbol": "USDC", "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "decimals": 6 },
-        "debt": { "amount": { "value": "1000" }, "usd": "1000.00" }
+        "debt": { "amount": { "value": "1000" }, "usd": "1000.00" },
+        "apy": { "value": "0.055" }
       }
     ],
     "userMarketState": { "healthFactor": "2.35" }

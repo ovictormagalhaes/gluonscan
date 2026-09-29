@@ -13,8 +13,8 @@ const WALLET: &str = "So11111111111111111111111111111111111111112";
 
 const OBLIGATIONS: &str = r#"[{
   "obligationAddress":"obl1",
-  "deposits":[{"symbol":"SOL","decimals":9,"amount":"5.0","usdValue":"750.00"}],
-  "borrows":[{"symbol":"USDC","decimals":6,"amount":"200.0","usdValue":"200.00"}],
+  "deposits":[{"symbol":"SOL","decimals":9,"amount":"5.0","usdValue":"750.00","liquidationThreshold":"0.75","maxLtv":"0.7","apy":"0.045"}],
+  "borrows":[{"symbol":"USDC","decimals":6,"amount":"200.0","usdValue":"200.00","borrowFactor":"1.0","apy":"0.089"}],
   "refreshedStats":{"netAccountValue":"550.00","healthFactor":"1.85"}
 }]"#;
 
@@ -45,12 +45,24 @@ async fn reads_obligation_across_markets() {
     let Position::Lending(p) = &reading.positions[0] else {
         panic!("expected a lending position");
     };
-    assert_eq!(p.supplied[0].token.symbol, "SOL");
+    let sol = &p.supplied[0];
+    assert_eq!(sol.amount.token.symbol, "SOL");
+    assert_eq!(sol.amount.amount, Decimal::from_str_exact("5.0").unwrap());
     assert_eq!(
-        p.supplied[0].amount,
-        Decimal::from_str_exact("5.0").unwrap()
+        sol.liquidation_threshold,
+        Some(Decimal::from_str_exact("0.75").unwrap())
     );
-    assert_eq!(p.borrowed[0].token.symbol, "USDC");
+    assert_eq!(sol.max_ltv, Some(Decimal::from_str_exact("0.7").unwrap()));
+    assert!(sol.is_collateral);
+    assert_eq!(sol.apy, Some(Decimal::from_str_exact("0.045").unwrap()));
+
+    let usdc = &p.borrowed[0];
+    assert_eq!(usdc.amount.token.symbol, "USDC");
+    assert_eq!(
+        usdc.borrow_factor,
+        Some(Decimal::from_str_exact("1.0").unwrap())
+    );
+    assert_eq!(usdc.apy, Some(Decimal::from_str_exact("0.089").unwrap()));
     assert_eq!(
         p.health_factor,
         Some(Decimal::from_str_exact("1.85").unwrap())
