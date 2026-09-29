@@ -49,6 +49,7 @@ struct Candidate {
     token: Token,
     price_usd: Option<Decimal>,
     expiry: Option<Timestamp>,
+    apy: Option<Decimal>,
     kind: YieldKind,
 }
 
@@ -103,6 +104,7 @@ impl ProtocolAdapter for PendleApi {
         let mut candidates = Vec::new();
         for m in markets {
             let expiry = m.get("expiry").and_then(|e| e.as_i64()).map(Timestamp);
+            let apy = decimal_at(m, "/impliedApy");
             for (key, kind) in [
                 ("pt", YieldKind::PrincipalToken),
                 ("yt", YieldKind::YieldToken),
@@ -112,6 +114,7 @@ impl ProtocolAdapter for PendleApi {
                         token: parse_token(tok)?,
                         price_usd: decimal_at(tok, "/price/usd"),
                         expiry,
+                        apy,
                         kind,
                     });
                 }
@@ -134,6 +137,7 @@ impl ProtocolAdapter for PendleApi {
                 amount: priced_amount(c.token, balance, c.price_usd)?,
                 kind: c.kind,
                 expiry: c.expiry,
+                apy: c.apy,
             }));
         }
 

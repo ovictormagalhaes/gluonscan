@@ -12,6 +12,7 @@ use rust_decimal::Decimal;
 
 const CATALOG: &str = r#"{"markets":[{
   "expiry":1766620800,
+  "impliedApy":"0.072",
   "pt":{"address":"0x1111111111111111111111111111111111111111","symbol":"PT-stETH-DEC25","decimals":18,"price":{"usd":"0.98"}},
   "yt":{"address":"0x2222222222222222222222222222222222222222","symbol":"YT-stETH-DEC25","decimals":18,"price":{"usd":"0.05"}}
 }]}"#;
@@ -65,6 +66,7 @@ async fn reads_held_pt_prices_it_and_skips_zero_yt() {
         Decimal::from_i128_with_scale(1_000_000_000_000_000_000, 18)
     );
     assert_eq!(y.expiry, Some(Timestamp(1766620800)));
+    assert_eq!(y.apy, Some(Decimal::from_str_exact("0.072").unwrap()));
     let usd = y.amount.usd.as_ref().expect("priced from catalog");
     assert_eq!(usd.amount, Decimal::from_str_exact("0.98").unwrap());
 }

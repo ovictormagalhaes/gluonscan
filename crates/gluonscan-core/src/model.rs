@@ -295,6 +295,8 @@ pub struct LiquidityPosition {
     pub withdrawn: Vec<Amount>,
     /// Lifetime collected fees, `[token0, token1]`.
     pub collected_fees: Vec<Amount>,
+    /// Annualized rate (APR) as a fraction (e.g. `0.14` = 14%), when a source provides it.
+    pub apr: Option<Decimal>,
 }
 
 /// The kind of a yield-bearing token position.
@@ -318,6 +320,8 @@ pub struct YieldPosition {
     pub kind: YieldKind,
     /// Maturity, when applicable.
     pub expiry: Option<Timestamp>,
+    /// Implied/aggregated APY as a fraction, when the source provides it.
+    pub apy: Option<Decimal>,
 }
 
 /// An NFT held by the wallet.

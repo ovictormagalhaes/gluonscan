@@ -190,6 +190,8 @@ async fn parse_position(
         in_range: is_in_range(tick_current, tick_lower, tick_upper),
         token0,
         token1,
+        // Pool APR would come from the Raydium API, not the on-chain position; left to the consumer.
+        apr: None,
     }))
 }
 

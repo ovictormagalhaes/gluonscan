@@ -215,6 +215,8 @@ impl UniswapV3 {
             deposited,
             withdrawn,
             collected_fees,
+            // The subgraph position does not expose an APR; a consumer derives it from pool stats.
+            apr: None,
         }))
     }
 }
