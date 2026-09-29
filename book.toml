@@ -5,6 +5,10 @@ authors = ["Victor Magalhães"]
 language = "en"
 src = "book/src"
 
+# Render outside book/ so the build never cleans the sources in book/src.
+[build]
+build-dir = "target/book"
+
 [output.html]
 default-theme = "navy"
 git-repository-url = "https://github.com/ovictormagalhaes/gluonscan"
