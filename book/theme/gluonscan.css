@@ -59,11 +59,13 @@ html.light .content a:not(.header):hover {
   display: inline-flex;
   line-height: 0;
 }
-.gs-logo svg {
-  height: 22px;
-  width: 22px;
-  display: block;
-}
+.gs-mark { display: none; line-height: 0; }
+.gs-mark svg { height: 22px; width: 22px; display: block; }
+/* Light-ground themes show the ink mark; dark themes show the silver mark. */
+.gs-light { display: inline-flex; }
+.gs-dark { display: none; }
+html.coal .gs-light, html.navy .gs-light, html.ayu .gs-light { display: none; }
+html.coal .gs-dark, html.navy .gs-dark, html.ayu .gs-dark { display: inline-flex; }
 .gs-word {
   font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-weight: 500;
