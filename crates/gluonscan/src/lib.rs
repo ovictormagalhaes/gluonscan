@@ -277,20 +277,17 @@ impl Gluonscan {
         adapter.read(&owner, chain, detail, &self.cx).await
     }
 
-    /// Price a token in USD via the configured price source — a **separate** operation from
-    /// [`read`](Gluonscan::read). Reading positions and pricing tokens are two distinct calls.
+    /// Price an [`Asset`] in USD via the configured price source — a **separate** operation from
+    /// [`read`](Gluonscan::read). Reading positions and pricing assets are two distinct calls. The
+    /// [`Asset`] key is chain-agnostic, so native coins (BTC, ETH, SOL) and SPL mints price too.
     /// Errors with [`Error::Permanent`] if no price source was registered.
-    pub async fn price(
-        &self,
-        chain: Chain,
-        token: Address,
-    ) -> Result<rust_decimal::Decimal, Error> {
+    pub async fn price(&self, chain: Chain, asset: Asset) -> Result<rust_decimal::Decimal, Error> {
         self.price
             .as_ref()
             .ok_or_else(|| Error::Permanent {
                 message: "no price source configured".into(),
             })?
-            .price_usd(chain, token)
+            .price_usd(chain, asset)
             .await
     }
 }

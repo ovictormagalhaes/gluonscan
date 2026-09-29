@@ -8,7 +8,10 @@ Adapters depend on traits, not concrete clients:
 
 - `Http` — API/subgraph adapters (`get`/`post`).
 - `ChainProvider` — an injected JSON-RPC transport (EVM `eth_call`, Solana `getAccountInfo`, …).
-- `PriceSource` — prices in USD (a missing price must be an error, never `0`/`1`).
+- `PriceSource` — prices an `Asset` in USD (a missing price must be an error, never `0`/`1`). The
+  `Asset` key is chain-agnostic (`Native` / `Token(Address)` / `Mint(String)`), so native coins
+  (BTC, ETH, SOL) and Solana SPL mints price too — not just EVM token contracts. Pricing is a
+  **separate** operation from reading positions.
 - `Clock` — deterministic, testable timestamps.
 
 The host supplies concrete implementations (the facade wires a `reqwest`-based `Http` and a system
@@ -17,11 +20,12 @@ clock); tests supply mocks that replay recorded contracts.
 ## Wallets are cross-ecosystem
 
 ```rust,ignore
-pub enum Wallet { Evm(Address), Solana(String) }
+pub enum Wallet { Evm(Address), Solana(String), Bitcoin(String) }
 ```
 
-An EVM adapter resolves `owner.evm()?`; a Solana adapter resolves `owner.solana()?`. Passing the
-wrong kind of wallet is a permanent error, not a silent empty result.
+An EVM adapter resolves `owner.evm()?`; a Solana adapter resolves `owner.solana()?`; a Bitcoin
+reader resolves `owner.bitcoin()?`. Passing the wrong kind of wallet is a permanent error, not a
+silent empty result.
 
 ## A protocol binds only to the chains it supports
 

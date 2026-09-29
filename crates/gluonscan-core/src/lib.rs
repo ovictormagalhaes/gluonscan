@@ -73,6 +73,31 @@ impl Wallet {
     }
 }
 
+/// A priceable asset key, chain-agnostic — unlike a bare EVM [`Address`], it can name a chain's
+/// native coin or a Solana SPL mint, so BTC and SPL balances are priceable too.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Asset {
+    /// The chain's native coin (BTC on Bitcoin, ETH on Ethereum/L2s, SOL on Solana).
+    Native,
+    /// An EVM token contract.
+    Token(Address),
+    /// A Solana SPL mint (base58).
+    Mint(String),
+}
+
+impl Asset {
+    /// A short, human-readable key for diagnostics and [`Error::AbsentPrice`].
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Asset::Native => "native".to_string(),
+            Asset::Token(a) => format!("{a:#x}"),
+            Asset::Mint(m) => m.clone(),
+        }
+    }
+}
+
 /// A supported DeFi protocol. Identity only — a protocol may have several backend
 /// implementations (see [`Source`]); the user picks and configures which.
 #[non_exhaustive]

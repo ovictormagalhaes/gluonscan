@@ -4,9 +4,8 @@
 //! implementations; tests supply mocks. This is what keeps the engine stateless and reproducible.
 
 use crate::{
-    Capability, Chain, Complete, Detail, Error, Protocol, Reading, Source, Timestamp, Wallet,
+    Asset, Capability, Chain, Complete, Detail, Error, Protocol, Reading, Source, Timestamp, Wallet,
 };
-use alloy_primitives::Address;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -36,9 +35,9 @@ pub trait ChainProvider: Send + Sync + 'static {
 /// An injected price source. Missing prices must surface as [`Error::AbsentPrice`], never `0`/`1`.
 #[async_trait]
 pub trait PriceSource: Send + Sync + 'static {
-    /// Price a token (by address on a chain) in USD.
-    async fn price_usd(&self, chain: Chain, token: Address)
-        -> Result<rust_decimal::Decimal, Error>;
+    /// Price an [`Asset`] on a chain in USD. The asset key is chain-agnostic, so native coins
+    /// (BTC, ETH, SOL) and Solana SPL mints are priceable, not just EVM token contracts.
+    async fn price_usd(&self, chain: Chain, asset: Asset) -> Result<rust_decimal::Decimal, Error>;
 }
 
 /// An injected clock, so reads carry deterministic, testable timestamps.
