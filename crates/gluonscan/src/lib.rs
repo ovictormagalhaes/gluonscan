@@ -77,6 +77,81 @@ impl Http for ReqwestHttp {
     }
 }
 
+/// An [`Http`] decorator that throttles an inner client to at most `max` requests per `window`
+/// (a sliding window). Rate limits are per-provider, so give each source its own instance for its
+/// own budget, or share one instance to share a budget (e.g. across chains on the same API key).
+///
+/// CoinGecko's free/demo tier is roughly 30 requests/minute:
+/// `CoinGecko::new(Arc::new(RateLimitedHttp::per_minute(Arc::new(ReqwestHttp::new()), 30)))`.
+pub struct RateLimitedHttp {
+    inner: Arc<dyn Http>,
+    max: usize,
+    window: std::time::Duration,
+    hits: std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>,
+}
+
+impl RateLimitedHttp {
+    /// Throttle `inner` to at most `max` requests per `window`.
+    pub fn new(inner: Arc<dyn Http>, max: usize, window: std::time::Duration) -> Self {
+        RateLimitedHttp {
+            inner,
+            max,
+            window,
+            hits: std::sync::Mutex::new(std::collections::VecDeque::new()),
+        }
+    }
+
+    /// Throttle `inner` to at most `max` requests per minute.
+    pub fn per_minute(inner: Arc<dyn Http>, max: usize) -> Self {
+        RateLimitedHttp::new(inner, max, std::time::Duration::from_secs(60))
+    }
+
+    /// Block until a request slot is free, then reserve it.
+    async fn gate(&self) {
+        loop {
+            let wait = {
+                let now = std::time::Instant::now();
+                let mut hits = self.hits.lock().unwrap();
+                while hits
+                    .front()
+                    .is_some_and(|&t| now.duration_since(t) >= self.window)
+                {
+                    hits.pop_front();
+                }
+                if hits.len() < self.max {
+                    hits.push_back(now);
+                    None
+                } else {
+                    let oldest = *hits.front().expect("len >= max >= 1");
+                    Some(self.window - now.duration_since(oldest))
+                }
+            };
+            match wait {
+                None => return,
+                Some(delay) => tokio::time::sleep(delay).await,
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl Http for RateLimitedHttp {
+    async fn post(
+        &self,
+        url: &str,
+        body: String,
+        headers: &[(&str, &str)],
+    ) -> Result<String, Error> {
+        self.gate().await;
+        self.inner.post(url, body, headers).await
+    }
+
+    async fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<String, Error> {
+        self.gate().await;
+        self.inner.get(url, headers).await
+    }
+}
+
 async fn read_body(req: reqwest::RequestBuilder) -> Result<String, Error> {
     let resp = req.send().await.map_err(|e| Error::Transient {
         message: e.to_string(),

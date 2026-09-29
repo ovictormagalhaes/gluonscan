@@ -23,3 +23,7 @@ gluonscan-holdings = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 rust_decimal = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+
+[dev-dependencies]
+gluonscan-testing = { workspace = true }

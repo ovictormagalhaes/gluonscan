@@ -1044,9 +1044,11 @@ dependencies = [
  "gluonscan-pendle",
  "gluonscan-raydium",
  "gluonscan-sources",
+ "gluonscan-testing",
  "gluonscan-uniswap",
  "reqwest",
  "rust_decimal",
+ "tokio",
 ]
 
 [[package]]
