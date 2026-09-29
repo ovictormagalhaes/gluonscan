@@ -17,6 +17,31 @@ Adapters depend on traits, not concrete clients:
 The host supplies concrete implementations (the facade wires a `reqwest`-based `Http` and a system
 clock); tests supply mocks that replay recorded contracts.
 
+## The HTTP transport
+
+`ReqwestHttp` is the default `Http` client. It carries a **default `User-Agent`** on every request
+(GET and POST, across every provider):
+
+```text
+gluonscan/<version> (+https://github.com/ovictormagalhaes/gluonscan)
+```
+
+This is not cosmetic. Some provider edges — CoinGecko's CloudFront among them — reject requests
+that arrive **without** a `User-Agent` with a `403`, and `reqwest` sends none by default. A client
+with no `User-Agent` would silently 403 the whole integration, so gluonscan always sends one.
+
+Override it with your own identifier when you want traffic attributed to your app:
+
+```rust,ignore
+use gluonscan::ReqwestHttp;
+
+let http = ReqwestHttp::with_user_agent("myapp/2.1 (+https://myapp.example)");
+```
+
+Rate limiting is layered on top, per provider (never a hidden global cap). Wrap the transport in
+`RateLimitedHttp` — see [Pricing](../recipes/pricing.md#rate-limiting) for CoinGecko's ~30 req/min
+free tier.
+
 ## Wallets are cross-ecosystem
 
 ```rust,ignore
