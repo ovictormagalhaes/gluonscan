@@ -21,12 +21,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 pub use gluonscan_aave::AaveApi;
 pub use gluonscan_core::*;
-pub use gluonscan_holdings::{EvmTokenHoldings, SolanaTokenHoldings};
 pub use gluonscan_kamino::KaminoApi;
 pub use gluonscan_pendle::PendleApi;
 pub use gluonscan_raydium::RaydiumClmm;
 pub use gluonscan_sources::{CoinGecko, CoinMarketCap};
 pub use gluonscan_uniswap::UniswapV3;
+pub use gluonscan_wallet::{BitcoinWallet, EvmWallet, SolanaWallet};
 
 /// A `reqwest`-backed [`Http`] client. Configuration (timeouts, keys, retries) lives here, not in
 /// the adapters.

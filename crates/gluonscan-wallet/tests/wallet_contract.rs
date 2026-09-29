@@ -1,10 +1,10 @@
-//! Contract-based test: EVM token holdings over a mock HTTP transport (header-authenticated).
+//! Contract-based test: EVM idle token balances over a mock HTTP transport (header-authenticated).
 
 use std::sync::Arc;
 
 use gluonscan_core::{Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Wallet};
-use gluonscan_holdings::EvmTokenHoldings;
 use gluonscan_testing::{Match, MockClock, MockHttp};
+use gluonscan_wallet::EvmWallet;
 use rust_decimal::Decimal;
 
 const ERC20: &str = r#"[
@@ -17,7 +17,7 @@ async fn reads_idle_token_balances() {
     let http = MockHttp::new().on(Match::primary_contains("/erc20"), ERC20);
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
 
-    let reading = EvmTokenHoldings::new("test-key")
+    let reading = EvmWallet::new("test-key")
         .read(
             &Wallet::Evm(Address::ZERO),
             Chain::Ethereum,
@@ -32,14 +32,14 @@ async fn reads_idle_token_balances() {
     assert_eq!(reading.positions.len(), 2);
 
     let Position::Wallet(usdc) = &reading.positions[0] else {
-        panic!("expected a holding");
+        panic!("expected a wallet balance");
     };
     assert_eq!(usdc.amount.token.symbol, "USDC");
     assert_eq!(usdc.amount.amount, Decimal::from_str_exact("1500").unwrap());
     assert!(usdc.amount.usd.is_none()); // pricing is a separate operation
 
     let Position::Wallet(weth) = &reading.positions[1] else {
-        panic!("expected a holding");
+        panic!("expected a wallet balance");
     };
     assert_eq!(weth.amount.amount, Decimal::from_str_exact("2").unwrap());
 }
@@ -47,7 +47,7 @@ async fn reads_idle_token_balances() {
 #[tokio::test]
 async fn rejects_non_evm_wallet() {
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)));
-    let err = EvmTokenHoldings::new("k")
+    let err = EvmWallet::new("k")
         .read(
             &Wallet::Bitcoin("bc1qxyz".into()),
             Chain::Ethereum,

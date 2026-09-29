@@ -1,6 +1,6 @@
 [package]
-name = "gluonscan-holdings"
-description = "Wallet token/NFT holdings readers for gluonscan (Protocol::Holdings / Nfts)."
+name = "gluonscan-wallet"
+description = "Wallet contents readers for gluonscan: idle token balances and NFTs (Protocol::Wallet / Nfts)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

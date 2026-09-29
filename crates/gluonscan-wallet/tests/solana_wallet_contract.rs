@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use gluonscan_core::{Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Wallet};
-use gluonscan_holdings::SolanaTokenHoldings;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
+use gluonscan_wallet::SolanaWallet;
 use rust_decimal::Decimal;
 
 const WALLET: &str = "So11111111111111111111111111111111111111112";
@@ -19,7 +19,7 @@ async fn reads_spl_balances_and_skips_zero() {
     let rpc = MockChainProvider::new().on(Match::method("getTokenAccountsByOwner"), ACCOUNTS);
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 
-    let reading = SolanaTokenHoldings::new()
+    let reading = SolanaWallet::new()
         .read(
             &Wallet::Solana(WALLET.to_string()),
             Chain::Solana,
@@ -45,7 +45,7 @@ async fn reads_spl_balances_and_skips_zero() {
 async fn rejects_non_solana_wallet() {
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)))
         .with_rpc(Arc::new(MockChainProvider::new()));
-    let err = SolanaTokenHoldings::new()
+    let err = SolanaWallet::new()
         .read(
             &Wallet::Bitcoin("bc1qxyz".into()),
             Chain::Solana,

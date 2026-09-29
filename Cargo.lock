@@ -1039,13 +1039,13 @@ dependencies = [
  "async-trait",
  "gluonscan-aave",
  "gluonscan-core",
- "gluonscan-holdings",
  "gluonscan-kamino",
  "gluonscan-pendle",
  "gluonscan-raydium",
  "gluonscan-sources",
  "gluonscan-testing",
  "gluonscan-uniswap",
+ "gluonscan-wallet",
  "reqwest",
  "rust_decimal",
  "tokio",
@@ -1082,20 +1082,6 @@ dependencies = [
  "alloy-primitives",
  "gluonscan-core",
  "serde_json",
-]
-
-[[package]]
-name = "gluonscan-holdings"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "async-trait",
- "gluonscan-core",
- "gluonscan-solana",
- "gluonscan-testing",
- "rust_decimal",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -1192,6 +1178,20 @@ dependencies = [
  "gluonscan-core",
  "gluonscan-evm",
  "gluonscan-math",
+ "gluonscan-testing",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "gluonscan-wallet"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-solana",
  "gluonscan-testing",
  "rust_decimal",
  "serde_json",

@@ -1,11 +1,12 @@
-//! # gluonscan-holdings
+//! # gluonscan-wallet
 //!
-//! Idle wallet balances — [`Protocol::Wallet`]. [`EvmTokenHoldings`] reads a wallet's ERC-20
-//! balances (tokens not deployed in any protocol) from a Moralis-style API (header-authenticated)
-//! and normalizes each into a [`Position::Wallet`]. Prices are left `None` — pricing is a separate
-//! operation.
+//! Idle wallet contents — [`Protocol::Wallet`]. [`EvmWallet`] reads a wallet's ERC-20 balances
+//! (tokens not deployed in any protocol) from a Moralis-style API (header-authenticated),
+//! [`SolanaWallet`] reads SPL balances over the injected RPC, and [`BitcoinWallet`] reads the
+//! native BTC balance from an explorer. Each idle balance normalizes into a [`Position::Wallet`].
+//! Prices are left `None` — pricing is a separate operation.
 //!
-//! (Solana SPL balances, native BTC balance, and NFTs are follow-up readers in this crate.)
+//! (NFTs are a follow-up reader in this crate.)
 
 use std::str::FromStr;
 
@@ -28,17 +29,17 @@ const SUPPORTED_CHAINS: &[Chain] = &[
     Chain::Bnb,
 ];
 
-/// EVM ERC-20 holdings via a Moralis-style API (header-authenticated).
+/// EVM idle ERC-20 balances via a Moralis-style API (header-authenticated).
 #[derive(Debug, Clone)]
-pub struct EvmTokenHoldings {
+pub struct EvmWallet {
     base: String,
     api_key: String,
 }
 
-impl EvmTokenHoldings {
+impl EvmWallet {
     /// Construct with an API key (and the default Moralis base).
     pub fn new(api_key: impl Into<String>) -> Self {
-        EvmTokenHoldings {
+        EvmWallet {
             base: MORALIS_API.to_string(),
             api_key: api_key.into(),
         }
@@ -64,7 +65,7 @@ impl EvmTokenHoldings {
 }
 
 #[async_trait]
-impl ProtocolAdapter for EvmTokenHoldings {
+impl ProtocolAdapter for EvmWallet {
     fn protocol(&self) -> Protocol {
         Protocol::Wallet
     }
@@ -89,18 +90,18 @@ impl ProtocolAdapter for EvmTokenHoldings {
         cx: &Ctx,
     ) -> Result<Complete<Reading>, Error> {
         let owner = owner.evm()?;
-        let slug = EvmTokenHoldings::chain_slug(chain).ok_or_else(|| Error::Permanent {
-            message: format!("token holdings not configured for {chain:?}"),
+        let slug = EvmWallet::chain_slug(chain).ok_or_else(|| Error::Permanent {
+            message: format!("wallet balances not configured for {chain:?}"),
         })?;
 
         let url = format!("{}/{owner:#x}/erc20?chain={slug}", self.base);
         let headers = [("X-API-Key", self.api_key.as_str())];
         let raw = cx.http.get(&url, &headers).await?;
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
-            message: format!("holdings response not JSON: {e}"),
+            message: format!("wallet balances response not JSON: {e}"),
         })?;
         let tokens = json.as_array().ok_or_else(|| Error::Integrity {
-            message: "holdings response was not an array".into(),
+            message: "wallet balances response was not an array".into(),
         })?;
 
         let mut positions = Vec::with_capacity(tokens.len());
@@ -114,16 +115,16 @@ impl ProtocolAdapter for EvmTokenHoldings {
                 t.get("decimals")
                     .and_then(|d| d.as_u64())
                     .ok_or_else(|| Error::Integrity {
-                        message: format!("holding `{symbol}` missing decimals"),
+                        message: format!("wallet balance `{symbol}` missing decimals"),
                     })? as u8;
             let raw_balance =
                 t.get("balance")
                     .and_then(|b| b.as_str())
                     .ok_or_else(|| Error::Integrity {
-                        message: format!("holding `{symbol}` missing balance"),
+                        message: format!("wallet balance `{symbol}` missing balance"),
                     })?;
             let raw_u256 = U256::from_str(raw_balance).map_err(|e| Error::Integrity {
-                message: format!("holding `{symbol}` balance not a number: {e}"),
+                message: format!("wallet balance `{symbol}` not a number: {e}"),
             })?;
             let address = t
                 .get("token_address")
@@ -162,17 +163,17 @@ impl ProtocolAdapter for EvmTokenHoldings {
 
 /// Solana SPL token balances (idle tokens in the wallet) via the injected on-chain transport.
 #[derive(Debug, Default, Clone)]
-pub struct SolanaTokenHoldings;
+pub struct SolanaWallet;
 
-impl SolanaTokenHoldings {
+impl SolanaWallet {
     /// Construct the reader.
     pub fn new() -> Self {
-        SolanaTokenHoldings
+        SolanaWallet
     }
 }
 
 #[async_trait]
-impl ProtocolAdapter for SolanaTokenHoldings {
+impl ProtocolAdapter for SolanaWallet {
     fn protocol(&self) -> Protocol {
         Protocol::Wallet
     }
@@ -198,7 +199,7 @@ impl ProtocolAdapter for SolanaTokenHoldings {
     ) -> Result<Complete<Reading>, Error> {
         if chain != Chain::Solana {
             return Err(Error::Permanent {
-                message: format!("Solana holdings only; got {chain:?}"),
+                message: format!("Solana wallet only; got {chain:?}"),
             });
         }
         let wallet = owner.solana()?;
@@ -231,6 +232,118 @@ impl ProtocolAdapter for SolanaTokenHoldings {
             provenance: Provenance {
                 source: Source::OnChain,
                 chain: Chain::Solana,
+                block: None,
+                at: cx.clock.now(),
+                staleness: Staleness::Live,
+            },
+        };
+        Ok(Complete::new(reading))
+    }
+}
+
+const MEMPOOL_API: &str = "https://mempool.space/api";
+
+/// Native BTC balance via a mempool.space-style explorer API.
+#[derive(Debug, Clone)]
+pub struct BitcoinWallet {
+    base: String,
+}
+
+impl BitcoinWallet {
+    /// Construct with the default public explorer.
+    pub fn new() -> Self {
+        BitcoinWallet {
+            base: MEMPOOL_API.to_string(),
+        }
+    }
+
+    /// Override the explorer base (a proxy or a test double).
+    pub fn with_base(mut self, url: impl Into<String>) -> Self {
+        self.base = url.into();
+        self
+    }
+}
+
+impl Default for BitcoinWallet {
+    fn default() -> Self {
+        BitcoinWallet::new()
+    }
+}
+
+#[async_trait]
+impl ProtocolAdapter for BitcoinWallet {
+    fn protocol(&self) -> Protocol {
+        Protocol::Wallet
+    }
+
+    fn source(&self) -> Source {
+        Source::Api
+    }
+
+    fn capabilities(&self) -> &'static [Capability] {
+        CAPABILITIES
+    }
+
+    fn supported_chains(&self) -> &'static [Chain] {
+        &[Chain::Bitcoin]
+    }
+
+    async fn read(
+        &self,
+        owner: &Wallet,
+        chain: Chain,
+        _detail: Detail,
+        cx: &Ctx,
+    ) -> Result<Complete<Reading>, Error> {
+        if chain != Chain::Bitcoin {
+            return Err(Error::Permanent {
+                message: format!("Bitcoin wallet only; got {chain:?}"),
+            });
+        }
+        let address = owner.bitcoin()?;
+
+        let url = format!("{}/address/{address}", self.base);
+        let raw = cx.http.get(&url, &[]).await?;
+        let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+            message: format!("Bitcoin address response not JSON: {e}"),
+        })?;
+        let funded = json
+            .pointer("/chain_stats/funded_txo_sum")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| Error::Integrity {
+                message: "Bitcoin response missing chain_stats.funded_txo_sum".into(),
+            })?;
+        let spent = json
+            .pointer("/chain_stats/spent_txo_sum")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| Error::Integrity {
+                message: "Bitcoin response missing chain_stats.spent_txo_sum".into(),
+            })?;
+        let sats = funded.saturating_sub(spent);
+
+        let mut positions = Vec::new();
+        if sats > 0 {
+            positions.push(Position::Wallet(WalletBalance {
+                amount: Amount {
+                    amount: scaled(U256::from(sats), 8)?,
+                    token: Token {
+                        symbol: "BTC".to_string(),
+                        address: None,
+                        decimals: 8,
+                    },
+                    usd: None,
+                },
+            }));
+        }
+
+        let reading = Reading {
+            protocol: Protocol::Wallet,
+            chain: Chain::Bitcoin,
+            source: Source::Api,
+            positions,
+            provenance: Provenance {
+                source: Source::Api,
+                chain: Chain::Bitcoin,
                 block: None,
                 at: cx.clock.now(),
                 staleness: Staleness::Live,

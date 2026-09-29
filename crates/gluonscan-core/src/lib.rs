@@ -90,7 +90,7 @@ pub enum Protocol {
     Kamino,
     /// Idle wallet token balances (not a protocol; a capability).
     Wallet,
-    /// Wallet NFT holdings.
+    /// Wallet NFTs.
     Nfts,
 }
 
