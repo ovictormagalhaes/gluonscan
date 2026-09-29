@@ -27,3 +27,5 @@ tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 gluonscan-testing = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"

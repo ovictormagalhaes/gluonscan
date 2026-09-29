@@ -28,18 +28,35 @@ pub use gluonscan_sources::{CoinGecko, CoinMarketCap};
 pub use gluonscan_uniswap::UniswapV3;
 pub use gluonscan_wallet::{BitcoinWallet, EvmNfts, EvmWallet, SolanaNfts, SolanaWallet};
 
+/// The default `User-Agent` sent on every request. Some provider edges (CoinGecko's CloudFront,
+/// for one) reject requests without a `User-Agent` with a 403, and `reqwest` sends none by default —
+/// so a client with no `User-Agent` would silently 403 the whole integration.
+const USER_AGENT: &str = concat!(
+    "gluonscan/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/ovictormagalhaes/gluonscan)"
+);
+
 /// A `reqwest`-backed [`Http`] client. Configuration (timeouts, keys, retries) lives here, not in
-/// the adapters.
+/// the adapters. Every request carries a default `User-Agent` so provider edges that block
+/// agent-less traffic do not 403 the client.
 pub struct ReqwestHttp {
     client: reqwest::Client,
 }
 
 impl ReqwestHttp {
-    /// A client with default settings.
+    /// A client with default settings and the default `User-Agent`.
     pub fn new() -> Self {
-        ReqwestHttp {
-            client: reqwest::Client::new(),
-        }
+        ReqwestHttp::with_user_agent(USER_AGENT)
+    }
+
+    /// A client that sends a custom `User-Agent` on every request.
+    pub fn with_user_agent(user_agent: &str) -> Self {
+        let client = reqwest::Client::builder()
+            .user_agent(user_agent)
+            .build()
+            .expect("failed to build reqwest client");
+        ReqwestHttp { client }
     }
 }
 
