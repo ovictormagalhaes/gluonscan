@@ -1,0 +1,24 @@
+[package]
+name = "gluonscan-solana"
+description = "Solana on-chain helpers for gluonscan: RPC over an injected ChainProvider, base58 pubkeys, program-derived addresses."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+serde_json = { workspace = true }
+bs58 = "0.5"
+sha2 = "0.10"
+curve25519-dalek = "4"
+base64 = "0.22"
+
+[dev-dependencies]
+tokio = { workspace = true }
+gluonscan-testing = { workspace = true }

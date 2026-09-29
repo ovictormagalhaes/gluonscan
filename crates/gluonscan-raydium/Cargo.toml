@@ -1,0 +1,26 @@
+[package]
+name = "gluonscan-raydium"
+description = "Raydium CLMM protocol adapter for gluonscan (Solana on-chain position reads)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+gluonscan-solana = { workspace = true }
+gluonscan-math = { workspace = true }
+async-trait = { workspace = true }
+rust_decimal = { workspace = true }
+alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+gluonscan-testing = { workspace = true }
+gluonscan-solana = { workspace = true }
+base64 = "0.22"

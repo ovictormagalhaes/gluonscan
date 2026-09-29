@@ -23,6 +23,7 @@ pub use gluonscan_aave::AaveApi;
 pub use gluonscan_core::*;
 pub use gluonscan_kamino::KaminoApi;
 pub use gluonscan_pendle::PendleApi;
+pub use gluonscan_raydium::RaydiumClmm;
 pub use gluonscan_uniswap::UniswapV3;
 
 /// A `reqwest`-backed [`Http`] client. Configuration (timeouts, keys, retries) lives here, not in
