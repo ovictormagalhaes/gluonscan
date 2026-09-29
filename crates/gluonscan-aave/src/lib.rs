@@ -20,7 +20,11 @@ use rust_decimal::Decimal;
 
 const AAVE_V3_API: &str = "https://api.v3.aave.com/graphql";
 
-const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::HealthFactor];
+const CAPABILITIES: &[Capability] = &[
+    Capability::Positions,
+    Capability::HealthFactor,
+    Capability::RiskConfig,
+];
 const SUPPORTED_CHAINS: &[Chain] = &[
     Chain::Ethereum,
     Chain::Base,

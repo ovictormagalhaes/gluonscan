@@ -39,6 +39,21 @@ async fn reads_held_pt_prices_it_and_skips_zero_yt() {
                 Match::body_contains("2222222222222222222222222222222222222222"),
             ]),
             yt_reply,
+        )
+        // vePENDLE positionData -> (0, 0): no lock. sPENDLE balanceOf -> 0: no stake.
+        .on(
+            Match::body_contains("cb6b4f3c"),
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":"0x{}"}}"#,
+                "0".repeat(128)
+            ),
+        )
+        .on(
+            Match::body_contains("07282f2ceebd7a65451fcd268b364300d9e6d7f5"),
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":"0x{}"}}"#,
+                "0".repeat(64)
+            ),
         );
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 
@@ -84,4 +99,79 @@ async fn unsupported_chain_errors() {
         .await
         .expect_err("pendle is EVM-only");
     assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn reads_vependle_lock_and_spendle_stake() {
+    // Empty catalog isolates the Ethereum-only vePENDLE lock + sPENDLE stake reads.
+    let http = MockHttp::new().on(Match::primary_contains("markets"), r#"{"markets":[]}"#);
+
+    // positionData -> (1e18 locked PENDLE, expiry 1_800_000_000); vePENDLE balanceOf -> 2e18 gov.
+    let position_data = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:0>64}{:0>64}"}}"#,
+        "de0b6b3a7640000",
+        format!("{:x}", 1_800_000_000u64)
+    );
+    let gov = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:0>64}"}}"#,
+        "1bc16d674ec80000"
+    ); // 2e18
+    let spendle = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:0>64}"}}"#,
+        "4563918244f40000"
+    ); // 5e18
+
+    let rpc = MockChainProvider::new()
+        .on(Match::body_contains("cb6b4f3c"), position_data)
+        .on(
+            Match::all([
+                Match::body_contains("4f30a9d41b80ecc5b94306ab4364951ae3170210"),
+                Match::body_contains("70a08231"),
+            ]),
+            gov,
+        )
+        .on(
+            Match::body_contains("07282f2ceebd7a65451fcd268b364300d9e6d7f5"),
+            spendle,
+        );
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let reading = PendleApi::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+
+    let lock = reading
+        .positions
+        .iter()
+        .find_map(|p| match p {
+            Position::Lock(l) => Some(l),
+            _ => None,
+        })
+        .expect("a vePENDLE lock");
+    assert_eq!(lock.locked[0].token.symbol, "PENDLE");
+    assert_eq!(lock.locked[0].amount, Decimal::from_str_exact("1").unwrap());
+    assert_eq!(lock.locked[1].token.symbol, "vePENDLE");
+    assert_eq!(lock.locked[1].amount, Decimal::from_str_exact("2").unwrap());
+    assert_eq!(lock.unlock_at, Some(Timestamp(1_800_000_000)));
+
+    let stake = reading
+        .positions
+        .iter()
+        .find_map(|p| match p {
+            Position::Stake(s) => Some(s),
+            _ => None,
+        })
+        .expect("an sPENDLE stake");
+    assert_eq!(stake.staked[0].token.symbol, "sPENDLE");
+    assert_eq!(
+        stake.staked[0].amount,
+        Decimal::from_str_exact("5").unwrap()
+    );
 }

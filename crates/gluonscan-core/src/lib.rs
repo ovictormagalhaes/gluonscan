@@ -22,8 +22,8 @@ pub use chain::{Chain, Ecosystem};
 pub use error::Error;
 pub use model::{
     scaled, to_raw, Amount, BorrowedAsset, Complete, Currency, LendingPosition, LiquidityPosition,
-    LockPosition, Money, NftPosition, Position, Provenance, Reading, Staleness, SuppliedAsset,
-    Timestamp, Token, WalletBalance, YieldKind, YieldPosition,
+    LockPosition, Money, NftPosition, Position, Provenance, Reading, StakePosition, Staleness,
+    SuppliedAsset, Timestamp, Token, WalletBalance, YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 

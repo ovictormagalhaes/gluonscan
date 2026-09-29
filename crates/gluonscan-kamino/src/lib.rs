@@ -18,7 +18,11 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 
 const KAMINO_API: &str = "https://api.kamino.finance";
-const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::HealthFactor];
+const CAPABILITIES: &[Capability] = &[
+    Capability::Positions,
+    Capability::HealthFactor,
+    Capability::RiskConfig,
+];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Solana];
 
 /// Kamino's known lending markets (Main, JLP, Altcoins).

@@ -4,18 +4,21 @@
 //! set of PT/YT tokens (address, decimals, price, maturity) for the chain — followed by an on-chain
 //! `balanceOf` per token. Any non-zero balance is a held [`YieldPosition`], priced from the catalog.
 //!
-//! (vePENDLE / sPENDLE on Ethereum are a separate capability, a follow-up.)
+//! On Ethereum it also reads the vePENDLE lock ([`Position::Lock`] — locked PENDLE + governance
+//! power + unlock time) and the sPENDLE liquid-staking balance ([`Position::Stake`]).
 
 use std::str::FromStr;
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    scaled, Amount, Capability, Chain, Complete, Ctx, Currency, Detail, Error, Money, Position,
-    Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet,
-    YieldKind, YieldPosition,
+    scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail, Error,
+    LockPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
+    StakePosition, Staleness, Timestamp, Token, Wallet, YieldKind, YieldPosition,
 };
-use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
+use gluonscan_evm::{
+    decode_two_u256, decode_u256, encode_balance_of, encode_selector_with_address, eth_call,
+};
 use rust_decimal::Decimal;
 
 const PENDLE_API: &str = "https://api-v2.pendle.finance/core";
@@ -141,6 +144,11 @@ impl ProtocolAdapter for PendleApi {
             }));
         }
 
+        // 3. vePENDLE lock + sPENDLE stake live only on Ethereum mainnet.
+        if chain == Chain::Ethereum {
+            positions.extend(read_lock_and_stake(rpc, chain, owner).await?);
+        }
+
         let reading = Reading {
             protocol: Protocol::Pendle,
             chain,
@@ -156,6 +164,74 @@ impl ProtocolAdapter for PendleApi {
         };
         Ok(Complete::new(reading))
     }
+}
+
+/// Read the Ethereum-only vePENDLE lock and sPENDLE stake for `owner`.
+async fn read_lock_and_stake(
+    rpc: &dyn ChainProvider,
+    chain: Chain,
+    owner: Address,
+) -> Result<Vec<Position>, Error> {
+    // Ethereum mainnet contracts (lowercased so parsing never depends on EIP-55 checksum).
+    let pendle_token = Address::from_str("0x808507121b80c02388fad14726482e061b8da827").ok();
+    let ve = Address::from_str("0x4f30a9d41b80ecc5b94306ab4364951ae3170210")
+        .expect("valid vePENDLE address");
+    let spendle = Address::from_str("0x07282f2ceebd7a65451fcd268b364300d9e6d7f5")
+        .expect("valid sPENDLE address");
+
+    let mut out = Vec::new();
+
+    // vePENDLE: positionData(user) -> (lockedPendle, expiry); balanceOf(user) -> governance power.
+    let pd = eth_call(
+        rpc,
+        chain,
+        None,
+        ve,
+        encode_selector_with_address([0xcb, 0x6b, 0x4f, 0x3c], owner),
+    )
+    .await?;
+    let (locked_pendle, expiry) = decode_two_u256(&pd)?;
+    if locked_pendle > U256::ZERO {
+        let gov = decode_u256(&eth_call(rpc, chain, None, ve, encode_balance_of(owner)).await?)?;
+        out.push(Position::Lock(LockPosition {
+            locked: vec![
+                Amount::from_raw(
+                    Token {
+                        symbol: "PENDLE".to_string(),
+                        address: pendle_token,
+                        decimals: 18,
+                    },
+                    locked_pendle,
+                )?,
+                Amount::from_raw(
+                    Token {
+                        symbol: "vePENDLE".to_string(),
+                        address: Some(ve),
+                        decimals: 18,
+                    },
+                    gov,
+                )?,
+            ],
+            unlock_at: Some(Timestamp(expiry.saturating_to::<i64>())),
+        }));
+    }
+
+    // sPENDLE liquid staking: balanceOf(user).
+    let sp = decode_u256(&eth_call(rpc, chain, None, spendle, encode_balance_of(owner)).await?)?;
+    if sp > U256::ZERO {
+        out.push(Position::Stake(StakePosition {
+            staked: vec![Amount::from_raw(
+                Token {
+                    symbol: "sPENDLE".to_string(),
+                    address: Some(spendle),
+                    decimals: 18,
+                },
+                sp,
+            )?],
+        }));
+    }
+
+    Ok(out)
 }
 
 fn parse_token(v: &serde_json::Value) -> Result<Token, Error> {

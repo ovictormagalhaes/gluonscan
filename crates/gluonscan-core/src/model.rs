@@ -337,13 +337,20 @@ pub struct NftPosition {
     pub floor_price: Option<Money>,
 }
 
-/// A locked/staked position.
+/// A locked position (assets locked until an unlock time, e.g. Pendle vePENDLE).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LockPosition {
     /// The locked assets.
     pub locked: Vec<Amount>,
     /// Unlock timestamp, when applicable.
     pub unlock_at: Option<Timestamp>,
+}
+
+/// A staked position (assets staked in a protocol, e.g. Pendle sPENDLE liquid staking).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StakePosition {
+    /// The staked assets.
+    pub staked: Vec<Amount>,
 }
 
 /// A single normalized position within a protocol.
@@ -356,8 +363,10 @@ pub enum Position {
     Lending(LendingPosition),
     /// A liquidity position.
     Liquidity(LiquidityPosition),
-    /// A locked/staked position.
+    /// A locked position.
     Lock(LockPosition),
+    /// A staked position.
+    Stake(StakePosition),
     /// A yield-bearing token position.
     Yield(YieldPosition),
     /// An NFT holding.

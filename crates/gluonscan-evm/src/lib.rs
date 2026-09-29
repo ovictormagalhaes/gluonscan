@@ -84,13 +84,19 @@ pub fn encode_collect(token_id: U256, recipient: Address) -> Vec<u8> {
     data
 }
 
-/// Encode an ERC-20 `balanceOf(owner)` call.
-pub fn encode_balance_of(owner: Address) -> Vec<u8> {
-    let mut data = vec![0x70, 0xa0, 0x82, 0x31]; // selector 0x70a08231
+/// Encode a 4-byte selector followed by one 32-byte-padded address argument
+/// (e.g. `balanceOf(address)`, `positionData(address)`).
+pub fn encode_selector_with_address(selector: [u8; 4], arg: Address) -> Vec<u8> {
+    let mut data = selector.to_vec();
     let mut word = [0u8; 32];
-    word[12..].copy_from_slice(owner.as_slice());
+    word[12..].copy_from_slice(arg.as_slice());
     data.extend_from_slice(&word);
     data
+}
+
+/// Encode an ERC-20 `balanceOf(owner)` call.
+pub fn encode_balance_of(owner: Address) -> Vec<u8> {
+    encode_selector_with_address([0x70, 0xa0, 0x82, 0x31], owner)
 }
 
 /// Decode a single ABI `uint256` word from a return buffer.
