@@ -21,4 +21,6 @@ alloy-primitives = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 gluonscan-testing = { workspace = true }
+gluonscan-solana = { workspace = true }
 rust_decimal = { workspace = true }
+base64 = "0.22"

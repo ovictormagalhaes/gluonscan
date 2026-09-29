@@ -6,9 +6,10 @@
 //! native BTC balance from an explorer. Each idle balance normalizes into a [`Position::Wallet`].
 //! Prices are left `None` — pricing is a separate operation.
 //!
-//! [`EvmNfts`] reads collectible NFTs the wallet holds ([`Protocol::Nfts`]), skipping contracts
-//! that are protocol positions (e.g. a Uniswap V3 LP is read as a [`Position::Liquidity`], not an
-//! NFT) so nothing is double-counted.
+//! [`EvmNfts`] and [`SolanaNfts`] read collectible NFTs the wallet holds ([`Protocol::Nfts`]).
+//! The EVM reader skips contracts that are protocol positions (e.g. a Uniswap V3 LP is read as a
+//! [`Position::Liquidity`], not an NFT) so nothing is double-counted; the Solana reader discovers
+//! NFT mints by owner and decodes their Metaplex name/collection.
 
 use std::str::FromStr;
 
@@ -19,7 +20,10 @@ use gluonscan_core::{
     Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
     WalletBalance,
 };
-use gluonscan_solana::get_token_balances;
+use gluonscan_solana::{
+    decode_metadata, get_account_info, get_token_accounts_by_owner, get_token_balances,
+    metadata_pda,
+};
 
 const MORALIS_API: &str = "https://deep-index.moralis.io/api/v2.2";
 const CAPABILITIES: &[Capability] = &[Capability::Positions];
@@ -485,6 +489,89 @@ impl ProtocolAdapter for EvmNfts {
             provenance: Provenance {
                 source: Source::Api,
                 chain,
+                block: None,
+                at: cx.clock.now(),
+                staleness: Staleness::Live,
+            },
+        };
+        Ok(Complete::new(reading))
+    }
+}
+
+/// Solana wallet NFTs (collectibles) via the injected on-chain transport — [`Protocol::Nfts`].
+///
+/// Discovery is by owner: the SPL token accounts holding exactly one indivisible unit
+/// (`amount == 1`, `decimals == 0`) are the NFT mints. For each, the Metaplex metadata account is
+/// read to decode the name and verified collection (fail-safe: an undecodable field is left
+/// `None`, never guessed). The mint is the token id; the collection falls back to the mint when no
+/// verified collection is declared. Floor prices are left `None` — pricing is a separate operation.
+#[derive(Debug, Default, Clone)]
+pub struct SolanaNfts;
+
+impl SolanaNfts {
+    /// Construct the reader.
+    pub fn new() -> Self {
+        SolanaNfts
+    }
+}
+
+#[async_trait]
+impl ProtocolAdapter for SolanaNfts {
+    fn protocol(&self) -> Protocol {
+        Protocol::Nfts
+    }
+
+    fn source(&self) -> Source {
+        Source::OnChain
+    }
+
+    fn capabilities(&self) -> &'static [Capability] {
+        CAPABILITIES
+    }
+
+    fn supported_chains(&self) -> &'static [Chain] {
+        &[Chain::Solana]
+    }
+
+    async fn read(
+        &self,
+        owner: &Wallet,
+        chain: Chain,
+        _detail: Detail,
+        cx: &Ctx,
+    ) -> Result<Complete<Reading>, Error> {
+        if chain != Chain::Solana {
+            return Err(Error::Permanent {
+                message: format!("Solana NFTs only; got {chain:?}"),
+            });
+        }
+        let wallet = owner.solana()?;
+        let rpc = cx.rpc()?.as_ref();
+
+        let mints = get_token_accounts_by_owner(rpc, wallet).await?;
+        let mut positions = Vec::with_capacity(mints.len());
+        for mint in mints {
+            let pda = metadata_pda(&mint)?;
+            let metadata = match get_account_info(rpc, &pda).await? {
+                Some(data) => decode_metadata(&data),
+                None => Default::default(),
+            };
+            positions.push(Position::Nft(NftPosition {
+                collection: metadata.collection.unwrap_or_else(|| mint.clone()),
+                token_id: mint,
+                name: metadata.name,
+                floor_price: None,
+            }));
+        }
+
+        let reading = Reading {
+            protocol: Protocol::Nfts,
+            chain: Chain::Solana,
+            source: Source::OnChain,
+            positions,
+            provenance: Provenance {
+                source: Source::OnChain,
+                chain: Chain::Solana,
                 block: None,
                 at: cx.clock.now(),
                 staleness: Staleness::Live,

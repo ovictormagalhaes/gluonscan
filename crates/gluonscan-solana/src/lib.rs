@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 pub const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 /// Raydium's concentrated-liquidity (CLMM) program id.
 pub const RAYDIUM_CLMM_PROGRAM: &str = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK";
+/// The Metaplex Token Metadata program id.
+pub const METAPLEX_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
 /// Decode a base58 pubkey into its 32 bytes.
 pub fn pubkey_bytes(s: &str) -> Result<[u8; 32], Error> {
@@ -129,6 +131,106 @@ pub async fn get_account_info(
     }
 }
 
+/// The Metaplex metadata PDA (base58) for a mint: `["metadata", program, mint]` under the program.
+pub fn metadata_pda(mint: &str) -> Result<String, Error> {
+    let program = pubkey_bytes(METAPLEX_METADATA_PROGRAM)?;
+    let mint_bytes = pubkey_bytes(mint)?;
+    let (pda, _bump) = find_program_address(&[b"metadata", &program, &mint_bytes], &program);
+    Ok(pubkey_str(&pda))
+}
+
+/// Fields decoded from a Metaplex Token Metadata account.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NftMetadata {
+    /// The on-chain name, trailing padding trimmed, when present.
+    pub name: Option<String>,
+    /// The verified collection mint (base58), only when the NFT declares one and it is verified.
+    pub collection: Option<String>,
+}
+
+fn read_u32(data: &[u8], off: &mut usize) -> Option<u32> {
+    let end = off.checked_add(4)?;
+    let bytes: [u8; 4] = data.get(*off..end)?.try_into().ok()?;
+    *off = end;
+    Some(u32::from_le_bytes(bytes))
+}
+
+fn read_borsh_string(data: &[u8], off: &mut usize) -> Option<String> {
+    let len = read_u32(data, off)? as usize;
+    let end = off.checked_add(len)?;
+    let bytes = data.get(*off..end)?;
+    *off = end;
+    Some(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Decode the name and verified collection from a Metaplex metadata account.
+///
+/// Bounds-checked and fail-safe: the fixed-offset name is read first, and any later field it
+/// cannot walk cleanly (a newer/variant layout) leaves that field `None` rather than guessing —
+/// a wrong collection key would be worse than an absent one.
+pub fn decode_metadata(data: &[u8]) -> NftMetadata {
+    let mut md = NftMetadata::default();
+    // key(1) + update_authority(32) + mint(32) = 65, then data.name/symbol/uri as borsh strings.
+    let mut off = 65usize;
+    let name = match read_borsh_string(data, &mut off) {
+        Some(s) => s,
+        None => return md,
+    };
+    let name = name.trim_end_matches('\0').trim();
+    if !name.is_empty() {
+        md.name = Some(name.to_string());
+    }
+    if read_borsh_string(data, &mut off).is_none() {
+        return md;
+    }
+    if read_borsh_string(data, &mut off).is_none() {
+        return md;
+    }
+    // seller_fee_basis_points: u16
+    off = match off.checked_add(2) {
+        Some(o) => o,
+        None => return md,
+    };
+    // creators: Option<Vec<Creator>>, each Creator = pubkey(32) + verified(1) + share(1) = 34.
+    match data.get(off) {
+        Some(0) => off += 1,
+        Some(1) => {
+            off += 1;
+            let count = match read_u32(data, &mut off) {
+                Some(c) => c as usize,
+                None => return md,
+            };
+            off = match count.checked_mul(34).and_then(|n| off.checked_add(n)) {
+                Some(o) if o <= data.len() => o,
+                _ => return md,
+            };
+        }
+        _ => return md,
+    }
+    // primary_sale_happened(1) + is_mutable(1)
+    off = match off.checked_add(2) {
+        Some(o) => o,
+        None => return md,
+    };
+    // edition_nonce: Option<u8>, then token_standard: Option<u8>
+    for _ in 0..2 {
+        match data.get(off) {
+            Some(0) => off += 1,
+            Some(1) => off += 2,
+            _ => return md,
+        }
+    }
+    // collection: Option<Collection { verified: bool, key: pubkey }>
+    if data.get(off) == Some(&1) && data.get(off + 1) == Some(&1) {
+        if let Some(key) = data.get(off + 2..off + 34) {
+            if let Ok(arr) = <[u8; 32]>::try_from(key) {
+                md.collection = Some(pubkey_str(&arr));
+            }
+        }
+    }
+    md
+}
+
 /// A raw SPL token balance held by a wallet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenBalance {
@@ -202,5 +304,74 @@ mod tests {
     fn pubkey_roundtrips() {
         let bytes = pubkey_bytes(RAYDIUM_CLMM_PROGRAM).unwrap();
         assert_eq!(pubkey_str(&bytes), RAYDIUM_CLMM_PROGRAM);
+    }
+
+    fn borsh_string(out: &mut Vec<u8>, s: &str) {
+        out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    }
+
+    #[test]
+    fn decodes_name_and_verified_collection() {
+        let collection = [9u8; 32];
+        let mut data = Vec::new();
+        data.push(4); // key
+        data.extend_from_slice(&[1u8; 32]); // update_authority
+        data.extend_from_slice(&[2u8; 32]); // mint
+        borsh_string(&mut data, "Mad Lad #1234\0\0"); // name (padded)
+        borsh_string(&mut data, "MAD"); // symbol
+        borsh_string(&mut data, "https://example.com/1234.json"); // uri
+        data.extend_from_slice(&500u16.to_le_bytes()); // seller_fee_basis_points
+        data.push(0); // creators: None
+        data.push(1); // primary_sale_happened
+        data.push(1); // is_mutable
+        data.push(1); // edition_nonce: Some
+        data.push(255);
+        data.push(1); // token_standard: Some
+        data.push(0);
+        data.push(1); // collection: Some
+        data.push(1); // verified
+        data.extend_from_slice(&collection); // key
+
+        let md = decode_metadata(&data);
+        assert_eq!(md.name.as_deref(), Some("Mad Lad #1234"));
+        assert_eq!(md.collection, Some(pubkey_str(&collection)));
+    }
+
+    #[test]
+    fn unverified_collection_is_dropped() {
+        let mut data = Vec::new();
+        data.push(4);
+        data.extend_from_slice(&[1u8; 32]);
+        data.extend_from_slice(&[2u8; 32]);
+        borsh_string(&mut data, "Solo NFT");
+        borsh_string(&mut data, "SOLO");
+        borsh_string(&mut data, "u");
+        data.extend_from_slice(&0u16.to_le_bytes());
+        data.push(0); // creators None
+        data.push(0); // primary_sale
+        data.push(1); // is_mutable
+        data.push(0); // edition_nonce None
+        data.push(0); // token_standard None
+        data.push(1); // collection Some
+        data.push(0); // NOT verified
+        data.extend_from_slice(&[9u8; 32]);
+
+        let md = decode_metadata(&data);
+        assert_eq!(md.name.as_deref(), Some("Solo NFT"));
+        assert_eq!(md.collection, None); // unverified collection is never trusted
+    }
+
+    #[test]
+    fn truncated_data_yields_name_only_no_panic() {
+        let mut data = Vec::new();
+        data.push(4);
+        data.extend_from_slice(&[1u8; 32]);
+        data.extend_from_slice(&[2u8; 32]);
+        borsh_string(&mut data, "Half Decoded");
+        // Truncated right after the name.
+        let md = decode_metadata(&data);
+        assert_eq!(md.name.as_deref(), Some("Half Decoded"));
+        assert_eq!(md.collection, None);
     }
 }

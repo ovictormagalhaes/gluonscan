@@ -26,7 +26,7 @@ pub use gluonscan_pendle::PendleApi;
 pub use gluonscan_raydium::RaydiumClmm;
 pub use gluonscan_sources::{CoinGecko, CoinMarketCap};
 pub use gluonscan_uniswap::UniswapV3;
-pub use gluonscan_wallet::{BitcoinWallet, EvmNfts, EvmWallet, SolanaWallet};
+pub use gluonscan_wallet::{BitcoinWallet, EvmNfts, EvmWallet, SolanaNfts, SolanaWallet};
 
 /// A `reqwest`-backed [`Http`] client. Configuration (timeouts, keys, retries) lives here, not in
 /// the adapters.
