@@ -213,15 +213,17 @@ fn parse_amounts(
                 currency: Currency::Usd,
             });
 
-        out.push(Amount {
-            token: Token {
-                symbol,
-                address,
-                decimals,
-            },
-            amount,
-            usd,
-        });
+        out.push(
+            Amount::from_decimal(
+                Token {
+                    symbol,
+                    address,
+                    decimals,
+                },
+                amount,
+            )?
+            .with_usd(usd),
+        );
     }
     Ok(out)
 }

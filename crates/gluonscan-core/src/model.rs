@@ -121,15 +121,76 @@ pub struct Token {
     pub decimals: u8,
 }
 
+/// Reconstruct the exact raw base-unit integer from a human [`Decimal`] amount.
+///
+/// The inverse of [`scaled`], for sources that hand back a human-scaled decimal rather than a
+/// base-unit integer. Digits finer than one base unit are dropped (they are below the token's
+/// precision); a negative amount is an [`Error::Integrity`]. Works via the decimal's mantissa/scale
+/// so large amounts never overflow `Decimal` on the way out.
+pub fn to_raw(amount: Decimal, decimals: u8) -> Result<U256, Error> {
+    if amount.is_sign_negative() {
+        return Err(Error::Integrity {
+            message: "negative amount has no base-unit representation".into(),
+        });
+    }
+    let mantissa = u128::try_from(amount.mantissa()).map_err(|_| Error::Integrity {
+        message: "amount mantissa out of range".into(),
+    })?;
+    let base = U256::from(mantissa);
+    let scale = amount.scale();
+    let dec = decimals as u32;
+    if dec >= scale {
+        Ok(base * U256::from(10u64).pow(U256::from(dec - scale)))
+    } else {
+        Ok(base / U256::from(10u64).pow(U256::from(scale - dec)))
+    }
+}
+
 /// A token amount, optionally priced. `usd == None` means *not priced* (never a fabricated zero).
+/// The `raw` base-unit integer is the source of truth; `amount` is its human-scaled view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Amount {
     /// The token.
     pub token: Token,
+    /// The exact raw quantity in base units (`amount * 10^decimals`).
+    pub raw: U256,
     /// Human-scaled amount (base units divided by `10^decimals`).
     pub amount: Decimal,
     /// USD value if a price was available.
     pub usd: Option<Money>,
+}
+
+impl Amount {
+    /// Build from a raw base-unit integer (the source of truth), scaling to a human [`Decimal`].
+    /// `usd` is left `None`.
+    pub fn from_raw(token: Token, raw: U256) -> Result<Self, Error> {
+        let amount = scaled(raw, token.decimals)?;
+        Ok(Amount {
+            token,
+            raw,
+            amount,
+            usd: None,
+        })
+    }
+
+    /// Build from a human [`Decimal`] amount, reconstructing the raw base-unit integer via
+    /// [`to_raw`]. `usd` is left `None`.
+    pub fn from_decimal(token: Token, amount: Decimal) -> Result<Self, Error> {
+        let raw = to_raw(amount, token.decimals)?;
+        Ok(Amount {
+            token,
+            raw,
+            amount,
+            usd: None,
+        })
+    }
+
+    /// Attach a USD value (builder-style).
+    #[must_use]
+    pub fn with_usd(mut self, usd: Option<Money>) -> Self {
+        self.usd = usd;
+        self
+    }
 }
 
 /// A token held idle in the wallet — not deployed in any protocol.
@@ -256,4 +317,43 @@ pub struct Reading {
     pub positions: Vec<Position>,
     /// Where/when this reading came from.
     pub provenance: Provenance,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scaled_and_to_raw_round_trip() {
+        // 1.5 USDC (6 decimals) = 1_500_000 base units.
+        let raw = U256::from(1_500_000u64);
+        let dec = scaled(raw, 6).unwrap();
+        assert_eq!(dec, Decimal::from_str_exact("1.5").unwrap());
+        assert_eq!(to_raw(dec, 6).unwrap(), raw);
+    }
+
+    #[test]
+    fn to_raw_drops_sub_base_unit_digits() {
+        // More fractional digits than the token has decimals: excess precision is truncated.
+        let over = Decimal::from_str_exact("1.2345678").unwrap(); // 7 dp for a 6-dp token
+        assert_eq!(to_raw(over, 6).unwrap(), U256::from(1_234_567u64));
+    }
+
+    #[test]
+    fn to_raw_rejects_negative() {
+        assert!(to_raw(Decimal::from_str_exact("-1").unwrap(), 6).is_err());
+    }
+
+    #[test]
+    fn from_raw_sets_both_views() {
+        let t = Token {
+            symbol: "WETH".into(),
+            address: None,
+            decimals: 18,
+        };
+        let a = Amount::from_raw(t, U256::from(2_000_000_000_000_000_000u64)).unwrap();
+        assert_eq!(a.raw, U256::from(2_000_000_000_000_000_000u64));
+        assert_eq!(a.amount, Decimal::from_str_exact("2").unwrap());
+        assert!(a.usd.is_none());
+    }
 }

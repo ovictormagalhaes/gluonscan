@@ -150,6 +150,7 @@ impl ProtocolAdapter for EvmWallet {
 
             positions.push(Position::Wallet(WalletBalance {
                 amount: Amount {
+                    raw: raw_u256,
                     amount: scaled(raw_u256, decimals)?,
                     token: Token {
                         symbol,
@@ -230,6 +231,7 @@ impl ProtocolAdapter for SolanaWallet {
             })?;
             positions.push(Position::Wallet(WalletBalance {
                 amount: Amount {
+                    raw,
                     amount: scaled(raw, b.decimals)?,
                     token: Token {
                         symbol: String::new(),
@@ -342,6 +344,7 @@ impl ProtocolAdapter for BitcoinWallet {
         if sats > 0 {
             positions.push(Position::Wallet(WalletBalance {
                 amount: Amount {
+                    raw: U256::from(sats),
                     amount: scaled(U256::from(sats), 8)?,
                     token: Token {
                         symbol: "BTC".to_string(),

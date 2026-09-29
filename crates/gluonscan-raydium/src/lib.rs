@@ -213,6 +213,7 @@ fn raw_amount(token: Token, raw: U256) -> Result<Amount, Error> {
     let amount = scaled(raw, token.decimals)?;
     Ok(Amount {
         token,
+        raw,
         amount,
         usd: None,
     })

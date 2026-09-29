@@ -172,15 +172,17 @@ fn parse_amounts(list: Option<&serde_json::Value>) -> Result<Vec<Amount>, Error>
                 amount,
                 currency: Currency::Usd,
             });
-        out.push(Amount {
-            token: Token {
-                symbol,
-                address: None,
-                decimals,
-            },
-            amount,
-            usd,
-        });
+        out.push(
+            Amount::from_decimal(
+                Token {
+                    symbol,
+                    address: None,
+                    decimals,
+                },
+                amount,
+            )?
+            .with_usd(usd),
+        );
     }
     Ok(out)
 }

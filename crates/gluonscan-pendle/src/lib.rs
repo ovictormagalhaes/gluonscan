@@ -188,7 +188,12 @@ fn priced_amount(token: Token, raw: U256, price_usd: Option<Decimal>) -> Result<
         }),
         None => None,
     };
-    Ok(Amount { token, amount, usd })
+    Ok(Amount {
+        token,
+        raw,
+        amount,
+        usd,
+    })
 }
 
 /// Read a decimal from a JSON string or number literal (never via `f64`, to avoid precision loss).

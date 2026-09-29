@@ -271,6 +271,7 @@ fn raw_amount(token: Token, raw: U256) -> Result<Amount, Error> {
     let amount = scaled(raw, token.decimals)?;
     Ok(Amount {
         token,
+        raw,
         amount,
         usd: None,
     })
@@ -282,9 +283,5 @@ fn human_amount(token: Token, item: &serde_json::Value, pointer: &str) -> Result
     let amount = Decimal::from_str(&s).map_err(|e| Error::Integrity {
         message: format!("Uniswap `{pointer}` not a decimal: {e}"),
     })?;
-    Ok(Amount {
-        token,
-        amount,
-        usd: None,
-    })
+    Amount::from_decimal(token, amount)
 }
