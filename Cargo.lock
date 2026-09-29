@@ -1039,6 +1039,7 @@ dependencies = [
  "async-trait",
  "gluonscan-aave",
  "gluonscan-core",
+ "gluonscan-holdings",
  "gluonscan-kamino",
  "gluonscan-pendle",
  "gluonscan-raydium",
@@ -1079,6 +1080,19 @@ dependencies = [
  "alloy-primitives",
  "gluonscan-core",
  "serde_json",
+]
+
+[[package]]
+name = "gluonscan-holdings"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-testing",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

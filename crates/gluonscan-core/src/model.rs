@@ -132,10 +132,10 @@ pub struct Amount {
     pub usd: Option<Money>,
 }
 
-/// A plain wallet holding.
+/// A token held idle in the wallet — not deployed in any protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Holding {
-    /// The held amount.
+pub struct WalletBalance {
+    /// The idle token amount.
     pub amount: Amount,
 }
 
@@ -203,6 +203,19 @@ pub struct YieldPosition {
     pub expiry: Option<Timestamp>,
 }
 
+/// An NFT held by the wallet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NftPosition {
+    /// The collection identifier (contract address or program id).
+    pub collection: String,
+    /// The token id within the collection.
+    pub token_id: String,
+    /// The item's name, when available.
+    pub name: Option<String>,
+    /// A floor price, when available.
+    pub floor_price: Option<Money>,
+}
+
 /// A locked/staked position.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LockPosition {
@@ -216,8 +229,8 @@ pub struct LockPosition {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Position {
-    /// A wallet holding.
-    Holding(Holding),
+    /// A token held idle in the wallet (not in any protocol).
+    Wallet(WalletBalance),
     /// A lending position.
     Lending(LendingPosition),
     /// A liquidity position.
@@ -226,6 +239,8 @@ pub enum Position {
     Lock(LockPosition),
     /// A yield-bearing token position.
     Yield(YieldPosition),
+    /// An NFT holding.
+    Nft(NftPosition),
 }
 
 /// A protocol's normalized reading for one wallet on one chain, with provenance.

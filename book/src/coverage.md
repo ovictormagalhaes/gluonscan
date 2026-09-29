@@ -19,6 +19,6 @@ A protocol binds only to the chains it supports; enabling it elsewhere is a conf
 
 ## Position kinds
 
-`Holding`, `LendingPosition` (supplies/borrows/health factor), `LiquidityPosition` (principal,
-uncollected/deposited/withdrawn/collected fees, tick range, in-range), `LockPosition`,
-`YieldPosition` (PT/YT with maturity).
+`WalletBalance` (idle tokens not in any protocol), `LendingPosition` (supplies/borrows/health
+factor), `LiquidityPosition` (principal, uncollected/deposited/withdrawn/collected fees, tick range,
+in-range), `LockPosition`, `YieldPosition` (PT/YT with maturity), `NftPosition`.

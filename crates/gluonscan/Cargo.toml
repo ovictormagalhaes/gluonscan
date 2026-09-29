@@ -19,6 +19,7 @@ gluonscan-pendle = { workspace = true }
 gluonscan-kamino = { workspace = true }
 gluonscan-raydium = { workspace = true }
 gluonscan-sources = { workspace = true }
+gluonscan-holdings = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 rust_decimal = { workspace = true }

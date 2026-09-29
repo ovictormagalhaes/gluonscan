@@ -21,8 +21,9 @@ mod chain;
 pub use chain::{Chain, Ecosystem};
 pub use error::Error;
 pub use model::{
-    scaled, Amount, Complete, Currency, Holding, LendingPosition, LiquidityPosition, LockPosition,
-    Money, Position, Provenance, Reading, Staleness, Timestamp, Token, YieldKind, YieldPosition,
+    scaled, Amount, Complete, Currency, LendingPosition, LiquidityPosition, LockPosition, Money,
+    NftPosition, Position, Provenance, Reading, Staleness, Timestamp, Token, WalletBalance,
+    YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 
@@ -36,6 +37,8 @@ pub enum Wallet {
     Evm(Address),
     /// A Solana base58 public key.
     Solana(String),
+    /// A Bitcoin address.
+    Bitcoin(String),
 }
 
 impl Wallet {
@@ -43,7 +46,7 @@ impl Wallet {
     pub fn evm(&self) -> Result<Address, Error> {
         match self {
             Wallet::Evm(a) => Ok(*a),
-            Wallet::Solana(_) => Err(Error::Permanent {
+            _ => Err(Error::Permanent {
                 message: "expected an EVM wallet".into(),
             }),
         }
@@ -53,8 +56,18 @@ impl Wallet {
     pub fn solana(&self) -> Result<&str, Error> {
         match self {
             Wallet::Solana(s) => Ok(s),
-            Wallet::Evm(_) => Err(Error::Permanent {
+            _ => Err(Error::Permanent {
                 message: "expected a Solana wallet".into(),
+            }),
+        }
+    }
+
+    /// The Bitcoin address, or a permanent error if this is not a Bitcoin wallet.
+    pub fn bitcoin(&self) -> Result<&str, Error> {
+        match self {
+            Wallet::Bitcoin(s) => Ok(s),
+            _ => Err(Error::Permanent {
+                message: "expected a Bitcoin wallet".into(),
             }),
         }
     }
@@ -75,6 +88,10 @@ pub enum Protocol {
     Raydium,
     /// Kamino lending/liquidity (Solana).
     Kamino,
+    /// Idle wallet token balances (not a protocol; a capability).
+    Wallet,
+    /// Wallet NFT holdings.
+    Nfts,
 }
 
 /// The backend a reading came from. A protocol can expose the same [`Capability`] through more
