@@ -24,7 +24,7 @@ pub use gluonscan_core::*;
 pub use gluonscan_kamino::KaminoApi;
 pub use gluonscan_pendle::PendleApi;
 pub use gluonscan_raydium::RaydiumClmm;
-pub use gluonscan_sources::CoinGecko;
+pub use gluonscan_sources::{CoinGecko, CoinMarketCap};
 pub use gluonscan_uniswap::UniswapV3;
 
 /// A `reqwest`-backed [`Http`] client. Configuration (timeouts, keys, retries) lives here, not in
@@ -50,51 +50,47 @@ impl Default for ReqwestHttp {
 
 #[async_trait]
 impl Http for ReqwestHttp {
-    async fn post(&self, url: &str, body: String) -> Result<String, Error> {
-        let resp = self
+    async fn post(
+        &self,
+        url: &str,
+        body: String,
+        headers: &[(&str, &str)],
+    ) -> Result<String, Error> {
+        let mut req = self
             .client
             .post(url)
             .header("content-type", "application/json")
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| Error::Transient {
-                message: e.to_string(),
-                retry_after: None,
-            })?;
-        if resp.status().as_u16() == 429 {
-            return Err(Error::Transient {
-                message: "HTTP 429".into(),
-                retry_after: None,
-            });
+            .body(body);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
         }
-        resp.text().await.map_err(|e| Error::Transient {
-            message: e.to_string(),
-            retry_after: None,
-        })
+        read_body(req).await
     }
 
-    async fn get(&self, url: &str) -> Result<String, Error> {
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| Error::Transient {
-                message: e.to_string(),
-                retry_after: None,
-            })?;
-        if resp.status().as_u16() == 429 {
-            return Err(Error::Transient {
-                message: "HTTP 429".into(),
-                retry_after: None,
-            });
+    async fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<String, Error> {
+        let mut req = self.client.get(url);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
         }
-        resp.text().await.map_err(|e| Error::Transient {
-            message: e.to_string(),
-            retry_after: None,
-        })
+        read_body(req).await
     }
+}
+
+async fn read_body(req: reqwest::RequestBuilder) -> Result<String, Error> {
+    let resp = req.send().await.map_err(|e| Error::Transient {
+        message: e.to_string(),
+        retry_after: None,
+    })?;
+    if resp.status().as_u16() == 429 {
+        return Err(Error::Transient {
+            message: "HTTP 429".into(),
+            retry_after: None,
+        });
+    }
+    resp.text().await.map_err(|e| Error::Transient {
+        message: e.to_string(),
+        retry_after: None,
+    })
 }
 
 /// A clock backed by the system time.

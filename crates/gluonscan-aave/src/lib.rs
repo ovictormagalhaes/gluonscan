@@ -101,7 +101,7 @@ impl ProtocolAdapter for AaveApi {
 
         let user = format!("{owner:#x}");
         let body = query_body(market, chain_id, &user);
-        let raw = cx.http.post(self.endpoint(), body).await?;
+        let raw = cx.http.post(self.endpoint(), body, &[]).await?;
 
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
             message: format!("Aave response was not valid JSON: {e}"),

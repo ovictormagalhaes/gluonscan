@@ -89,7 +89,7 @@ impl ProtocolAdapter for PendleApi {
 
         // 1. Catalog (wallet-independent): every PT/YT for the chain.
         let url = format!("{}/v1/{}/markets", self.base(), chain_id);
-        let raw = cx.http.get(&url).await?;
+        let raw = cx.http.get(&url, &[]).await?;
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
             message: format!("Pendle catalog not JSON: {e}"),
         })?;

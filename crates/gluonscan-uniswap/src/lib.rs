@@ -90,7 +90,7 @@ impl ProtocolAdapter for UniswapV3 {
         let owner = owner.evm()?;
 
         let body = query_body(&format!("{owner:#x}"));
-        let raw = cx.http.post(&self.subgraph_url(chain), body).await?;
+        let raw = cx.http.post(&self.subgraph_url(chain), body, &[]).await?;
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
             message: format!("Uniswap subgraph response not JSON: {e}"),
         })?;

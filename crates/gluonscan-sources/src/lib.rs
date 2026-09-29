@@ -61,11 +61,81 @@ impl PriceSource for CoinGecko {
             "{}/api/v3/simple/token_price/{platform}?contract_addresses={addr}&vs_currencies=usd",
             self.base
         );
-        let raw = self.http.get(&url).await?;
+        let raw = self.http.get(&url, &[]).await?;
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
             message: format!("CoinGecko response not JSON: {e}"),
         })?;
         json.pointer(&format!("/{addr}/usd"))
+            .and_then(json_decimal)
+            .ok_or(Error::AbsentPrice { asset: addr })
+    }
+}
+
+const CMC_API: &str = "https://pro-api.coinmarketcap.com";
+
+/// CoinMarketCap price source. Prices an EVM token by resolving its contract address to a CMC id
+/// (`/v1/cryptocurrency/info`) and then quoting it (`/v2/cryptocurrency/quotes/latest`). Uses the
+/// `X-CMC_PRO_API_KEY` header — the reason the [`Http`] port carries headers.
+pub struct CoinMarketCap {
+    http: Arc<dyn Http>,
+    base: String,
+    api_key: String,
+}
+
+impl CoinMarketCap {
+    /// Construct with an injected HTTP client and a CMC Pro API key.
+    pub fn new(http: Arc<dyn Http>, api_key: impl Into<String>) -> Self {
+        CoinMarketCap {
+            http,
+            base: CMC_API.to_string(),
+            api_key: api_key.into(),
+        }
+    }
+
+    /// Override the API base (a proxy or a test double).
+    pub fn with_base(mut self, url: impl Into<String>) -> Self {
+        self.base = url.into();
+        self
+    }
+}
+
+#[async_trait]
+impl PriceSource for CoinMarketCap {
+    async fn price_usd(&self, _chain: Chain, token: Address) -> Result<Decimal, Error> {
+        let addr = format!("{token:#x}");
+        let headers = [("X-CMC_PRO_API_KEY", self.api_key.as_str())];
+
+        // 1. Resolve the contract address to a CMC id.
+        let info_url = format!("{}/v1/cryptocurrency/info?address={addr}", self.base);
+        let info_raw = self.http.get(&info_url, &headers).await?;
+        let info: serde_json::Value =
+            serde_json::from_str(&info_raw).map_err(|e| Error::Integrity {
+                message: format!("CMC info response not JSON: {e}"),
+            })?;
+        let id = info
+            .pointer("/data")
+            .and_then(|d| d.as_object())
+            .and_then(|o| o.values().next())
+            .and_then(|entry| entry.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|c| c.get("id"))
+            .and_then(|i| i.as_u64())
+            .ok_or_else(|| Error::AbsentPrice {
+                asset: addr.clone(),
+            })?;
+
+        // 2. Quote it in USD.
+        let quote_url = format!(
+            "{}/v2/cryptocurrency/quotes/latest?id={id}&convert=USD",
+            self.base
+        );
+        let quote_raw = self.http.get(&quote_url, &headers).await?;
+        let quote: serde_json::Value =
+            serde_json::from_str(&quote_raw).map_err(|e| Error::Integrity {
+                message: format!("CMC quote response not JSON: {e}"),
+            })?;
+        quote
+            .pointer(&format!("/data/{id}/quote/USD/price"))
             .and_then(json_decimal)
             .ok_or(Error::AbsentPrice { asset: addr })
     }

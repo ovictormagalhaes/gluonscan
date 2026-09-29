@@ -204,7 +204,12 @@ impl MockHttp {
 
 #[async_trait]
 impl Http for MockHttp {
-    async fn post(&self, url: &str, body: String) -> Result<String, Error> {
+    async fn post(
+        &self,
+        url: &str,
+        body: String,
+        _headers: &[(&str, &str)],
+    ) -> Result<String, Error> {
         self.calls
             .lock()
             .unwrap()
@@ -216,7 +221,7 @@ impl Http for MockHttp {
             .ok_or_else(|| no_match(url, &body))
     }
 
-    async fn get(&self, url: &str) -> Result<String, Error> {
+    async fn get(&self, url: &str, _headers: &[(&str, &str)]) -> Result<String, Error> {
         self.calls
             .lock()
             .unwrap()

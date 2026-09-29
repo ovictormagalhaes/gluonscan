@@ -14,11 +14,16 @@ use std::sync::Arc;
 /// timeouts, retries and rate limits live with the host, and tests can replay recorded fixtures.
 #[async_trait]
 pub trait Http: Send + Sync + 'static {
-    /// POST a request body to `url` and return the raw response body.
-    async fn post(&self, url: &str, body: String) -> Result<String, Error>;
+    /// POST a request body to `url` with extra request headers, returning the raw response body.
+    async fn post(
+        &self,
+        url: &str,
+        body: String,
+        headers: &[(&str, &str)],
+    ) -> Result<String, Error>;
 
-    /// GET `url` and return the raw response body.
-    async fn get(&self, url: &str) -> Result<String, Error>;
+    /// GET `url` with extra request headers, returning the raw response body.
+    async fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<String, Error>;
 }
 
 /// An injected JSON-RPC / on-chain transport. Used by on-chain adapters (not by API adapters).

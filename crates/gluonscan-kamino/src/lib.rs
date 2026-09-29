@@ -88,7 +88,7 @@ impl ProtocolAdapter for KaminoApi {
                 "{}/kamino-market/{market}/users/{wallet}/obligations",
                 self.base()
             );
-            let raw = cx.http.get(&url).await?;
+            let raw = cx.http.get(&url, &[]).await?;
             let obligations: serde_json::Value =
                 serde_json::from_str(&raw).map_err(|e| Error::Integrity {
                     message: format!("Kamino obligations not JSON: {e}"),
