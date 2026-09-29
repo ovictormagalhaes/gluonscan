@@ -207,8 +207,7 @@ fn parse_amounts(
         // A present-but-null usd is "not priced" (kept as None); we never fabricate a value.
         let usd = balance
             .get("usd")
-            .and_then(|v| v.as_str())
-            .and_then(|s| Decimal::from_str(s).ok())
+            .and_then(json_decimal)
             .map(|amount| Money {
                 amount,
                 currency: Currency::Usd,
@@ -225,6 +224,17 @@ fn parse_amounts(
         });
     }
     Ok(out)
+}
+
+/// Read a decimal from a JSON string or number literal (never via `f64`).
+fn json_decimal(v: &serde_json::Value) -> Option<Decimal> {
+    if let Some(s) = v.as_str() {
+        Decimal::from_str(s).ok()
+    } else if v.is_number() {
+        Decimal::from_str(&v.to_string()).ok()
+    } else {
+        None
+    }
 }
 
 fn parse_health_factor(state: Option<&serde_json::Value>) -> Option<Decimal> {

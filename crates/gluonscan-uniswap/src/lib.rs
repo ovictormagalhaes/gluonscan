@@ -10,8 +10,8 @@ use std::str::FromStr;
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Detail, Error, LiquidityPosition, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
+    scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, LiquidityPosition, Position,
+    Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
 };
 use gluonscan_evm::{decode_two_u256, encode_collect, eth_call};
 use gluonscan_math::{
@@ -168,8 +168,8 @@ impl UniswapV3 {
             liq,
         );
         let assets = vec![
-            raw_amount(token0.clone(), amt0),
-            raw_amount(token1.clone(), amt1),
+            raw_amount(token0.clone(), amt0)?,
+            raw_amount(token1.clone(), amt1)?,
         ];
 
         // Lifetime totals — the subgraph reports these as human-scaled decimals.
@@ -196,10 +196,10 @@ impl UniswapV3 {
                 message: format!("no Uniswap position manager for {chain:?}"),
             })?;
             let data = encode_collect(token_id, owner);
-            let out = eth_call(cx.rpc()?.as_ref(), chain, manager, data).await?;
+            let out = eth_call(cx.rpc()?.as_ref(), chain, Some(owner), manager, data).await?;
             let (fee0, fee1) = decode_two_u256(&out)?;
-            uncollected_fees.push(raw_amount(token0.clone(), fee0));
-            uncollected_fees.push(raw_amount(token1.clone(), fee1));
+            uncollected_fees.push(raw_amount(token0.clone(), fee0)?);
+            uncollected_fees.push(raw_amount(token1.clone(), fee1)?);
         }
 
         Ok(Position::Liquidity(LiquidityPosition {
@@ -267,14 +267,13 @@ fn parse_token(v: Option<&serde_json::Value>) -> Result<Token, Error> {
 }
 
 /// Build an [`Amount`] from a raw base-unit integer, scaling by the token's decimals.
-fn raw_amount(token: Token, raw: U256) -> Amount {
-    let scale = token.decimals.min(28) as u32;
-    let mantissa: i128 = raw.to_string().parse().unwrap_or(i128::MAX);
-    Amount {
-        amount: Decimal::from_i128_with_scale(mantissa, scale),
+fn raw_amount(token: Token, raw: U256) -> Result<Amount, Error> {
+    let amount = scaled(raw, token.decimals)?;
+    Ok(Amount {
         token,
+        amount,
         usd: None,
-    }
+    })
 }
 
 /// Build an [`Amount`] from a subgraph BigDecimal (already in human token units).

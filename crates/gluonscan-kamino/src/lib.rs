@@ -93,9 +93,13 @@ impl ProtocolAdapter for KaminoApi {
                 serde_json::from_str(&raw).map_err(|e| Error::Integrity {
                     message: format!("Kamino obligations not JSON: {e}"),
                 })?;
-            let Some(items) = obligations.as_array() else {
-                continue;
-            };
+            // A 200 with an unexpected (non-array) shape is a source failure, not "no positions":
+            // fail closed rather than silently drop this market's obligations.
+            let items = obligations.as_array().ok_or_else(|| Error::Integrity {
+                message: format!(
+                    "Kamino market {market} returned a non-array obligations response"
+                ),
+            })?;
             for ob in items {
                 positions.push(Position::Lending(parse_obligation(ob)?));
             }
@@ -123,8 +127,7 @@ fn parse_obligation(ob: &serde_json::Value) -> Result<LendingPosition, Error> {
     let borrowed = parse_amounts(ob.get("borrows"))?;
     let health_factor = ob
         .pointer("/refreshedStats/healthFactor")
-        .and_then(|v| v.as_str())
-        .and_then(|s| Decimal::from_str(s).ok());
+        .and_then(json_decimal);
 
     if !borrowed.is_empty() && health_factor.is_none() {
         return Err(Error::Integrity {
@@ -158,15 +161,13 @@ fn parse_amounts(list: Option<&serde_json::Value>) -> Result<Vec<Amount>, Error>
             })? as u8;
         let amount = item
             .get("amount")
-            .and_then(|a| a.as_str())
-            .and_then(|s| Decimal::from_str(s).ok())
+            .and_then(json_decimal)
             .ok_or_else(|| Error::Integrity {
                 message: format!("Kamino asset `{symbol}` missing amount"),
             })?;
         let usd = item
             .get("usdValue")
-            .and_then(|v| v.as_str())
-            .and_then(|s| Decimal::from_str(s).ok())
+            .and_then(json_decimal)
             .map(|amount| Money {
                 amount,
                 currency: Currency::Usd,
@@ -182,4 +183,15 @@ fn parse_amounts(list: Option<&serde_json::Value>) -> Result<Vec<Amount>, Error>
         });
     }
     Ok(out)
+}
+
+/// Read a decimal from a JSON string or number literal (never via `f64`).
+fn json_decimal(v: &serde_json::Value) -> Option<Decimal> {
+    if let Some(s) = v.as_str() {
+        Decimal::from_str(s).ok()
+    } else if v.is_number() {
+        Decimal::from_str(&v.to_string()).ok()
+    } else {
+        None
+    }
 }

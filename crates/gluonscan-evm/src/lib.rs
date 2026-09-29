@@ -12,11 +12,17 @@ use gluonscan_core::{Chain, ChainProvider, Error};
 pub async fn eth_call(
     rpc: &dyn ChainProvider,
     chain: Chain,
+    from: Option<Address>,
     to: Address,
     data: Vec<u8>,
 ) -> Result<Vec<u8>, Error> {
+    // `from` matters for calls guarded by msg.sender (e.g. Uniswap's collect() authorization).
+    let from_field = match from {
+        Some(f) => format!(r#""from":"{f:#x}","#),
+        None => String::new(),
+    };
     let params = format!(
-        r#"[{{"to":"{to:#x}","data":"0x{}"}},"latest"]"#,
+        r#"[{{{from_field}"to":"{to:#x}","data":"0x{}"}},"latest"]"#,
         hex::encode(&data)
     );
     let raw = rpc.call(chain, "eth_call", params).await?;

@@ -21,8 +21,8 @@ mod chain;
 pub use chain::{Chain, Ecosystem};
 pub use error::Error;
 pub use model::{
-    Amount, Complete, Currency, Holding, LendingPosition, LiquidityPosition, LockPosition, Money,
-    Position, Provenance, Reading, Staleness, Timestamp, Token, YieldKind, YieldPosition,
+    scaled, Amount, Complete, Currency, Holding, LendingPosition, LiquidityPosition, LockPosition,
+    Money, Position, Provenance, Reading, Staleness, Timestamp, Token, YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 
@@ -30,7 +30,7 @@ pub use alloy_primitives::Address;
 
 /// A wallet identifier across ecosystems.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Wallet {
     /// An EVM address.
     Evm(Address),
@@ -111,6 +111,7 @@ pub enum Capability {
 /// The **minimum** detail a caller requests, which is also the cost ceiling it accepts. An adapter
 /// runs the cheapest fetch plan that satisfies it; receiving richer-than-requested (when free) is
 /// fine, doing extra work is not.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Detail {
     /// Does the wallet hold anything in this protocol?

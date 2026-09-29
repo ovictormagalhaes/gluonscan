@@ -1,13 +1,50 @@
 //! Normalized domain model — the shapes a fetch returns, already converted and priced.
 
-use crate::{Chain, Protocol, Source};
-use alloy_primitives::Address;
+use crate::{Chain, Error, Protocol, Source};
+use alloy_primitives::{Address, U256};
 use rust_decimal::Decimal;
+use std::str::FromStr;
+
+/// Convert a raw base-unit integer to a human-scaled [`Decimal`].
+///
+/// Returns [`Error::Integrity`] (never panics, never fabricates) if the token declares more than 28
+/// decimals or the value exceeds `Decimal`'s range. Splits into integer and fractional parts so a
+/// large balance does not overflow `Decimal`'s 96-bit mantissa on the way in.
+pub fn scaled(raw: U256, decimals: u8) -> Result<Decimal, Error> {
+    if decimals > 28 {
+        return Err(Error::Integrity {
+            message: format!("token has {decimals} decimals (>28 is unsupported)"),
+        });
+    }
+    let pow = U256::from(10u64).pow(U256::from(decimals));
+    let int_part = raw / pow;
+    let frac_part = raw % pow;
+    let int_dec = Decimal::from_str(&int_part.to_string()).map_err(|_| Error::Integrity {
+        message: "amount exceeds Decimal range".into(),
+    })?;
+    let frac_i128: i128 = frac_part
+        .to_string()
+        .parse()
+        .map_err(|_| Error::Integrity {
+            message: "amount fractional overflow".into(),
+        })?;
+    let frac_dec = Decimal::try_from_i128_with_scale(frac_i128, decimals as u32).map_err(|_| {
+        Error::Integrity {
+            message: "amount scale overflow".into(),
+        }
+    })?;
+    int_dec
+        .checked_add(frac_dec)
+        .ok_or_else(|| Error::Integrity {
+            message: "amount overflow".into(),
+        })
+}
 
 /// A value that is guaranteed complete. There is **no public constructor for a partial value**:
 /// [`Complete::new`] wraps an already-assembled `T`, and an adapter only calls it once every
 /// required source has succeeded. Incomplete data is therefore untypeable at the API boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
 pub struct Complete<T>(T);
 
 impl<T> Complete<T> {

@@ -11,9 +11,9 @@ use std::str::FromStr;
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Currency, Detail, Error, Money, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet, YieldKind,
-    YieldPosition,
+    scaled, Amount, Capability, Chain, Complete, Ctx, Currency, Detail, Error, Money, Position,
+    Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet,
+    YieldKind, YieldPosition,
 };
 use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
@@ -125,13 +125,13 @@ impl ProtocolAdapter for PendleApi {
             let token_addr = c.token.address.ok_or_else(|| Error::Integrity {
                 message: format!("Pendle token `{}` has no address", c.token.symbol),
             })?;
-            let out = eth_call(rpc, chain, token_addr, encode_balance_of(owner)).await?;
+            let out = eth_call(rpc, chain, None, token_addr, encode_balance_of(owner)).await?;
             let balance = decode_u256(&out)?;
             if balance.is_zero() {
                 continue;
             }
             positions.push(Position::Yield(YieldPosition {
-                amount: priced_amount(c.token, balance, c.price_usd),
+                amount: priced_amount(c.token, balance, c.price_usd)?,
                 kind: c.kind,
                 expiry: c.expiry,
             }));
@@ -177,15 +177,18 @@ fn parse_token(v: &serde_json::Value) -> Result<Token, Error> {
     })
 }
 
-fn priced_amount(token: Token, raw: U256, price_usd: Option<Decimal>) -> Amount {
-    let scale = token.decimals.min(28) as u32;
-    let mantissa: i128 = raw.to_string().parse().unwrap_or(i128::MAX);
-    let amount = Decimal::from_i128_with_scale(mantissa, scale);
-    let usd = price_usd.map(|p| Money {
-        amount: amount * p,
-        currency: Currency::Usd,
-    });
-    Amount { token, amount, usd }
+fn priced_amount(token: Token, raw: U256, price_usd: Option<Decimal>) -> Result<Amount, Error> {
+    let amount = scaled(raw, token.decimals)?;
+    let usd = match price_usd {
+        Some(p) => Some(Money {
+            amount: amount.checked_mul(p).ok_or_else(|| Error::Integrity {
+                message: "USD value overflow".into(),
+            })?,
+            currency: Currency::Usd,
+        }),
+        None => None,
+    };
+    Ok(Amount { token, amount, usd })
 }
 
 /// Read a decimal from a JSON string or number literal (never via `f64`, to avoid precision loss).

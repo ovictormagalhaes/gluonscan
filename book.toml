@@ -1,0 +1,10 @@
+[book]
+title = "gluonscan"
+description = "The multi-chain read + normalize engine for DeFi portfolios."
+authors = ["Victor Magalhães"]
+language = "en"
+src = "book/src"
+
+[output.html]
+default-theme = "navy"
+git-repository-url = "https://github.com/ovictormagalhaes/gluonscan"

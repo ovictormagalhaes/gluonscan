@@ -58,6 +58,7 @@ pub enum Error {
 
 impl Error {
     /// Whether retrying the operation could succeed.
+    #[must_use]
     pub fn is_retryable(&self) -> bool {
         matches!(self, Error::Transient { .. })
     }

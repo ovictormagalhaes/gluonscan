@@ -11,15 +11,16 @@
 use alloy_primitives::U256;
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Detail, Error, LiquidityPosition, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
+    scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, LiquidityPosition, Position,
+    Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
 };
-use gluonscan_math::{get_amounts_for_liquidity, get_sqrt_ratio_at_tick, is_in_range};
+use gluonscan_math::{
+    get_amounts_for_liquidity, get_sqrt_ratio_at_tick, is_in_range, MAX_TICK, MIN_TICK,
+};
 use gluonscan_solana::{
     find_program_address, get_account_info, get_token_accounts_by_owner, pubkey_bytes, pubkey_str,
     RAYDIUM_CLMM_PROGRAM,
 };
-use rust_decimal::Decimal;
 
 const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Solana];
@@ -137,6 +138,12 @@ async fn parse_position(
         .ok_or_else(|| Error::Integrity {
             message: "Raydium pool account missing or too short".into(),
         })?;
+    if !(MIN_TICK..=MAX_TICK).contains(&tick_lower) || !(MIN_TICK..=MAX_TICK).contains(&tick_upper)
+    {
+        return Err(Error::Integrity {
+            message: format!("Raydium ticks out of range: {tick_lower}..{tick_upper}"),
+        });
+    }
     let tick_current = i32_at(&pool, POOL_TICK)?;
     let sqrt_x64 = u128_at(&pool, POOL_SQRT_X64)?;
     let mint0 = pubkey_at(&pool, POOL_MINT0)?;
@@ -166,12 +173,12 @@ async fn parse_position(
 
     Ok(Position::Liquidity(LiquidityPosition {
         assets: vec![
-            raw_amount(token0.clone(), amt0),
-            raw_amount(token1.clone(), amt1),
+            raw_amount(token0.clone(), amt0)?,
+            raw_amount(token1.clone(), amt1)?,
         ],
         uncollected_fees: vec![
-            raw_amount(token0.clone(), U256::from(fee0)),
-            raw_amount(token1.clone(), U256::from(fee1)),
+            raw_amount(token0.clone(), U256::from(fee0))?,
+            raw_amount(token1.clone(), U256::from(fee1))?,
         ],
         deposited: Vec::new(),
         withdrawn: Vec::new(),
@@ -202,14 +209,13 @@ async fn mint_decimals(
         })
 }
 
-fn raw_amount(token: Token, raw: U256) -> Amount {
-    let scale = token.decimals.min(28) as u32;
-    let mantissa: i128 = raw.to_string().parse().unwrap_or(i128::MAX);
-    Amount {
-        amount: Decimal::from_i128_with_scale(mantissa, scale),
+fn raw_amount(token: Token, raw: U256) -> Result<Amount, Error> {
+    let amount = scaled(raw, token.decimals)?;
+    Ok(Amount {
         token,
+        amount,
         usd: None,
-    }
+    })
 }
 
 fn short() -> Error {
