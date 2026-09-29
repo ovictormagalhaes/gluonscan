@@ -374,9 +374,9 @@ impl ProtocolAdapter for BitcoinWallet {
 ///
 /// This reads NFTs the wallet *holds*, distinct from NFTs that are protocol positions (a Uniswap
 /// V3 LP is an ERC-721, but it is read as a [`Position::Liquidity`] by the Uniswap adapter). To
-/// avoid double-counting, contracts in [`PROTOCOL_NFT_CONTRACTS`] are skipped, and NFTs the
-/// indexer flags as spam are dropped. Floor prices are left `None` — pricing is a separate
-/// operation.
+/// avoid double-counting, a known set of protocol-position contracts (e.g. the Uniswap V3
+/// NonfungiblePositionManager) is skipped, and NFTs the indexer flags as spam are dropped. Floor
+/// prices are left `None` — pricing is a separate operation.
 #[derive(Debug, Clone)]
 pub struct EvmNfts {
     base: String,

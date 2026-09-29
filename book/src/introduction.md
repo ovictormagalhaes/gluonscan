@@ -29,6 +29,27 @@ let ledger = engine
     .await?;
 ```
 
-The rest of this book covers the [data-integrity contract](concepts/integrity.md), how
-[detail levels](concepts/detail-levels.md) control cost, how [providers and wallets](concepts/providers.md)
-are injected, and how to [add a protocol adapter](guides/adding-an-adapter.md).
+## Who this is for — choose your path
+
+Different callers use only a slice of the engine. Find your row, jump to the recipe.
+
+| I want to… | Register | Recipe |
+|---|---|---|
+| Read **one protocol** (e.g. just Aave) | that one backend | [By protocol](recipes/by-protocol.md) |
+| Read **everything** a wallet holds | all backends you need | [By protocol](recipes/by-protocol.md) |
+| Read strictly **on-chain** (my own node, no third-party APIs) | ⛓️ backends + an `rpc` | [By source](recipes/by-source.md) |
+| Read via **hosted APIs** (no node to run) | 🌐 backends | [By source](recipes/by-source.md) |
+| Cover **only EVM** chains | EVM backends, `Wallet::Evm` | [By ecosystem](recipes/by-ecosystem.md) |
+| Cover **only Solana** | Solana backends, `Wallet::Solana` | [By ecosystem](recipes/by-ecosystem.md) |
+| Cover **only Bitcoin** | `BitcoinWallet`, `Wallet::Bitcoin` | [By ecosystem](recipes/by-ecosystem.md) |
+| List **idle tokens & NFTs** | wallet / NFT readers | [Wallet & NFTs](recipes/wallet-and-nfts.md) |
+| Put a **USD price** on assets | a price source | [Pricing](recipes/pricing.md) |
+
+Not sure what a backend needs? The [coverage matrix](coverage.md) shows each one's source and the
+transport you must inject.
+
+## The rest of the book
+
+The [data-integrity contract](concepts/integrity.md), how [detail levels](concepts/detail-levels.md)
+control cost, how [providers and wallets](concepts/providers.md) are injected, and how to
+[add a protocol adapter](guides/adding-an-adapter.md).

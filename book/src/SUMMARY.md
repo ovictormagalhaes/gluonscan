@@ -2,6 +2,12 @@
 
 - [Introduction](introduction.md)
 - [Quickstart](quickstart.md)
+- [Recipes by use case](recipes.md)
+  - [By source: on-chain, API, or price](recipes/by-source.md)
+  - [By protocol: one or all](recipes/by-protocol.md)
+  - [By ecosystem: EVM, Solana, or Bitcoin](recipes/by-ecosystem.md)
+  - [Wallet tokens & NFTs](recipes/wallet-and-nfts.md)
+  - [Pricing (a separate operation)](recipes/pricing.md)
 - [Concepts](concepts.md)
   - [The data-integrity contract](concepts/integrity.md)
   - [Detail levels](concepts/detail-levels.md)

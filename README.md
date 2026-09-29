@@ -20,10 +20,22 @@ let reading = engine
     .await?;
 ```
 
+## Coverage
+
+Protocols: **Aave V3**, **Uniswap V3**, **Pendle** (EVM), **Kamino**, **Raydium CLMM** (Solana).
+Wallet balances and NFTs across **EVM, Solana, and Bitcoin**. Pricing via **CoinGecko** /
+**CoinMarketCap** (native coins, EVM tokens, and Solana SPL mints), as a separate operation. See the
+[coverage matrix](book/src/coverage.md) for each backend's source and required transport.
+
+## Different callers use different slices
+
+Read one protocol or all of them; strictly on-chain over your own node or via hosted APIs; only EVM,
+only Solana, only Bitcoin — the [recipes by use case](book/src/recipes.md) show each path in a few
+lines.
+
 ## Status
 
-Early. First vertical slice: **Aave V3 on Ethereum** (API backend). Next: all chains Aave supports,
-then the other protocols one by one.
+Early but broad. APIs are pre-1.0 and may still change.
 
 ## License
 
