@@ -129,6 +129,60 @@ pub async fn get_account_info(
     }
 }
 
+/// A raw SPL token balance held by a wallet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenBalance {
+    /// The token mint (base58).
+    pub mint: String,
+    /// The raw (base-unit) amount, as a decimal string.
+    pub amount_raw: String,
+    /// The mint's decimals.
+    pub decimals: u8,
+}
+
+/// List the wallet's non-zero SPL token balances (fungible + non-fungible alike).
+pub async fn get_token_balances(
+    rpc: &dyn ChainProvider,
+    owner: &str,
+) -> Result<Vec<TokenBalance>, Error> {
+    let params =
+        format!(r#"["{owner}",{{"programId":"{TOKEN_PROGRAM}"}},{{"encoding":"jsonParsed"}}]"#);
+    let raw = rpc
+        .call(Chain::Solana, "getTokenAccountsByOwner", params)
+        .await?;
+    let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+        message: format!("getTokenAccountsByOwner response not JSON: {e}"),
+    })?;
+    let accounts = json
+        .pointer("/result/value")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::Integrity {
+            message: "getTokenAccountsByOwner missing result.value".into(),
+        })?;
+
+    let mut out = Vec::new();
+    for acc in accounts {
+        let info = acc.pointer("/account/data/parsed/info");
+        let amount = info
+            .and_then(|i| i.pointer("/tokenAmount/amount"))
+            .and_then(|a| a.as_str());
+        let decimals = info
+            .and_then(|i| i.pointer("/tokenAmount/decimals"))
+            .and_then(|d| d.as_u64());
+        let mint = info.and_then(|i| i.get("mint")).and_then(|m| m.as_str());
+        if let (Some(amount), Some(decimals), Some(mint)) = (amount, decimals, mint) {
+            if amount != "0" {
+                out.push(TokenBalance {
+                    mint: mint.to_string(),
+                    amount_raw: amount.to_string(),
+                    decimals: decimals as u8,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

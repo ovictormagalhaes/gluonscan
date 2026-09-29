@@ -1091,6 +1091,7 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "gluonscan-core",
+ "gluonscan-solana",
  "gluonscan-testing",
  "rust_decimal",
  "serde_json",

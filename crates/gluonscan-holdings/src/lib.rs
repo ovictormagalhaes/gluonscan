@@ -15,6 +15,7 @@ use gluonscan_core::{
     scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol,
     ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet, WalletBalance,
 };
+use gluonscan_solana::get_token_balances;
 
 const MORALIS_API: &str = "https://deep-index.moralis.io/api/v2.2";
 const CAPABILITIES: &[Capability] = &[Capability::Positions];
@@ -150,6 +151,86 @@ impl ProtocolAdapter for EvmTokenHoldings {
             provenance: Provenance {
                 source: Source::Api,
                 chain,
+                block: None,
+                at: cx.clock.now(),
+                staleness: Staleness::Live,
+            },
+        };
+        Ok(Complete::new(reading))
+    }
+}
+
+/// Solana SPL token balances (idle tokens in the wallet) via the injected on-chain transport.
+#[derive(Debug, Default, Clone)]
+pub struct SolanaTokenHoldings;
+
+impl SolanaTokenHoldings {
+    /// Construct the reader.
+    pub fn new() -> Self {
+        SolanaTokenHoldings
+    }
+}
+
+#[async_trait]
+impl ProtocolAdapter for SolanaTokenHoldings {
+    fn protocol(&self) -> Protocol {
+        Protocol::Wallet
+    }
+
+    fn source(&self) -> Source {
+        Source::OnChain
+    }
+
+    fn capabilities(&self) -> &'static [Capability] {
+        CAPABILITIES
+    }
+
+    fn supported_chains(&self) -> &'static [Chain] {
+        &[Chain::Solana]
+    }
+
+    async fn read(
+        &self,
+        owner: &Wallet,
+        chain: Chain,
+        _detail: Detail,
+        cx: &Ctx,
+    ) -> Result<Complete<Reading>, Error> {
+        if chain != Chain::Solana {
+            return Err(Error::Permanent {
+                message: format!("Solana holdings only; got {chain:?}"),
+            });
+        }
+        let wallet = owner.solana()?;
+        let rpc = cx.rpc()?.as_ref();
+
+        let balances = get_token_balances(rpc, wallet).await?;
+        let mut positions = Vec::with_capacity(balances.len());
+        for b in balances {
+            let raw = U256::from_str(&b.amount_raw).map_err(|e| Error::Integrity {
+                message: format!("Solana balance not a number: {e}"),
+            })?;
+            positions.push(Position::Wallet(WalletBalance {
+                amount: Amount {
+                    amount: scaled(raw, b.decimals)?,
+                    token: Token {
+                        symbol: String::new(),
+                        address: None,
+                        decimals: b.decimals,
+                    },
+                    usd: None,
+                },
+            }));
+        }
+
+        let reading = Reading {
+            protocol: Protocol::Wallet,
+            chain: Chain::Solana,
+            source: Source::OnChain,
+            positions,
+            provenance: Provenance {
+                source: Source::OnChain,
+                chain: Chain::Solana,
                 block: None,
                 at: cx.clock.now(),
                 staleness: Staleness::Live,
