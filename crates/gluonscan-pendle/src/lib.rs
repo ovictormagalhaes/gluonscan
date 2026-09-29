@@ -127,6 +127,9 @@ impl ProtocolAdapter for PendleApi {
         // 2. On-chain balances; any non-zero is a held position.
         let rpc = cx.rpc()?.as_ref();
         let mut positions = Vec::new();
+        // PT/YT (and sPENDLE) are ERC-20s the wallet holds; report them as receipt tokens so a
+        // consumer listing raw balances does not double-count them as loose tokens.
+        let mut receipt_tokens = Vec::new();
         for c in candidates {
             let token_addr = c.token.address.ok_or_else(|| Error::Integrity {
                 message: format!("Pendle token `{}` has no address", c.token.symbol),
@@ -136,6 +139,7 @@ impl ProtocolAdapter for PendleApi {
             if balance.is_zero() {
                 continue;
             }
+            receipt_tokens.push(token_addr);
             positions.push(Position::Yield(YieldPosition {
                 amount: priced_amount(c.token, balance, c.price_usd)?,
                 kind: c.kind,
@@ -146,7 +150,7 @@ impl ProtocolAdapter for PendleApi {
 
         // 3. vePENDLE lock + sPENDLE stake live only on Ethereum mainnet.
         if chain == Chain::Ethereum {
-            positions.extend(read_lock_and_stake(rpc, chain, owner).await?);
+            positions.extend(read_lock_and_stake(rpc, chain, owner, &mut receipt_tokens).await?);
         }
 
         let reading = Reading {
@@ -154,6 +158,7 @@ impl ProtocolAdapter for PendleApi {
             chain,
             source: Source::Api,
             positions,
+            receipt_tokens,
             provenance: Provenance {
                 source: Source::Api,
                 chain,
@@ -171,6 +176,7 @@ async fn read_lock_and_stake(
     rpc: &dyn ChainProvider,
     chain: Chain,
     owner: Address,
+    receipt_tokens: &mut Vec<Address>,
 ) -> Result<Vec<Position>, Error> {
     // Ethereum mainnet contracts (lowercased so parsing never depends on EIP-55 checksum).
     let pendle_token = Address::from_str("0x808507121b80c02388fad14726482e061b8da827").ok();
@@ -198,6 +204,7 @@ async fn read_lock_and_stake(
                 Amount::from_raw(
                     Token {
                         symbol: "PENDLE".to_string(),
+                        name: None,
                         address: pendle_token,
                         decimals: 18,
                     },
@@ -206,6 +213,7 @@ async fn read_lock_and_stake(
                 Amount::from_raw(
                     Token {
                         symbol: "vePENDLE".to_string(),
+                        name: None,
                         address: Some(ve),
                         decimals: 18,
                     },
@@ -219,10 +227,12 @@ async fn read_lock_and_stake(
     // sPENDLE liquid staking: balanceOf(user).
     let sp = decode_u256(&eth_call(rpc, chain, None, spendle, encode_balance_of(owner)).await?)?;
     if sp > U256::ZERO {
+        receipt_tokens.push(spendle);
         out.push(Position::Stake(StakePosition {
             staked: vec![Amount::from_raw(
                 Token {
                     symbol: "sPENDLE".to_string(),
+                    name: None,
                     address: Some(spendle),
                     decimals: 18,
                 },
@@ -250,8 +260,10 @@ fn parse_token(v: &serde_json::Value) -> Result<Token, Error> {
         .get("address")
         .and_then(|s| s.as_str())
         .and_then(|s| Address::from_str(s).ok());
+    let name = v.get("name").and_then(|s| s.as_str()).map(str::to_string);
     Ok(Token {
         symbol,
+        name,
         address,
         decimals,
     })

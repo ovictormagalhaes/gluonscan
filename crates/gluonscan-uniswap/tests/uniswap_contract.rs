@@ -50,6 +50,7 @@ async fn full_returns_the_complete_position() {
     assert_eq!(p.fee_tier_bps, Some(3000));
     assert_eq!((p.tick_lower, p.tick_upper, p.tick_current), (-60, 60, 0));
     assert!(p.in_range);
+    assert_eq!(p.status, gluonscan_core::PositionStatus::Active); // has liquidity
 
     // principal amounts (from the Q64.96 math) — in range, so both sides are held
     assert_eq!(p.assets.len(), 2);

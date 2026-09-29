@@ -11,7 +11,8 @@ use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
     scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, LiquidityPosition, Position,
-    Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
+    PositionStatus, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token,
+    Wallet,
 };
 use gluonscan_evm::{decode_two_u256, encode_collect, eth_call};
 use gluonscan_math::{
@@ -115,6 +116,7 @@ impl ProtocolAdapter for UniswapV3 {
             chain,
             source: Source::Subgraph,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::Subgraph,
                 chain,
@@ -217,6 +219,13 @@ impl UniswapV3 {
             collected_fees,
             // The subgraph position does not expose an APR; a consumer derives it from pool stats.
             apr: None,
+            // Zero-liquidity positions are returned (not dropped) so the consumer can account for
+            // a dormant LP without it touching totals.
+            status: if liquidity == "0" {
+                PositionStatus::Inactive
+            } else {
+                PositionStatus::Active
+            },
         }))
     }
 }
@@ -261,8 +270,13 @@ fn parse_token(v: Option<&serde_json::Value>) -> Result<Token, Error> {
         .pointer("/id")
         .and_then(|s| s.as_str())
         .and_then(|s| Address::from_str(s).ok());
+    let name = v
+        .pointer("/name")
+        .and_then(|s| s.as_str())
+        .map(str::to_string);
     Ok(Token {
         symbol,
+        name,
         address,
         decimals,
     })

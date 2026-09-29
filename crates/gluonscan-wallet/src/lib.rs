@@ -158,6 +158,7 @@ impl ProtocolAdapter for EvmWallet {
                 .get("token_address")
                 .and_then(|a| a.as_str())
                 .and_then(|s| Address::from_str(s).ok());
+            let name = t.get("name").and_then(|n| n.as_str()).map(str::to_string);
 
             positions.push(Position::Wallet(WalletBalance {
                 amount: Amount {
@@ -165,11 +166,15 @@ impl ProtocolAdapter for EvmWallet {
                     amount: scaled(raw_u256, decimals)?,
                     token: Token {
                         symbol,
+                        name,
                         address,
                         decimals,
                     },
                     usd: None,
                 },
+                // Passed through, not acted on — the consumer decides what to hide.
+                possible_spam: t.get("possible_spam").and_then(|v| v.as_bool()),
+                verified_contract: t.get("verified_contract").and_then(|v| v.as_bool()),
             }));
         }
 
@@ -178,6 +183,7 @@ impl ProtocolAdapter for EvmWallet {
             chain,
             source: Source::Api,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::Api,
                 chain,
@@ -246,11 +252,14 @@ impl ProtocolAdapter for SolanaWallet {
                     amount: scaled(raw, b.decimals)?,
                     token: Token {
                         symbol: String::new(),
+                        name: None,
                         address: None,
                         decimals: b.decimals,
                     },
                     usd: None,
                 },
+                possible_spam: None,
+                verified_contract: None,
             }));
         }
 
@@ -259,6 +268,7 @@ impl ProtocolAdapter for SolanaWallet {
             chain: Chain::Solana,
             source: Source::OnChain,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::OnChain,
                 chain: Chain::Solana,
@@ -359,11 +369,14 @@ impl ProtocolAdapter for BitcoinWallet {
                     amount: scaled(U256::from(sats), 8)?,
                     token: Token {
                         symbol: "BTC".to_string(),
+                        name: Some("Bitcoin".to_string()),
                         address: None,
                         decimals: 8,
                     },
                     usd: None,
                 },
+                possible_spam: None,
+                verified_contract: None,
             }));
         }
 
@@ -372,6 +385,7 @@ impl ProtocolAdapter for BitcoinWallet {
             chain: Chain::Bitcoin,
             source: Source::Api,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::Api,
                 chain: Chain::Bitcoin,
@@ -457,14 +471,11 @@ impl ProtocolAdapter for EvmNfts {
             })?;
 
         let mut positions = Vec::with_capacity(items.len());
+        // Contracts that are protocol positions (a Uniswap LP NFT), not collectibles: recorded as
+        // receipt tokens and skipped as collectibles so the consumer can dedup, never dropped
+        // silently. Spam is flagged, not dropped — the consumer decides.
+        let mut receipt_tokens = Vec::new();
         for it in items {
-            if it
-                .get("possible_spam")
-                .and_then(|s| s.as_bool())
-                .unwrap_or(false)
-            {
-                continue;
-            }
             let collection = it
                 .get("token_address")
                 .and_then(|a| a.as_str())
@@ -472,6 +483,9 @@ impl ProtocolAdapter for EvmNfts {
                     message: "NFT missing token_address".into(),
                 })?;
             if PROTOCOL_NFT_CONTRACTS.contains(&collection.to_lowercase().as_str()) {
+                if let Ok(addr) = Address::from_str(collection) {
+                    receipt_tokens.push(addr);
+                }
                 continue;
             }
             let token_id = it
@@ -492,6 +506,7 @@ impl ProtocolAdapter for EvmNfts {
                 token_id,
                 name,
                 floor_price: None,
+                possible_spam: it.get("possible_spam").and_then(|s| s.as_bool()),
             }));
         }
 
@@ -500,6 +515,7 @@ impl ProtocolAdapter for EvmNfts {
             chain,
             source: Source::Api,
             positions,
+            receipt_tokens,
             provenance: Provenance {
                 source: Source::Api,
                 chain,
@@ -575,6 +591,7 @@ impl ProtocolAdapter for SolanaNfts {
                 token_id: mint,
                 name: metadata.name,
                 floor_price: None,
+                possible_spam: None,
             }));
         }
 
@@ -583,6 +600,7 @@ impl ProtocolAdapter for SolanaNfts {
             chain: Chain::Solana,
             source: Source::OnChain,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::OnChain,
                 chain: Chain::Solana,
@@ -641,16 +659,10 @@ impl ProtocolAdapter for EvmNativeBalance {
 
         let mut positions = Vec::new();
         if wei > U256::ZERO {
-            positions.push(Position::Wallet(WalletBalance {
-                amount: Amount::from_raw(
-                    Token {
-                        symbol: symbol.to_string(),
-                        address: None,
-                        decimals: 18,
-                    },
-                    wei,
-                )?,
-            }));
+            positions.push(Position::Wallet(WalletBalance::new(Amount::from_raw(
+                Token::new(symbol, None, 18),
+                wei,
+            )?)));
         }
 
         let reading = Reading {
@@ -658,6 +670,7 @@ impl ProtocolAdapter for EvmNativeBalance {
             chain,
             source: Source::OnChain,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::OnChain,
                 chain,
@@ -717,16 +730,10 @@ impl ProtocolAdapter for SolanaNativeBalance {
 
         let mut positions = Vec::new();
         if lamports > 0 {
-            positions.push(Position::Wallet(WalletBalance {
-                amount: Amount::from_raw(
-                    Token {
-                        symbol: "SOL".to_string(),
-                        address: None,
-                        decimals: 9,
-                    },
-                    U256::from(lamports),
-                )?,
-            }));
+            positions.push(Position::Wallet(WalletBalance::new(Amount::from_raw(
+                Token::new("SOL", None, 9),
+                U256::from(lamports),
+            )?)));
         }
 
         let reading = Reading {
@@ -734,6 +741,7 @@ impl ProtocolAdapter for SolanaNativeBalance {
             chain: Chain::Solana,
             source: Source::OnChain,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::OnChain,
                 chain: Chain::Solana,

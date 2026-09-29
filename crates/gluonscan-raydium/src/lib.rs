@@ -12,7 +12,8 @@ use alloy_primitives::U256;
 use async_trait::async_trait;
 use gluonscan_core::{
     scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, LiquidityPosition, Position,
-    Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
+    PositionStatus, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token,
+    Wallet,
 };
 use gluonscan_math::{
     get_amounts_for_liquidity, get_sqrt_ratio_at_tick, is_in_range, MAX_TICK, MIN_TICK,
@@ -108,6 +109,7 @@ impl ProtocolAdapter for RaydiumClmm {
             chain: Chain::Solana,
             source: Source::OnChain,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::OnChain,
                 chain: Chain::Solana,
@@ -151,16 +153,8 @@ async fn parse_position(
 
     let dec0 = mint_decimals(rpc, &mint0).await?;
     let dec1 = mint_decimals(rpc, &mint1).await?;
-    let token0 = Token {
-        symbol: String::new(),
-        address: None,
-        decimals: dec0,
-    };
-    let token1 = Token {
-        symbol: String::new(),
-        address: None,
-        decimals: dec1,
-    };
+    let token0 = Token::new(String::new(), None, dec0);
+    let token1 = Token::new(String::new(), None, dec1);
 
     // Principal amounts via the shared Q64.96 math (Raydium's sqrt price is Q64.64 → shift up 32).
     let sqrt_price = U256::from(sqrt_x64) << 32;
@@ -192,6 +186,11 @@ async fn parse_position(
         token1,
         // Pool APR would come from the Raydium API, not the on-chain position; left to the consumer.
         apr: None,
+        status: if liquidity == 0 {
+            PositionStatus::Inactive
+        } else {
+            PositionStatus::Active
+        },
     }))
 }
 

@@ -115,10 +115,31 @@ pub struct Money {
 pub struct Token {
     /// Ticker symbol.
     pub symbol: String,
+    /// Full name, when the source provides it.
+    pub name: Option<String>,
     /// Contract address, when applicable.
     pub address: Option<Address>,
     /// Decimal precision.
     pub decimals: u8,
+}
+
+impl Token {
+    /// A token with just symbol/address/decimals (no name yet).
+    pub fn new(symbol: impl Into<String>, address: Option<Address>, decimals: u8) -> Self {
+        Token {
+            symbol: symbol.into(),
+            name: None,
+            address,
+            decimals,
+        }
+    }
+
+    /// Attach a display name (builder-style).
+    #[must_use]
+    pub fn with_name(mut self, name: Option<String>) -> Self {
+        self.name = name;
+        self
+    }
 }
 
 /// Reconstruct the exact raw base-unit integer from a human [`Decimal`] amount.
@@ -194,10 +215,28 @@ impl Amount {
 }
 
 /// A token held idle in the wallet — not deployed in any protocol.
+///
+/// The `possible_spam` / `verified_contract` flags are passed through from the indexer, not acted
+/// on: gluonscan returns every balance it sees and lets the consumer decide what to hide.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletBalance {
     /// The idle token amount.
     pub amount: Amount,
+    /// The indexer flagged this token as likely spam, when it says so.
+    pub possible_spam: Option<bool>,
+    /// The indexer considers the token contract verified, when it says so.
+    pub verified_contract: Option<bool>,
+}
+
+impl WalletBalance {
+    /// A balance with no spam/verification metadata.
+    pub fn new(amount: Amount) -> Self {
+        WalletBalance {
+            amount,
+            possible_spam: None,
+            verified_contract: None,
+        }
+    }
 }
 
 /// A supplied (deposited) lending asset with its collateral risk parameters and supply rate.
@@ -297,6 +336,20 @@ pub struct LiquidityPosition {
     pub collected_fees: Vec<Amount>,
     /// Annualized rate (APR) as a fraction (e.g. `0.14` = 14%), when a source provides it.
     pub apr: Option<Decimal>,
+    /// Whether the position still holds liquidity, or is dormant (closed but not burned). A dormant
+    /// position is returned, not dropped, so the consumer can account for it without touching totals.
+    pub status: PositionStatus,
+}
+
+/// Whether a position is live or dormant.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PositionStatus {
+    /// Holds liquidity / a live balance.
+    #[default]
+    Active,
+    /// Closed/emptied but still on-chain (e.g. an LP with zero liquidity, NFT intact).
+    Inactive,
 }
 
 /// The kind of a yield-bearing token position.
@@ -335,6 +388,8 @@ pub struct NftPosition {
     pub name: Option<String>,
     /// A floor price, when available.
     pub floor_price: Option<Money>,
+    /// The indexer flagged this NFT as likely spam, when it says so. Returned, not dropped.
+    pub possible_spam: Option<bool>,
 }
 
 /// A locked position (assets locked until an unlock time, e.g. Pendle vePENDLE).
@@ -384,6 +439,10 @@ pub struct Reading {
     pub source: Source,
     /// The normalized positions (empty = no position, not an error).
     pub positions: Vec<Position>,
+    /// Receipt / wrapper token contracts this reading represents (e.g. Pendle PT/YT, sPENDLE, a
+    /// protocol's LP-position NFT). A consumer that also lists raw wallet balances drops these to
+    /// avoid double-counting a protocol position as a loose token.
+    pub receipt_tokens: Vec<Address>,
     /// Where/when this reading came from.
     pub provenance: Provenance,
 }
@@ -415,11 +474,7 @@ mod tests {
 
     #[test]
     fn from_raw_sets_both_views() {
-        let t = Token {
-            symbol: "WETH".into(),
-            address: None,
-            decimals: 18,
-        };
+        let t = Token::new("WETH", None, 18);
         let a = Amount::from_raw(t, U256::from(2_000_000_000_000_000_000u64)).unwrap();
         assert_eq!(a.raw, U256::from(2_000_000_000_000_000_000u64));
         assert_eq!(a.amount, Decimal::from_str_exact("2").unwrap());

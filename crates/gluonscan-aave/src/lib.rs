@@ -137,6 +137,7 @@ impl ProtocolAdapter for AaveApi {
             chain,
             source: Source::Api,
             positions: vec![Position::Lending(position)],
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::Api,
                 chain,
@@ -153,12 +154,12 @@ fn query_body(market: &str, chain_id: u64, user: &str) -> String {
     // Combined query: supplies + borrows + account state, in one round trip.
     let query = r#"query($market:String!,$chainId:Int!,$user:String!){
       userSupplies(request:{markets:[{address:$market,chainId:$chainId}],user:$user}){
-        currency{symbol address decimals} balance{amount{value} usd}
+        currency{symbol name address decimals} balance{amount{value} usd}
         apy{value} isCollateral canBeCollateral
         reserve{supplyInfo{maxLTV{value} liquidationThreshold{value}}}
       }
       userBorrows(request:{markets:[{address:$market,chainId:$chainId}],user:$user}){
-        currency{symbol address decimals} debt{amount{value} usd} apy{value}
+        currency{symbol name address decimals} debt{amount{value} usd} apy{value}
       }
       userMarketState(request:{market:$market,chainId:$chainId,user:$user}){ healthFactor }
     }"#;
@@ -179,6 +180,10 @@ fn parse_amount_entry(item: &serde_json::Value, balance_key: &str) -> Result<Amo
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let name = currency
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let decimals = currency
         .get("decimals")
         .and_then(|v| v.as_u64())
@@ -216,6 +221,7 @@ fn parse_amount_entry(item: &serde_json::Value, balance_key: &str) -> Result<Amo
     Ok(Amount::from_decimal(
         Token {
             symbol,
+            name,
             address,
             decimals,
         },

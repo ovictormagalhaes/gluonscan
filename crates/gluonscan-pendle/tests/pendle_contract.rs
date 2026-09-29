@@ -84,6 +84,9 @@ async fn reads_held_pt_prices_it_and_skips_zero_yt() {
     assert_eq!(y.apy, Some(Decimal::from_str_exact("0.072").unwrap()));
     let usd = y.amount.usd.as_ref().expect("priced from catalog");
     assert_eq!(usd.amount, Decimal::from_str_exact("0.98").unwrap());
+
+    // The held PT is reported as a receipt token so a wallet-balance listing can dedup it.
+    assert_eq!(reading.receipt_tokens.len(), 1);
 }
 
 #[tokio::test]
@@ -174,4 +177,10 @@ async fn reads_vependle_lock_and_spendle_stake() {
         stake.staked[0].amount,
         Decimal::from_str_exact("5").unwrap()
     );
+
+    // sPENDLE is an ERC-20 the wallet holds → recorded as a receipt token for dedup.
+    assert!(reading
+        .receipt_tokens
+        .iter()
+        .any(|a| format!("{a:#x}") == "0x07282f2ceebd7a65451fcd268b364300d9e6d7f5"));
 }

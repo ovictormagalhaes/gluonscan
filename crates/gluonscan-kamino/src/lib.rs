@@ -115,6 +115,7 @@ impl ProtocolAdapter for KaminoApi {
             chain: Chain::Solana,
             source: Source::Api,
             positions,
+            receipt_tokens: Vec::new(),
             provenance: Provenance {
                 source: Source::Api,
                 chain: Chain::Solana,
@@ -173,9 +174,14 @@ fn parse_amount_entry(item: &serde_json::Value) -> Result<Amount, Error> {
             amount,
             currency: Currency::Usd,
         });
+    let name = item
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     Ok(Amount::from_decimal(
         Token {
             symbol,
+            name,
             address: None,
             decimals,
         },

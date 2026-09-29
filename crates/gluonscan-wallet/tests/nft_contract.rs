@@ -16,7 +16,7 @@ const NFTS: &str = r#"{"result":[
 ],"cursor":null}"#;
 
 #[tokio::test]
-async fn reads_collectibles_skipping_spam_and_protocol_positions() {
+async fn returns_collectibles_flags_spam_records_protocol_receipts() {
     let http = MockHttp::new().on(Match::primary_contains("/nft"), NFTS);
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
 
@@ -32,15 +32,39 @@ async fn reads_collectibles_skipping_spam_and_protocol_positions() {
         .into_inner();
 
     assert_eq!(reading.protocol, Protocol::Nfts);
-    assert_eq!(reading.positions.len(), 1); // spam + Uniswap position NFT are excluded
+    // The real NFT and the spam NFT are BOTH returned (spam flagged, not dropped); only the Uniswap
+    // position NFT is excluded — and recorded as a receipt token so the consumer can dedup.
+    assert_eq!(reading.positions.len(), 2);
 
-    let Position::Nft(nft) = &reading.positions[0] else {
-        panic!("expected an NFT position");
-    };
-    assert_eq!(nft.collection, "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D");
-    assert_eq!(nft.token_id, "7211");
-    assert_eq!(nft.name.as_deref(), Some("Bored Ape"));
-    assert!(nft.floor_price.is_none()); // pricing is a separate operation
+    let ape = reading
+        .positions
+        .iter()
+        .find_map(|p| match p {
+            Position::Nft(n) if n.token_id == "7211" => Some(n),
+            _ => None,
+        })
+        .expect("the real collectible");
+    assert_eq!(ape.collection, "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D");
+    assert_eq!(ape.name.as_deref(), Some("Bored Ape"));
+    assert_eq!(ape.possible_spam, Some(false));
+    assert!(ape.floor_price.is_none());
+
+    let spam = reading
+        .positions
+        .iter()
+        .find_map(|p| match p {
+            Position::Nft(n) if n.token_id == "1" => Some(n),
+            _ => None,
+        })
+        .expect("the spam NFT is returned, not dropped");
+    assert_eq!(spam.possible_spam, Some(true));
+
+    // The Uniswap V3 NonfungiblePositionManager is recorded as a receipt token, not a collectible.
+    assert_eq!(reading.receipt_tokens.len(), 1);
+    assert_eq!(
+        format!("{:#x}", reading.receipt_tokens[0]),
+        "0xc36442b4a4522e871399cd717abdd847ab11fe88"
+    );
 }
 
 #[tokio::test]
