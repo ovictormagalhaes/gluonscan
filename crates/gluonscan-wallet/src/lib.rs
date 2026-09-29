@@ -6,15 +6,18 @@
 //! native BTC balance from an explorer. Each idle balance normalizes into a [`Position::Wallet`].
 //! Prices are left `None` — pricing is a separate operation.
 //!
-//! (NFTs are a follow-up reader in this crate.)
+//! [`EvmNfts`] reads collectible NFTs the wallet holds ([`Protocol::Nfts`]), skipping contracts
+//! that are protocol positions (e.g. a Uniswap V3 LP is read as a [`Position::Liquidity`], not an
+//! NFT) so nothing is double-counted.
 
 use std::str::FromStr;
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet, WalletBalance,
+    scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, NftPosition, Position,
+    Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
+    WalletBalance,
 };
 use gluonscan_solana::get_token_balances;
 
@@ -27,6 +30,28 @@ const SUPPORTED_CHAINS: &[Chain] = &[
     Chain::Optimism,
     Chain::Polygon,
     Chain::Bnb,
+];
+
+/// Moralis chain slug for the EVM chains this crate's readers support.
+fn moralis_chain_slug(chain: Chain) -> Option<&'static str> {
+    Some(match chain {
+        Chain::Ethereum => "eth",
+        Chain::Base => "base",
+        Chain::Arbitrum => "arbitrum",
+        Chain::Optimism => "optimism",
+        Chain::Polygon => "polygon",
+        Chain::Bnb => "bsc",
+        _ => return None,
+    })
+}
+
+/// Contracts whose NFTs are protocol positions (read by the protocol adapters), not collectibles.
+/// The generic NFT reader skips these so a Uniswap position is never double-counted as an NFT.
+/// Uniswap V3 NonfungiblePositionManager (lowercased): `0xc3644…` on Ethereum/Arbitrum,
+/// `0x03a52…` on Base.
+const PROTOCOL_NFT_CONTRACTS: &[&str] = &[
+    "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+    "0x03a520b32c04bf3beef7beb72e919cf822ed34f1",
 ];
 
 /// EVM idle ERC-20 balances via a Moralis-style API (header-authenticated).
@@ -49,18 +74,6 @@ impl EvmWallet {
     pub fn with_base(mut self, url: impl Into<String>) -> Self {
         self.base = url.into();
         self
-    }
-
-    fn chain_slug(chain: Chain) -> Option<&'static str> {
-        Some(match chain {
-            Chain::Ethereum => "eth",
-            Chain::Base => "base",
-            Chain::Arbitrum => "arbitrum",
-            Chain::Optimism => "optimism",
-            Chain::Polygon => "polygon",
-            Chain::Bnb => "bsc",
-            _ => return None,
-        })
     }
 }
 
@@ -90,7 +103,7 @@ impl ProtocolAdapter for EvmWallet {
         cx: &Ctx,
     ) -> Result<Complete<Reading>, Error> {
         let owner = owner.evm()?;
-        let slug = EvmWallet::chain_slug(chain).ok_or_else(|| Error::Permanent {
+        let slug = moralis_chain_slug(chain).ok_or_else(|| Error::Permanent {
             message: format!("wallet balances not configured for {chain:?}"),
         })?;
 
@@ -344,6 +357,134 @@ impl ProtocolAdapter for BitcoinWallet {
             provenance: Provenance {
                 source: Source::Api,
                 chain: Chain::Bitcoin,
+                block: None,
+                at: cx.clock.now(),
+                staleness: Staleness::Live,
+            },
+        };
+        Ok(Complete::new(reading))
+    }
+}
+
+/// EVM wallet NFTs (collectibles) via a Moralis-style API — [`Protocol::Nfts`].
+///
+/// This reads NFTs the wallet *holds*, distinct from NFTs that are protocol positions (a Uniswap
+/// V3 LP is an ERC-721, but it is read as a [`Position::Liquidity`] by the Uniswap adapter). To
+/// avoid double-counting, contracts in [`PROTOCOL_NFT_CONTRACTS`] are skipped, and NFTs the
+/// indexer flags as spam are dropped. Floor prices are left `None` — pricing is a separate
+/// operation.
+#[derive(Debug, Clone)]
+pub struct EvmNfts {
+    base: String,
+    api_key: String,
+}
+
+impl EvmNfts {
+    /// Construct with an API key (and the default Moralis base).
+    pub fn new(api_key: impl Into<String>) -> Self {
+        EvmNfts {
+            base: MORALIS_API.to_string(),
+            api_key: api_key.into(),
+        }
+    }
+
+    /// Override the API base (a proxy or a test double).
+    pub fn with_base(mut self, url: impl Into<String>) -> Self {
+        self.base = url.into();
+        self
+    }
+}
+
+#[async_trait]
+impl ProtocolAdapter for EvmNfts {
+    fn protocol(&self) -> Protocol {
+        Protocol::Nfts
+    }
+
+    fn source(&self) -> Source {
+        Source::Api
+    }
+
+    fn capabilities(&self) -> &'static [Capability] {
+        CAPABILITIES
+    }
+
+    fn supported_chains(&self) -> &'static [Chain] {
+        SUPPORTED_CHAINS
+    }
+
+    async fn read(
+        &self,
+        owner: &Wallet,
+        chain: Chain,
+        _detail: Detail,
+        cx: &Ctx,
+    ) -> Result<Complete<Reading>, Error> {
+        let owner = owner.evm()?;
+        let slug = moralis_chain_slug(chain).ok_or_else(|| Error::Permanent {
+            message: format!("wallet NFTs not configured for {chain:?}"),
+        })?;
+
+        let url = format!("{}/{owner:#x}/nft?chain={slug}", self.base);
+        let headers = [("X-API-Key", self.api_key.as_str())];
+        let raw = cx.http.get(&url, &headers).await?;
+        let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+            message: format!("NFT response not JSON: {e}"),
+        })?;
+        let items = json
+            .get("result")
+            .and_then(|r| r.as_array())
+            .ok_or_else(|| Error::Integrity {
+                message: "NFT response missing result array".into(),
+            })?;
+
+        let mut positions = Vec::with_capacity(items.len());
+        for it in items {
+            if it
+                .get("possible_spam")
+                .and_then(|s| s.as_bool())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let collection = it
+                .get("token_address")
+                .and_then(|a| a.as_str())
+                .ok_or_else(|| Error::Integrity {
+                    message: "NFT missing token_address".into(),
+                })?;
+            if PROTOCOL_NFT_CONTRACTS.contains(&collection.to_lowercase().as_str()) {
+                continue;
+            }
+            let token_id = it
+                .get("token_id")
+                .and_then(|t| t.as_str())
+                .ok_or_else(|| Error::Integrity {
+                    message: "NFT missing token_id".into(),
+                })?
+                .to_string();
+            let name = it
+                .get("name")
+                .and_then(|n| n.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            positions.push(Position::Nft(NftPosition {
+                collection: collection.to_string(),
+                token_id,
+                name,
+                floor_price: None,
+            }));
+        }
+
+        let reading = Reading {
+            protocol: Protocol::Nfts,
+            chain,
+            source: Source::Api,
+            positions,
+            provenance: Provenance {
+                source: Source::Api,
+                chain,
                 block: None,
                 at: cx.clock.now(),
                 staleness: Staleness::Live,
