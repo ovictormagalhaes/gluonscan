@@ -39,6 +39,20 @@ pub enum Chain {
 }
 
 impl Chain {
+    /// Every known chain — useful for enabling "all chains" and for exhaustive tests.
+    pub const ALL: &'static [Chain] = &[
+        Chain::Ethereum,
+        Chain::Base,
+        Chain::Arbitrum,
+        Chain::Optimism,
+        Chain::Polygon,
+        Chain::Bnb,
+        Chain::Monad,
+        Chain::Hyperliquid,
+        Chain::Solana,
+        Chain::Bitcoin,
+    ];
+
     /// The ecosystem this chain belongs to.
     pub fn ecosystem(self) -> Ecosystem {
         match self {

@@ -20,7 +20,14 @@ use rust_decimal::Decimal;
 const AAVE_V3_API: &str = "https://api.v3.aave.com/graphql";
 
 const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::HealthFactor];
-const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum, Chain::Base, Chain::Arbitrum];
+const SUPPORTED_CHAINS: &[Chain] = &[
+    Chain::Ethereum,
+    Chain::Base,
+    Chain::Arbitrum,
+    Chain::Optimism,
+    Chain::Polygon,
+    Chain::Bnb,
+];
 
 /// The Aave V3 adapter backed by the official GraphQL API.
 #[derive(Debug, Default, Clone)]
@@ -49,7 +56,11 @@ impl AaveApi {
         Some(match chain {
             Chain::Ethereum => "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
             Chain::Base => "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
-            Chain::Arbitrum => "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+            // Deterministic Aave V3 Pool address shared across these deployments.
+            Chain::Arbitrum | Chain::Optimism | Chain::Polygon => {
+                "0x794a61358D6845594F94dc1DB02A252b5b4814aD"
+            }
+            Chain::Bnb => "0x6807dc923806fE8Fd134338EABCA509979a7e0cB",
             _ => return None,
         })
     }
