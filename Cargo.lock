@@ -1007,6 +1007,7 @@ dependencies = [
  "async-trait",
  "gluonscan-aave",
  "gluonscan-core",
+ "gluonscan-pendle",
  "gluonscan-uniswap",
  "reqwest",
 ]
@@ -1049,6 +1050,20 @@ name = "gluonscan-math"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+]
+
+[[package]]
+name = "gluonscan-pendle"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-evm",
+ "gluonscan-testing",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

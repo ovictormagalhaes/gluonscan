@@ -22,7 +22,7 @@ pub use chain::{Chain, Ecosystem};
 pub use error::Error;
 pub use model::{
     Amount, Complete, Currency, Holding, LendingPosition, LiquidityPosition, LockPosition, Money,
-    Position, Provenance, Reading, Staleness, Timestamp, Token,
+    Position, Provenance, Reading, Staleness, Timestamp, Token, YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 

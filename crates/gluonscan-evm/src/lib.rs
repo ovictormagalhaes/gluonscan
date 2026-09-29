@@ -51,6 +51,25 @@ pub fn encode_collect(token_id: U256, recipient: Address) -> Vec<u8> {
     data
 }
 
+/// Encode an ERC-20 `balanceOf(owner)` call.
+pub fn encode_balance_of(owner: Address) -> Vec<u8> {
+    let mut data = vec![0x70, 0xa0, 0x82, 0x31]; // selector 0x70a08231
+    let mut word = [0u8; 32];
+    word[12..].copy_from_slice(owner.as_slice());
+    data.extend_from_slice(&word);
+    data
+}
+
+/// Decode a single ABI `uint256` word from a return buffer.
+pub fn decode_u256(out: &[u8]) -> Result<U256, Error> {
+    if out.len() < 32 {
+        return Err(Error::Integrity {
+            message: format!("expected >=32 bytes, got {}", out.len()),
+        });
+    }
+    Ok(U256::from_be_slice(&out[0..32]))
+}
+
 /// Decode two ABI `uint256` words from a return buffer.
 pub fn decode_two_u256(out: &[u8]) -> Result<(U256, U256), Error> {
     if out.len() < 64 {

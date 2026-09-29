@@ -21,6 +21,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 pub use gluonscan_aave::AaveApi;
 pub use gluonscan_core::*;
+pub use gluonscan_pendle::PendleApi;
 pub use gluonscan_uniswap::UniswapV3;
 
 /// A `reqwest`-backed [`Http`] client. Configuration (timeouts, keys, retries) lives here, not in
@@ -52,6 +53,28 @@ impl Http for ReqwestHttp {
             .post(url)
             .header("content-type", "application/json")
             .body(body)
+            .send()
+            .await
+            .map_err(|e| Error::Transient {
+                message: e.to_string(),
+                retry_after: None,
+            })?;
+        if resp.status().as_u16() == 429 {
+            return Err(Error::Transient {
+                message: "HTTP 429".into(),
+                retry_after: None,
+            });
+        }
+        resp.text().await.map_err(|e| Error::Transient {
+            message: e.to_string(),
+            retry_after: None,
+        })
+    }
+
+    async fn get(&self, url: &str) -> Result<String, Error> {
+        let resp = self
+            .client
+            .get(url)
             .send()
             .await
             .map_err(|e| Error::Transient {

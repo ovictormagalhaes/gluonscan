@@ -143,6 +143,29 @@ pub struct LiquidityPosition {
     pub collected_fees: Vec<Amount>,
 }
 
+/// The kind of a yield-bearing token position.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YieldKind {
+    /// A principal token (e.g. Pendle PT).
+    PrincipalToken,
+    /// A yield token (e.g. Pendle YT).
+    YieldToken,
+    /// A liquidity token.
+    LiquidityToken,
+}
+
+/// A yield-bearing token holding (e.g. a Pendle PT/YT), with its maturity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YieldPosition {
+    /// The held amount (priced when a price was available).
+    pub amount: Amount,
+    /// Which kind of yield token.
+    pub kind: YieldKind,
+    /// Maturity, when applicable.
+    pub expiry: Option<Timestamp>,
+}
+
 /// A locked/staked position.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LockPosition {
@@ -164,6 +187,8 @@ pub enum Position {
     Liquidity(LiquidityPosition),
     /// A locked/staked position.
     Lock(LockPosition),
+    /// A yield-bearing token position.
+    Yield(YieldPosition),
 }
 
 /// A protocol's normalized reading for one wallet on one chain, with provenance.

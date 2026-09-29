@@ -14,6 +14,9 @@ use std::sync::Arc;
 pub trait Http: Send + Sync + 'static {
     /// POST a request body to `url` and return the raw response body.
     async fn post(&self, url: &str, body: String) -> Result<String, Error>;
+
+    /// GET `url` and return the raw response body.
+    async fn get(&self, url: &str) -> Result<String, Error>;
 }
 
 /// An injected JSON-RPC / on-chain transport. Used by on-chain adapters (not by API adapters).

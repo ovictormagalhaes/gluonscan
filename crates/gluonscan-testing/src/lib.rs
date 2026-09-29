@@ -215,6 +215,18 @@ impl Http for MockHttp {
             .map(|c| c.reply.clone())
             .ok_or_else(|| no_match(url, &body))
     }
+
+    async fn get(&self, url: &str) -> Result<String, Error> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((url.to_string(), String::new()));
+        self.contracts
+            .iter()
+            .find(|c| c.when.matches(url, ""))
+            .map(|c| c.reply.clone())
+            .ok_or_else(|| no_match(url, ""))
+    }
 }
 
 /// A [`ChainProvider`] mock that replays contracts (matched on method + params) for on-chain reads.

@@ -6,6 +6,7 @@ members = [
     "crates/gluonscan-evm",
     "crates/gluonscan-aave",
     "crates/gluonscan-uniswap",
+    "crates/gluonscan-pendle",
     "crates/gluonscan-testing",
     "crates/gluonscan",
 ]
@@ -40,5 +41,6 @@ gluonscan-core = { path = "crates/gluonscan-core", version = "0.1.0" }
 gluonscan-math = { path = "crates/gluonscan-math", version = "0.1.0" }
 gluonscan-aave = { path = "crates/gluonscan-aave", version = "0.1.0" }
 gluonscan-uniswap = { path = "crates/gluonscan-uniswap", version = "0.1.0" }
+gluonscan-pendle = { path = "crates/gluonscan-pendle", version = "0.1.0" }
 gluonscan-evm = { path = "crates/gluonscan-evm", version = "0.1.0" }
 gluonscan-testing = { path = "crates/gluonscan-testing", version = "0.1.0" }
