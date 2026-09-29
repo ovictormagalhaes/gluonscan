@@ -113,15 +113,34 @@ pub struct LendingPosition {
     pub health_factor: Option<Decimal>,
 }
 
-/// A concentrated-liquidity position. (Fields filled by AMM adapters; empty for lending-only.)
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// A concentrated-liquidity position. Carries the complete resource an AMM exposes — not a
+/// cherry-picked subset (see the return-completeness invariant).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiquidityPosition {
-    /// The two pooled assets.
+    /// The pool's first token.
+    pub token0: Token,
+    /// The pool's second token.
+    pub token1: Token,
+    /// Fee tier in hundredths of a basis point (e.g. 3000 = 0.30%), when known.
+    pub fee_tier_bps: Option<u32>,
+    /// Lower tick bound of the range.
+    pub tick_lower: i32,
+    /// Upper tick bound of the range.
+    pub tick_upper: i32,
+    /// The pool's current tick.
+    pub tick_current: i32,
+    /// Whether the current tick is within the range.
+    pub in_range: bool,
+    /// Current principal amounts locked, `[token0, token1]`.
     pub assets: Vec<Amount>,
-    /// Uncollected fees, when fetched.
+    /// Uncollected (claimable) fees, `[token0, token1]` — present only when fees were fetched.
     pub uncollected_fees: Vec<Amount>,
-    /// Whether the position is currently in range.
-    pub in_range: Option<bool>,
+    /// Lifetime deposited amounts, `[token0, token1]`.
+    pub deposited: Vec<Amount>,
+    /// Lifetime withdrawn amounts, `[token0, token1]`.
+    pub withdrawn: Vec<Amount>,
+    /// Lifetime collected fees, `[token0, token1]`.
+    pub collected_fees: Vec<Amount>,
 }
 
 /// A locked/staked position.

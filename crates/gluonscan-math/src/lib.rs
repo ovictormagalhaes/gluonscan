@@ -5,7 +5,7 @@
 //! Currently: Uniswap V3 Q64.96 tick math ([`get_sqrt_ratio_at_tick`]), a direct port of the
 //! canonical `TickMath.getSqrtRatioAtTick`, checked against reference vectors (see tests).
 
-use alloy_primitives::U256;
+use alloy_primitives::{U256, U512};
 
 /// Minimum usable tick.
 pub const MIN_TICK: i32 = -887_272;
@@ -79,6 +79,55 @@ pub fn is_in_range(current: i32, lower: i32, upper: i32) -> bool {
     current >= lower && current < upper
 }
 
+/// The token0/token1 amounts locked by `liquidity` at the current sqrt price, given the position's
+/// sqrt-price bounds. Ports Uniswap's `LiquidityAmounts.getAmountsForLiquidity`; returns raw base
+/// units `(amount0, amount1)`.
+pub fn get_amounts_for_liquidity(
+    sqrt_price: U256,
+    sqrt_lower: U256,
+    sqrt_upper: U256,
+    liquidity: U256,
+) -> (U256, U256) {
+    let (a, b) = if sqrt_lower > sqrt_upper {
+        (sqrt_upper, sqrt_lower)
+    } else {
+        (sqrt_lower, sqrt_upper)
+    };
+    if sqrt_price <= a {
+        (amount0(a, b, liquidity), U256::ZERO)
+    } else if sqrt_price < b {
+        (
+            amount0(sqrt_price, b, liquidity),
+            amount1(a, sqrt_price, liquidity),
+        )
+    } else {
+        (U256::ZERO, amount1(a, b, liquidity))
+    }
+}
+
+fn q96() -> U256 {
+    U256::from(1u128) << 96
+}
+
+fn amount0(sqrt_a: U256, sqrt_b: U256, liquidity: U256) -> U256 {
+    // (L << 96) * (sqrt_b - sqrt_a) / sqrt_b / sqrt_a
+    let inter = mul_div(liquidity << 96, sqrt_b - sqrt_a, sqrt_b);
+    inter / sqrt_a
+}
+
+fn amount1(sqrt_a: U256, sqrt_b: U256, liquidity: U256) -> U256 {
+    // L * (sqrt_b - sqrt_a) / 2^96
+    mul_div(liquidity, sqrt_b - sqrt_a, q96())
+}
+
+/// `a * b / denom` computed in 512-bit space to avoid intermediate overflow.
+fn mul_div(a: U256, b: U256, denom: U256) -> U256 {
+    let p = U512::from(a) * U512::from(b);
+    let q = p / U512::from(denom);
+    let bytes = q.to_le_bytes::<64>();
+    U256::from_le_slice(&bytes[..32])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +168,35 @@ mod tests {
         assert!(is_in_range(0, -10, 10));
         assert!(!is_in_range(10, -10, 10));
         assert!(!is_in_range(-11, -10, 10));
+    }
+
+    #[test]
+    fn amounts_below_range_are_all_token0() {
+        let lower = get_sqrt_ratio_at_tick(-60);
+        let upper = get_sqrt_ratio_at_tick(60);
+        let price = get_sqrt_ratio_at_tick(-120);
+        let (a0, a1) = get_amounts_for_liquidity(price, lower, upper, U256::from(1_000_000u64));
+        assert!(a0 > U256::ZERO);
+        assert_eq!(a1, U256::ZERO);
+    }
+
+    #[test]
+    fn amounts_above_range_are_all_token1() {
+        let lower = get_sqrt_ratio_at_tick(-60);
+        let upper = get_sqrt_ratio_at_tick(60);
+        let price = get_sqrt_ratio_at_tick(120);
+        let (a0, a1) = get_amounts_for_liquidity(price, lower, upper, U256::from(1_000_000u64));
+        assert_eq!(a0, U256::ZERO);
+        assert!(a1 > U256::ZERO);
+    }
+
+    #[test]
+    fn amounts_in_range_hold_both_tokens() {
+        let lower = get_sqrt_ratio_at_tick(-60);
+        let upper = get_sqrt_ratio_at_tick(60);
+        let price = get_sqrt_ratio_at_tick(0);
+        let (a0, a1) = get_amounts_for_liquidity(price, lower, upper, U256::from(1_000_000_000u64));
+        assert!(a0 > U256::ZERO);
+        assert!(a1 > U256::ZERO);
     }
 }

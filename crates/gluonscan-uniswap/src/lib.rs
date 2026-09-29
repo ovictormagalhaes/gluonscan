@@ -1,9 +1,9 @@
 //! # gluonscan-uniswap
 //!
 //! Uniswap V3 adapter. Discovery is a single subgraph query ([`Source::Subgraph`]); uncollected
-//! fees come from an on-chain `collect()` static call per active position. The in-range flag is
-//! computed locally from the pool tick. Principal token amounts (from the Q64.96 liquidity math)
-//! are a follow-up increment; this backend currently returns fees + range.
+//! fees come from an on-chain `collect()` static call per active position (Full detail only). It
+//! returns the **complete** position resource: principal amounts (from the Q64.96 liquidity math),
+//! lifetime deposited/withdrawn/collected, fee tier, tick range, and the in-range flag.
 
 use std::str::FromStr;
 
@@ -14,7 +14,9 @@ use gluonscan_core::{
     ProtocolAdapter, Provenance, Reading, Source, Staleness, Token,
 };
 use gluonscan_evm::{decode_two_u256, encode_collect, eth_call};
-use gluonscan_math::is_in_range;
+use gluonscan_math::{
+    get_amounts_for_liquidity, get_sqrt_ratio_at_tick, is_in_range, MAX_TICK, MIN_TICK,
+};
 use rust_decimal::Decimal;
 
 const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees];
@@ -138,13 +140,54 @@ impl UniswapV3 {
         let lower: i32 = parse_at(item, "/tickLower/tickIdx")?;
         let upper: i32 = parse_at(item, "/tickUpper/tickIdx")?;
         let current: i32 = parse_at(item, "/pool/tick")?;
+        if !(MIN_TICK..=MAX_TICK).contains(&lower) || !(MIN_TICK..=MAX_TICK).contains(&upper) {
+            return Err(Error::Integrity {
+                message: format!("Uniswap ticks out of range: {lower}..{upper}"),
+            });
+        }
 
         let token0 = parse_token(item.pointer("/pool/token0"))?;
         let token1 = parse_token(item.pointer("/pool/token1"))?;
+        let fee_tier_bps = str_at(item, "/pool/feeTier")
+            .ok()
+            .and_then(|s| s.parse().ok());
 
+        // Principal amounts from the Q64.96 liquidity math (no network).
+        let sqrt_price =
+            U256::from_str(&str_at(item, "/pool/sqrtPrice")?).map_err(|e| Error::Integrity {
+                message: format!("Uniswap sqrtPrice not a number: {e}"),
+            })?;
+        let liq = U256::from_str(&liquidity).map_err(|e| Error::Integrity {
+            message: format!("Uniswap liquidity not a number: {e}"),
+        })?;
+        let (amt0, amt1) = get_amounts_for_liquidity(
+            sqrt_price,
+            get_sqrt_ratio_at_tick(lower),
+            get_sqrt_ratio_at_tick(upper),
+            liq,
+        );
+        let assets = vec![
+            raw_amount(token0.clone(), amt0),
+            raw_amount(token1.clone(), amt1),
+        ];
+
+        // Lifetime totals — the subgraph reports these as human-scaled decimals.
+        let deposited = vec![
+            human_amount(token0.clone(), item, "/depositedToken0")?,
+            human_amount(token1.clone(), item, "/depositedToken1")?,
+        ];
+        let withdrawn = vec![
+            human_amount(token0.clone(), item, "/withdrawnToken0")?,
+            human_amount(token1.clone(), item, "/withdrawnToken1")?,
+        ];
+        let collected_fees = vec![
+            human_amount(token0.clone(), item, "/collectedFeesToken0")?,
+            human_amount(token1.clone(), item, "/collectedFeesToken1")?,
+        ];
+
+        // Uncollected fees are an on-chain read; fetched only at Full detail.
         let mut uncollected_fees = Vec::new();
-        let active = liquidity != "0";
-        if with_fees && active {
+        if with_fees && liquidity != "0" {
             let token_id = U256::from_str(&id).map_err(|e| Error::Integrity {
                 message: format!("Uniswap position id not a number: {e}"),
             })?;
@@ -154,20 +197,29 @@ impl UniswapV3 {
             let data = encode_collect(token_id, owner);
             let out = eth_call(cx.rpc()?.as_ref(), chain, manager, data).await?;
             let (fee0, fee1) = decode_two_u256(&out)?;
-            uncollected_fees.push(amount(token0.clone(), fee0));
-            uncollected_fees.push(amount(token1.clone(), fee1));
+            uncollected_fees.push(raw_amount(token0.clone(), fee0));
+            uncollected_fees.push(raw_amount(token1.clone(), fee1));
         }
 
         Ok(Position::Liquidity(LiquidityPosition {
-            assets: Vec::new(),
+            token0,
+            token1,
+            fee_tier_bps,
+            tick_lower: lower,
+            tick_upper: upper,
+            tick_current: current,
+            in_range: is_in_range(current, lower, upper),
+            assets,
             uncollected_fees,
-            in_range: Some(is_in_range(current, lower, upper)),
+            deposited,
+            withdrawn,
+            collected_fees,
         }))
     }
 }
 
 fn query_body(owner: &str) -> String {
-    let query = r#"query($owner:String!){positions(where:{owner:$owner}){id liquidity tickLower{tickIdx} tickUpper{tickIdx} pool{tick token0{id symbol decimals} token1{id symbol decimals}}}}"#;
+    let query = r#"query($owner:String!){positions(where:{owner:$owner}){id liquidity depositedToken0 depositedToken1 withdrawnToken0 withdrawnToken1 collectedFeesToken0 collectedFeesToken1 tickLower{tickIdx} tickUpper{tickIdx} pool{tick sqrtPrice feeTier token0{id symbol decimals} token1{id symbol decimals}}}}"#;
     serde_json::json!({ "query": query, "variables": { "owner": owner } }).to_string()
 }
 
@@ -213,7 +265,8 @@ fn parse_token(v: Option<&serde_json::Value>) -> Result<Token, Error> {
     })
 }
 
-fn amount(token: Token, raw: U256) -> Amount {
+/// Build an [`Amount`] from a raw base-unit integer, scaling by the token's decimals.
+fn raw_amount(token: Token, raw: U256) -> Amount {
     let scale = token.decimals.min(28) as u32;
     let mantissa: i128 = raw.to_string().parse().unwrap_or(i128::MAX);
     Amount {
@@ -221,4 +274,17 @@ fn amount(token: Token, raw: U256) -> Amount {
         token,
         usd: None,
     }
+}
+
+/// Build an [`Amount`] from a subgraph BigDecimal (already in human token units).
+fn human_amount(token: Token, item: &serde_json::Value, pointer: &str) -> Result<Amount, Error> {
+    let s = str_at(item, pointer)?;
+    let amount = Decimal::from_str(&s).map_err(|e| Error::Integrity {
+        message: format!("Uniswap `{pointer}` not a decimal: {e}"),
+    })?;
+    Ok(Amount {
+        token,
+        amount,
+        usd: None,
+    })
 }
