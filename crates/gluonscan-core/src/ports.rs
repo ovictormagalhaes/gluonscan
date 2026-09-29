@@ -37,20 +37,39 @@ pub trait Clock: Send + Sync + 'static {
     fn now(&self) -> Timestamp;
 }
 
-/// The dependencies handed to an adapter for a fetch. Extended over time (price source, providers,
-/// rate limiters) without changing adapter signatures.
+/// The dependencies handed to an adapter for a fetch. Extended over time (price source, rate
+/// limiters) without changing adapter signatures.
 #[derive(Clone)]
 pub struct Ctx {
-    /// Injected HTTP client for API adapters.
+    /// Injected HTTP client for API/subgraph adapters.
     pub http: Arc<dyn Http>,
+    /// Injected on-chain transport, when configured. `None` for API-only setups.
+    pub rpc: Option<Arc<dyn ChainProvider>>,
     /// Injected clock.
     pub clock: Arc<dyn Clock>,
 }
 
 impl Ctx {
-    /// Build a context from its injected parts.
+    /// Build a context from an HTTP client and a clock (no on-chain transport).
     pub fn new(http: Arc<dyn Http>, clock: Arc<dyn Clock>) -> Self {
-        Ctx { http, clock }
+        Ctx {
+            http,
+            rpc: None,
+            clock,
+        }
+    }
+
+    /// Attach an on-chain transport.
+    pub fn with_rpc(mut self, rpc: Arc<dyn ChainProvider>) -> Self {
+        self.rpc = Some(rpc);
+        self
+    }
+
+    /// The on-chain transport, or a permanent error if none was configured.
+    pub fn rpc(&self) -> Result<&Arc<dyn ChainProvider>, Error> {
+        self.rpc.as_ref().ok_or_else(|| Error::Permanent {
+            message: "this read needs an on-chain provider (RPC), but none was configured".into(),
+        })
     }
 }
 

@@ -1007,6 +1007,7 @@ dependencies = [
  "async-trait",
  "gluonscan-aave",
  "gluonscan-core",
+ "gluonscan-uniswap",
  "reqwest",
 ]
 
@@ -1035,6 +1036,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gluonscan-evm"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "gluonscan-core",
+ "serde_json",
+]
+
+[[package]]
+name = "gluonscan-math"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+]
+
+[[package]]
 name = "gluonscan-testing"
 version = "0.1.0"
 dependencies = [
@@ -1042,6 +1059,21 @@ dependencies = [
  "gluonscan-core",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gluonscan-uniswap"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-evm",
+ "gluonscan-math",
+ "gluonscan-testing",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -21,6 +21,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 pub use gluonscan_aave::AaveApi;
 pub use gluonscan_core::*;
+pub use gluonscan_uniswap::UniswapV3;
 
 /// A `reqwest`-backed [`Http`] client. Configuration (timeouts, keys, retries) lives here, not in
 /// the adapters.
@@ -87,6 +88,7 @@ impl Clock for SystemClock {
 pub struct Builder {
     adapters: Vec<Arc<dyn ProtocolAdapter>>,
     http: Option<Arc<dyn Http>>,
+    rpc: Option<Arc<dyn ChainProvider>>,
     clock: Option<Arc<dyn Clock>>,
 }
 
@@ -109,13 +111,23 @@ impl Builder {
         self
     }
 
+    /// Attach an on-chain transport (required by on-chain protocols such as Uniswap fees).
+    pub fn rpc(mut self, rpc: Arc<dyn ChainProvider>) -> Self {
+        self.rpc = Some(rpc);
+        self
+    }
+
     /// Finish building.
     pub fn build(self) -> Gluonscan {
         let http = self.http.unwrap_or_else(|| Arc::new(ReqwestHttp::new()));
         let clock = self.clock.unwrap_or_else(|| Arc::new(SystemClock));
+        let mut cx = Ctx::new(http, clock);
+        if let Some(rpc) = self.rpc {
+            cx = cx.with_rpc(rpc);
+        }
         Gluonscan {
             adapters: self.adapters,
-            cx: Ctx::new(http, clock),
+            cx,
         }
     }
 }
@@ -132,6 +144,7 @@ impl Gluonscan {
         Builder {
             adapters: Vec::new(),
             http: None,
+            rpc: None,
             clock: None,
         }
     }

@@ -1,0 +1,17 @@
+[package]
+name = "gluonscan-evm"
+description = "EVM on-chain helpers for gluonscan: eth_call over an injected ChainProvider, minimal ABI encode/decode."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+alloy-primitives = { workspace = true }
+serde_json = { workspace = true }

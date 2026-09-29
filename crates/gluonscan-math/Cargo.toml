@@ -1,0 +1,15 @@
+[package]
+name = "gluonscan-math"
+description = "Exact-integer DeFi math for gluonscan (Uniswap V3 Q64.96 tick math, etc.). No floats."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true }
