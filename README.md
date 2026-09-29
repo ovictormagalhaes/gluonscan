@@ -1,3 +1,5 @@
+<img src="book/theme/favicon.svg" width="76" align="right" alt="gluonscan mark" />
+
 # gluonscan
 
 Multi-chain **read + normalize** engine for DeFi portfolios. Point it at a wallet; it reads across

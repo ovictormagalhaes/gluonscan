@@ -1,0 +1,82 @@
+/* gluonscan — black & silver book theme.
+   Scoped to the light theme (the default): light content, a black-panel sidebar with silver text,
+   monochrome accents. Green/red are reserved for financial values, never chrome. */
+
+html.light {
+  --bg: #F5F6F8;
+  --fg: #16181F;
+
+  --sidebar-bg: #101216;
+  --sidebar-fg: #C4CAD3;
+  --sidebar-non-existant: #5B626E;
+  --sidebar-active: #F2F5F9;
+  --sidebar-spacer: #262B34;
+  --scrollbar: #3A4150;
+
+  --icons: #78808C;
+  --icons-hover: #16181F;
+
+  --links: #2B3440;
+
+  --inline-code-color: #262B34;
+
+  --theme-popup-bg: #FFFFFF;
+  --theme-popup-border: #E3E5EA;
+  --theme-hover: #EDEFF2;
+
+  --quote-bg: #EEF0F3;
+  --quote-border: #D8DBE1;
+
+  --table-border-color: #E3E5EA;
+  --table-header-bg: #E9EBEF;
+  --table-alternate-bg: #EFF1F4;
+
+  --searchbar-border-color: #D8DBE1;
+  --searchbar-bg: #FFFFFF;
+  --searchbar-fg: #16181F;
+  --searchbar-shadow-color: #D8DBE1;
+  --search-mark-bg: #C4CAD3;
+}
+
+/* Links: monochrome, so make them unmistakable with an underline rather than a hue. */
+html.light .content a:not(.header) {
+  text-decoration: underline;
+  text-decoration-color: #B8BEC8;
+  text-underline-offset: 2px;
+}
+html.light .content a:not(.header):hover {
+  text-decoration-color: #16181F;
+}
+
+/* The menu-bar brand: mark + wordmark, replacing the plain title. */
+.menu-title.gs-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  text-decoration: none;
+}
+.gs-logo {
+  display: inline-flex;
+  line-height: 0;
+}
+.gs-logo svg {
+  height: 22px;
+  width: 22px;
+  display: block;
+}
+.gs-word {
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 500;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  color: #78808C;
+}
+.gs-word b {
+  font-weight: 500;
+  color: #16181F;
+}
+
+/* On the dark themes, keep the wordmark readable (mark stays ink-on-transparent, so hide its use
+   there by lightening the text; the favicon/menu still work). */
+html.coal .gs-word, html.navy .gs-word, html.ayu .gs-word { color: #9AA1AC; }
+html.coal .gs-word b, html.navy .gs-word b, html.ayu .gs-word b { color: #E6EAF2; }

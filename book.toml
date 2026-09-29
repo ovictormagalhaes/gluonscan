@@ -10,5 +10,9 @@ src = "book/src"
 build-dir = "target/book"
 
 [output.html]
-default-theme = "navy"
+theme = "book/theme"
+default-theme = "light"
+preferred-dark-theme = "coal"
+additional-css = ["book/theme/gluonscan.css"]
+additional-js = ["book/theme/gluonscan.js"]
 git-repository-url = "https://github.com/ovictormagalhaes/gluonscan"
