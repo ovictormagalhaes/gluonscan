@@ -12,7 +12,7 @@ use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
     Amount, Capability, Chain, Complete, Ctx, Currency, Detail, Error, Money, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, Staleness, Timestamp, Token, YieldKind,
+    ProtocolAdapter, Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet, YieldKind,
     YieldPosition,
 };
 use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
@@ -72,11 +72,12 @@ impl ProtocolAdapter for PendleApi {
 
     async fn read(
         &self,
-        owner: Address,
+        owner: &Wallet,
         chain: Chain,
         _detail: Detail,
         cx: &Ctx,
     ) -> Result<Complete<Reading>, Error> {
+        let owner = owner.evm()?;
         let chain_id = chain.evm_chain_id().ok_or_else(|| Error::Permanent {
             message: format!("Pendle is EVM-only; {chain:?} has no chain id"),
         })?;

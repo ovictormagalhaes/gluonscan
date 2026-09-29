@@ -6,7 +6,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use gluonscan_aave::AaveApi;
-use gluonscan_core::{Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Source};
+use gluonscan_core::{
+    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Source, Wallet,
+};
 use gluonscan_testing::{load_contracts, MockClock, MockHttp};
 use rust_decimal::Decimal;
 
@@ -19,7 +21,12 @@ fn ctx() -> Ctx {
 #[tokio::test]
 async fn aave_ethereum_reads_from_contract() {
     let reading = AaveApi::new()
-        .read(Address::ZERO, Chain::Ethereum, Detail::Full, &ctx())
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &ctx(),
+        )
         .await
         .expect("read")
         .into_inner();
@@ -43,7 +50,7 @@ async fn reads_on_every_supported_chain() {
     let cx = ctx();
     for &chain in adapter.supported_chains() {
         let reading = adapter
-            .read(Address::ZERO, chain, Detail::Full, &cx)
+            .read(&Wallet::Evm(Address::ZERO), chain, Detail::Full, &cx)
             .await
             .unwrap_or_else(|e| panic!("{chain:?} should read: {e}"))
             .into_inner();
@@ -62,7 +69,7 @@ async fn only_supported_chains_bind() {
             continue;
         }
         let err = adapter
-            .read(Address::ZERO, chain, Detail::Full, &cx)
+            .read(&Wallet::Evm(Address::ZERO), chain, Detail::Full, &cx)
             .await
             .expect_err("unsupported chain must error, not return a zero reading");
         // A configuration mismatch is permanent, never retryable.

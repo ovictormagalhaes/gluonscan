@@ -28,6 +28,38 @@ pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 
 pub use alloy_primitives::Address;
 
+/// A wallet identifier across ecosystems.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Wallet {
+    /// An EVM address.
+    Evm(Address),
+    /// A Solana base58 public key.
+    Solana(String),
+}
+
+impl Wallet {
+    /// The EVM address, or a permanent error if this is not an EVM wallet.
+    pub fn evm(&self) -> Result<Address, Error> {
+        match self {
+            Wallet::Evm(a) => Ok(*a),
+            Wallet::Solana(_) => Err(Error::Permanent {
+                message: "expected an EVM wallet".into(),
+            }),
+        }
+    }
+
+    /// The Solana base58 public key, or a permanent error if this is not a Solana wallet.
+    pub fn solana(&self) -> Result<&str, Error> {
+        match self {
+            Wallet::Solana(s) => Ok(s),
+            Wallet::Evm(_) => Err(Error::Permanent {
+                message: "expected a Solana wallet".into(),
+            }),
+        }
+    }
+}
+
 /// A supported DeFi protocol. Identity only — a protocol may have several backend
 /// implementations (see [`Source`]); the user picks and configures which.
 #[non_exhaustive]

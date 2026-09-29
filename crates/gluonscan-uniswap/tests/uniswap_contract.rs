@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use gluonscan_core::{Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter};
+use gluonscan_core::{Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Wallet};
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
 use gluonscan_uniswap::UniswapV3;
 use rust_decimal::Decimal;
@@ -29,7 +29,12 @@ async fn full_returns_the_complete_position() {
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 
     let reading = UniswapV3::new()
-        .read(Address::ZERO, Chain::Ethereum, Detail::Full, &cx)
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
         .await
         .expect("read")
         .into_inner();
@@ -79,7 +84,12 @@ async fn summary_has_principal_but_no_uncollected_fees_and_needs_no_rpc() {
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))); // no RPC configured
 
     let reading = UniswapV3::new()
-        .read(Address::ZERO, Chain::Ethereum, Detail::Summary, &cx)
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Summary,
+            &cx,
+        )
         .await
         .expect("summary needs no rpc")
         .into_inner();
@@ -99,7 +109,7 @@ async fn summary_has_principal_but_no_uncollected_fees_and_needs_no_rpc() {
 async fn unsupported_chain_errors() {
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)));
     let err = UniswapV3::new()
-        .read(Address::ZERO, Chain::Bnb, Detail::Full, &cx)
+        .read(&Wallet::Evm(Address::ZERO), Chain::Bnb, Detail::Full, &cx)
         .await
         .expect_err("uniswap adapter not configured for BNB");
     assert!(!err.is_retryable());

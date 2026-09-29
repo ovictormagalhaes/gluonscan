@@ -11,7 +11,7 @@ use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
     Amount, Capability, Chain, Complete, Ctx, Detail, Error, LiquidityPosition, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, Staleness, Token,
+    ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
 };
 use gluonscan_evm::{decode_two_u256, encode_collect, eth_call};
 use gluonscan_math::{
@@ -77,7 +77,7 @@ impl ProtocolAdapter for UniswapV3 {
 
     async fn read(
         &self,
-        owner: Address,
+        owner: &Wallet,
         chain: Chain,
         detail: Detail,
         cx: &Ctx,
@@ -87,6 +87,7 @@ impl ProtocolAdapter for UniswapV3 {
                 message: format!("Uniswap V3 not configured for {chain:?}"),
             });
         }
+        let owner = owner.evm()?;
 
         let body = query_body(&format!("{owner:#x}"));
         let raw = cx.http.post(&self.subgraph_url(chain), body).await?;

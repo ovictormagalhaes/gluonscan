@@ -16,5 +16,6 @@ gluonscan-core = { workspace = true }
 gluonscan-aave = { workspace = true }
 gluonscan-uniswap = { workspace = true }
 gluonscan-pendle = { workspace = true }
+gluonscan-kamino = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }

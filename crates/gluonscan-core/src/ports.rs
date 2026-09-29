@@ -3,7 +3,9 @@
 //! Nothing here performs I/O directly. The engine (or the facade) supplies concrete
 //! implementations; tests supply mocks. This is what keeps the engine stateless and reproducible.
 
-use crate::{Capability, Chain, Complete, Detail, Error, Protocol, Reading, Source, Timestamp};
+use crate::{
+    Capability, Chain, Complete, Detail, Error, Protocol, Reading, Source, Timestamp, Wallet,
+};
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -100,7 +102,7 @@ pub trait ProtocolAdapter: Send + Sync + 'static {
     /// Read `owner`'s position for this protocol on `chain` at the requested `detail`.
     async fn read(
         &self,
-        owner: Address,
+        owner: &Wallet,
         chain: Chain,
         detail: Detail,
         cx: &Ctx,

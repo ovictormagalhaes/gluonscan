@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use gluonscan_core::{
-    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Timestamp, YieldKind,
+    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Timestamp, Wallet, YieldKind,
 };
 use gluonscan_pendle::PendleApi;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
@@ -42,7 +42,12 @@ async fn reads_held_pt_prices_it_and_skips_zero_yt() {
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 
     let reading = PendleApi::new()
-        .read(Address::ZERO, Chain::Ethereum, Detail::Full, &cx)
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
         .await
         .expect("read")
         .into_inner();
@@ -68,7 +73,12 @@ async fn reads_held_pt_prices_it_and_skips_zero_yt() {
 async fn unsupported_chain_errors() {
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)));
     let err = PendleApi::new()
-        .read(Address::ZERO, Chain::Solana, Detail::Full, &cx)
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Solana,
+            Detail::Full,
+            &cx,
+        )
         .await
         .expect_err("pendle is EVM-only");
     assert!(!err.is_retryable());

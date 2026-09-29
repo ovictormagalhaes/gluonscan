@@ -6,11 +6,11 @@
 //!
 //! ```no_run
 //! # async fn demo() -> Result<(), gluonscan::Error> {
-//! use gluonscan::{Gluonscan, AaveApi, Chain, Detail, Protocol, Address};
+//! use gluonscan::{Gluonscan, AaveApi, Chain, Detail, Protocol, Address, Wallet};
 //!
 //! let engine = Gluonscan::builder().backend(AaveApi::new()).build();
 //! let reading = engine
-//!     .read(Protocol::AaveV3, Address::ZERO, Chain::Ethereum, Detail::Full)
+//!     .read(Protocol::AaveV3, Wallet::Evm(Address::ZERO), Chain::Ethereum, Detail::Full)
 //!     .await?;
 //! println!("{:?}", reading.get());
 //! # Ok(()) }
@@ -21,6 +21,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 pub use gluonscan_aave::AaveApi;
 pub use gluonscan_core::*;
+pub use gluonscan_kamino::KaminoApi;
 pub use gluonscan_pendle::PendleApi;
 pub use gluonscan_uniswap::UniswapV3;
 
@@ -177,7 +178,7 @@ impl Gluonscan {
     pub async fn read(
         &self,
         protocol: Protocol,
-        owner: Address,
+        owner: Wallet,
         chain: Chain,
         detail: Detail,
     ) -> Result<Complete<Reading>, Error> {
@@ -188,6 +189,6 @@ impl Gluonscan {
             .ok_or_else(|| Error::Permanent {
                 message: format!("no registered {protocol:?} backend supports {chain:?}"),
             })?;
-        adapter.read(owner, chain, detail, &self.cx).await
+        adapter.read(&owner, chain, detail, &self.cx).await
     }
 }

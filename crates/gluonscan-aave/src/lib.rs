@@ -13,7 +13,7 @@ use alloy_primitives::Address;
 use async_trait::async_trait;
 use gluonscan_core::{
     Amount, Capability, Chain, Complete, Ctx, Currency, Detail, Error, LendingPosition, Money,
-    Position, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token,
+    Position, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
 };
 use rust_decimal::Decimal;
 
@@ -86,11 +86,12 @@ impl ProtocolAdapter for AaveApi {
 
     async fn read(
         &self,
-        owner: Address,
+        owner: &Wallet,
         chain: Chain,
         _detail: Detail,
         cx: &Ctx,
     ) -> Result<Complete<Reading>, Error> {
+        let owner = owner.evm()?;
         let chain_id = chain.evm_chain_id().ok_or_else(|| Error::Permanent {
             message: format!("Aave V3 is EVM-only; {chain:?} has no chain id"),
         })?;
