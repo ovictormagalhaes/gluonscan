@@ -20,9 +20,10 @@ use gluonscan_core::{
     Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
     WalletBalance,
 };
+use gluonscan_evm::eth_get_balance;
 use gluonscan_solana::{
-    decode_metadata, get_account_info, get_token_accounts_by_owner, get_token_balances,
-    metadata_pda,
+    decode_metadata, get_account_info, get_native_balance, get_token_accounts_by_owner,
+    get_token_balances, metadata_pda,
 };
 
 const MORALIS_API: &str = "https://deep-index.moralis.io/api/v2.2";
@@ -45,6 +46,16 @@ fn moralis_chain_slug(chain: Chain) -> Option<&'static str> {
         Chain::Optimism => "optimism",
         Chain::Polygon => "polygon",
         Chain::Bnb => "bsc",
+        _ => return None,
+    })
+}
+
+/// The native coin symbol for an EVM chain.
+fn evm_native_symbol(chain: Chain) -> Option<&'static str> {
+    Some(match chain {
+        Chain::Ethereum | Chain::Base | Chain::Arbitrum | Chain::Optimism => "ETH",
+        Chain::Bnb => "BNB",
+        Chain::Polygon => "POL",
         _ => return None,
     })
 }
@@ -569,6 +580,157 @@ impl ProtocolAdapter for SolanaNfts {
 
         let reading = Reading {
             protocol: Protocol::Nfts,
+            chain: Chain::Solana,
+            source: Source::OnChain,
+            positions,
+            provenance: Provenance {
+                source: Source::OnChain,
+                chain: Chain::Solana,
+                block: None,
+                at: cx.clock.now(),
+                staleness: Staleness::Live,
+            },
+        };
+        Ok(Complete::new(reading))
+    }
+}
+
+/// EVM native coin balance (ETH / BNB / POL) via the injected on-chain transport — a
+/// [`Position::Wallet`] with a `None` token address (native coins have no contract).
+#[derive(Debug, Default, Clone)]
+pub struct EvmNativeBalance;
+
+impl EvmNativeBalance {
+    /// Construct the reader.
+    pub fn new() -> Self {
+        EvmNativeBalance
+    }
+}
+
+#[async_trait]
+impl ProtocolAdapter for EvmNativeBalance {
+    fn protocol(&self) -> Protocol {
+        Protocol::Wallet
+    }
+
+    fn source(&self) -> Source {
+        Source::OnChain
+    }
+
+    fn capabilities(&self) -> &'static [Capability] {
+        CAPABILITIES
+    }
+
+    fn supported_chains(&self) -> &'static [Chain] {
+        SUPPORTED_CHAINS
+    }
+
+    async fn read(
+        &self,
+        owner: &Wallet,
+        chain: Chain,
+        _detail: Detail,
+        cx: &Ctx,
+    ) -> Result<Complete<Reading>, Error> {
+        let owner = owner.evm()?;
+        let symbol = evm_native_symbol(chain).ok_or_else(|| Error::Permanent {
+            message: format!("no native coin symbol for {chain:?}"),
+        })?;
+        let rpc = cx.rpc()?.as_ref();
+        let wei = eth_get_balance(rpc, chain, owner).await?;
+
+        let mut positions = Vec::new();
+        if wei > U256::ZERO {
+            positions.push(Position::Wallet(WalletBalance {
+                amount: Amount::from_raw(
+                    Token {
+                        symbol: symbol.to_string(),
+                        address: None,
+                        decimals: 18,
+                    },
+                    wei,
+                )?,
+            }));
+        }
+
+        let reading = Reading {
+            protocol: Protocol::Wallet,
+            chain,
+            source: Source::OnChain,
+            positions,
+            provenance: Provenance {
+                source: Source::OnChain,
+                chain,
+                block: None,
+                at: cx.clock.now(),
+                staleness: Staleness::Live,
+            },
+        };
+        Ok(Complete::new(reading))
+    }
+}
+
+/// Native SOL balance via the injected on-chain transport — a [`Position::Wallet`].
+#[derive(Debug, Default, Clone)]
+pub struct SolanaNativeBalance;
+
+impl SolanaNativeBalance {
+    /// Construct the reader.
+    pub fn new() -> Self {
+        SolanaNativeBalance
+    }
+}
+
+#[async_trait]
+impl ProtocolAdapter for SolanaNativeBalance {
+    fn protocol(&self) -> Protocol {
+        Protocol::Wallet
+    }
+
+    fn source(&self) -> Source {
+        Source::OnChain
+    }
+
+    fn capabilities(&self) -> &'static [Capability] {
+        CAPABILITIES
+    }
+
+    fn supported_chains(&self) -> &'static [Chain] {
+        &[Chain::Solana]
+    }
+
+    async fn read(
+        &self,
+        owner: &Wallet,
+        chain: Chain,
+        _detail: Detail,
+        cx: &Ctx,
+    ) -> Result<Complete<Reading>, Error> {
+        if chain != Chain::Solana {
+            return Err(Error::Permanent {
+                message: format!("Solana native balance only; got {chain:?}"),
+            });
+        }
+        let wallet = owner.solana()?;
+        let rpc = cx.rpc()?.as_ref();
+        let lamports = get_native_balance(rpc, wallet).await?;
+
+        let mut positions = Vec::new();
+        if lamports > 0 {
+            positions.push(Position::Wallet(WalletBalance {
+                amount: Amount::from_raw(
+                    Token {
+                        symbol: "SOL".to_string(),
+                        address: None,
+                        decimals: 9,
+                    },
+                    U256::from(lamports),
+                )?,
+            }));
+        }
+
+        let reading = Reading {
+            protocol: Protocol::Wallet,
             chain: Chain::Solana,
             source: Source::OnChain,
             positions,

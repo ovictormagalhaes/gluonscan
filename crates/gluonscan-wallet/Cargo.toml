@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 gluonscan-core = { workspace = true }
 gluonscan-solana = { workspace = true }
+gluonscan-evm = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 alloy-primitives = { workspace = true }

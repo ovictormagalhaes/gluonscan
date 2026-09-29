@@ -1285,6 +1285,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "gluonscan-core",
+ "gluonscan-evm",
  "gluonscan-solana",
  "gluonscan-testing",
  "rust_decimal",

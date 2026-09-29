@@ -43,6 +43,33 @@ pub async fn eth_call(
     })
 }
 
+/// Read an account's native coin balance via `eth_getBalance` at the latest block, returning wei.
+pub async fn eth_get_balance(
+    rpc: &dyn ChainProvider,
+    chain: Chain,
+    address: Address,
+) -> Result<U256, Error> {
+    let params = format!(r#"["{address:#x}","latest"]"#);
+    let raw = rpc.call(chain, "eth_getBalance", params).await?;
+    let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+        message: format!("eth_getBalance response not JSON: {e}"),
+    })?;
+    if let Some(err) = v.get("error") {
+        return Err(Error::Provider(
+            format!("eth_getBalance error: {err}").into(),
+        ));
+    }
+    let result = v
+        .get("result")
+        .and_then(|r| r.as_str())
+        .ok_or_else(|| Error::Integrity {
+            message: "eth_getBalance response missing `result`".into(),
+        })?;
+    U256::from_str_radix(result.trim_start_matches("0x"), 16).map_err(|e| Error::Integrity {
+        message: format!("eth_getBalance result not a hex quantity: {e}"),
+    })
+}
+
 /// Encode a call to the NonfungiblePositionManager `collect((tokenId, recipient, u128::MAX,
 /// u128::MAX))` — a static simulation that yields the position's uncollected fees.
 pub fn encode_collect(token_id: U256, recipient: Address) -> Vec<u8> {

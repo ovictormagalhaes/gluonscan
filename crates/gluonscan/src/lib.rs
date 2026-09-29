@@ -26,7 +26,10 @@ pub use gluonscan_pendle::PendleApi;
 pub use gluonscan_raydium::RaydiumClmm;
 pub use gluonscan_sources::{CoinGecko, CoinMarketCap};
 pub use gluonscan_uniswap::UniswapV3;
-pub use gluonscan_wallet::{BitcoinWallet, EvmNfts, EvmWallet, SolanaNfts, SolanaWallet};
+pub use gluonscan_wallet::{
+    BitcoinWallet, EvmNativeBalance, EvmNfts, EvmWallet, SolanaNativeBalance, SolanaNfts,
+    SolanaWallet,
+};
 
 /// The default `User-Agent` sent on every request. Some provider edges (CoinGecko's CloudFront,
 /// for one) reject requests without a `User-Agent` with a 403, and `reqwest` sends none by default —

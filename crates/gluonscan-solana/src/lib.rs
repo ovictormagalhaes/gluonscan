@@ -100,6 +100,20 @@ pub async fn get_token_accounts_by_owner(
     Ok(mints)
 }
 
+/// Read an account's native SOL balance in lamports (`getBalance`).
+pub async fn get_native_balance(rpc: &dyn ChainProvider, owner: &str) -> Result<u64, Error> {
+    let params = format!(r#"["{owner}"]"#);
+    let raw = rpc.call(Chain::Solana, "getBalance", params).await?;
+    let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+        message: format!("getBalance response not JSON: {e}"),
+    })?;
+    json.pointer("/result/value")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| Error::Integrity {
+            message: "getBalance response missing result.value".into(),
+        })
+}
+
 /// Fetch and base64-decode an account's data. Returns `None` when the account does not exist
 /// (`result.value == null`), so callers can treat a missing account as "not present" rather than
 /// an error.
