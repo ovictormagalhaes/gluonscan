@@ -1,0 +1,18 @@
+[package]
+name = "gluonscan-testing"
+description = "Contract-based mock transports for gluonscan: replay recorded request/response contracts (HTTP/GraphQL, on-chain RPC; gRPC-ready) matched by filters."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

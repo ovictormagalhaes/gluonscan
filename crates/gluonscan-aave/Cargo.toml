@@ -1,0 +1,23 @@
+[package]
+name = "gluonscan-aave"
+description = "Aave V3 protocol adapter for gluonscan (HTTP API backend)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+gluonscan-testing = { workspace = true }

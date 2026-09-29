@@ -1,0 +1,4 @@
+{
+  "body_contains": "userSupplies",
+  "reply_path": "../responses/aave_eth.json"
+}
