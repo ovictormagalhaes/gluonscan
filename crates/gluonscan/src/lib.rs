@@ -24,6 +24,7 @@ pub use gluonscan_core::*;
 pub use gluonscan_kamino::KaminoApi;
 pub use gluonscan_pendle::PendleApi;
 pub use gluonscan_raydium::RaydiumClmm;
+pub use gluonscan_sources::CoinGecko;
 pub use gluonscan_uniswap::UniswapV3;
 
 /// A `reqwest`-backed [`Http`] client. Configuration (timeouts, keys, retries) lives here, not in
@@ -114,6 +115,7 @@ pub struct Builder {
     adapters: Vec<Arc<dyn ProtocolAdapter>>,
     http: Option<Arc<dyn Http>>,
     rpc: Option<Arc<dyn ChainProvider>>,
+    price: Option<Arc<dyn PriceSource>>,
     clock: Option<Arc<dyn Clock>>,
 }
 
@@ -142,6 +144,13 @@ impl Builder {
         self
     }
 
+    /// Register a price source, enabling the separate [`Gluonscan::price`] operation. Pricing is
+    /// never folded into `read` — reading positions and pricing tokens are two operations.
+    pub fn price_source(mut self, price: Arc<dyn PriceSource>) -> Self {
+        self.price = Some(price);
+        self
+    }
+
     /// Finish building.
     pub fn build(self) -> Gluonscan {
         let http = self.http.unwrap_or_else(|| Arc::new(ReqwestHttp::new()));
@@ -152,6 +161,7 @@ impl Builder {
         }
         Gluonscan {
             adapters: self.adapters,
+            price: self.price,
             cx,
         }
     }
@@ -160,6 +170,7 @@ impl Builder {
 /// The configured engine.
 pub struct Gluonscan {
     adapters: Vec<Arc<dyn ProtocolAdapter>>,
+    price: Option<Arc<dyn PriceSource>>,
     cx: Ctx,
 }
 
@@ -170,6 +181,7 @@ impl Gluonscan {
             adapters: Vec::new(),
             http: None,
             rpc: None,
+            price: None,
             clock: None,
         }
     }
@@ -191,5 +203,22 @@ impl Gluonscan {
                 message: format!("no registered {protocol:?} backend supports {chain:?}"),
             })?;
         adapter.read(&owner, chain, detail, &self.cx).await
+    }
+
+    /// Price a token in USD via the configured price source — a **separate** operation from
+    /// [`read`](Gluonscan::read). Reading positions and pricing tokens are two distinct calls.
+    /// Errors with [`Error::Permanent`] if no price source was registered.
+    pub async fn price(
+        &self,
+        chain: Chain,
+        token: Address,
+    ) -> Result<rust_decimal::Decimal, Error> {
+        self.price
+            .as_ref()
+            .ok_or_else(|| Error::Permanent {
+                message: "no price source configured".into(),
+            })?
+            .price_usd(chain, token)
+            .await
     }
 }

@@ -1042,8 +1042,10 @@ dependencies = [
  "gluonscan-kamino",
  "gluonscan-pendle",
  "gluonscan-raydium",
+ "gluonscan-sources",
  "gluonscan-uniswap",
  "reqwest",
+ "rust_decimal",
 ]
 
 [[package]]
@@ -1138,6 +1140,19 @@ dependencies = [
  "gluonscan-testing",
  "serde_json",
  "sha2",
+ "tokio",
+]
+
+[[package]]
+name = "gluonscan-sources"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-testing",
+ "rust_decimal",
+ "serde_json",
  "tokio",
 ]
 
