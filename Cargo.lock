@@ -1163,6 +1163,7 @@ version = "0.0.1-beta.1"
 dependencies = [
  "alloy-primitives",
  "async-trait",
+ "proptest",
  "rust_decimal",
  "serde",
  "thiserror",
@@ -1174,7 +1175,9 @@ version = "0.0.1-beta.1"
 dependencies = [
  "alloy-primitives",
  "gluonscan-core",
+ "gluonscan-testing",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1197,6 +1200,7 @@ name = "gluonscan-math"
 version = "0.0.1-beta.1"
 dependencies = [
  "alloy-primitives",
+ "proptest",
 ]
 
 [[package]]

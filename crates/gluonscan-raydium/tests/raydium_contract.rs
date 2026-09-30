@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use base64::Engine;
-use gluonscan_core::{Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Wallet};
+use gluonscan_core::{Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, Wallet};
 use gluonscan_raydium::RaydiumClmm;
 use gluonscan_solana::{
     find_program_address, pubkey_bytes, pubkey_str, RAYDIUM_CLMM_PROGRAM, TOKEN_2022_PROGRAM,
@@ -154,6 +154,142 @@ async fn reads_a_clmm_position_from_chain() {
         p.uncollected_fees[1].amount,
         Decimal::from_i128_with_scale(2_000_000, 6)
     );
+}
+
+#[tokio::test]
+async fn position_with_missing_pool_fails_closed() {
+    // The position PDA is present and long enough to be a real Raydium position, but the pool
+    // account it references is too short to decode. This must fail closed with an integrity error
+    // rather than silently produce a garbage position from truncated pool bytes.
+    let program = pubkey_bytes(RAYDIUM_CLMM_PROGRAM).unwrap();
+    let nft = pubkey_bytes(NFT_MINT).unwrap();
+    let (pda, _) = find_program_address(&[b"position", &nft], &program);
+    let pda_str = pubkey_str(&pda);
+
+    let pool = [1u8; 32];
+    let pool_str = pubkey_str(&pool);
+
+    let rpc = MockChainProvider::new()
+        .on(
+            Match::all([
+                Match::method("getTokenAccountsByOwner"),
+                Match::body_contains(TOKEN_PROGRAM),
+            ]),
+            token_accounts_response(NFT_MINT),
+        )
+        .on(
+            Match::all([
+                Match::method("getTokenAccountsByOwner"),
+                Match::body_contains(TOKEN_2022_PROGRAM),
+            ]),
+            empty_token_accounts_response(),
+        )
+        .on(
+            Match::all([
+                Match::method("getAccountInfo"),
+                Match::body_contains(&pda_str),
+            ]),
+            account_response(&position_account(&pool, -60, 60, 1_000_000_000, 0, 0)),
+        )
+        // Pool account exists but is far shorter than POOL_MIN_LEN (273) — truncated / malformed.
+        .on(
+            Match::all([
+                Match::method("getAccountInfo"),
+                Match::body_contains(&pool_str),
+            ]),
+            account_response(&[0u8; 100]),
+        );
+    let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let err = RaydiumClmm::new()
+        .read(
+            &Wallet::Solana(NFT_MINT.to_string()),
+            Chain::Solana,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect_err("a too-short pool account must fail closed");
+
+    assert!(
+        matches!(&err, Error::Integrity { message } if message.contains("pool account")),
+        "expected Integrity(pool account), got {err:?}"
+    );
+    assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn discovers_position_under_token_2022() {
+    // Raydium's newer position NFTs mint under Token-2022. Confirm discovery finds a position when
+    // the NFT is held under Token-2022 (classic SPL Token program returns nothing).
+    let program = pubkey_bytes(RAYDIUM_CLMM_PROGRAM).unwrap();
+    let nft = pubkey_bytes(NFT_MINT).unwrap();
+    let (pda, _) = find_program_address(&[b"position", &nft], &program);
+    let pda_str = pubkey_str(&pda);
+
+    let pool = [1u8; 32];
+    let mint0 = [2u8; 32];
+    let mint1 = [3u8; 32];
+    let pool_str = pubkey_str(&pool);
+    let sqrt_x64: u128 = 1u128 << 64;
+
+    let rpc = MockChainProvider::new()
+        .on(
+            Match::all([
+                Match::method("getTokenAccountsByOwner"),
+                Match::body_contains(TOKEN_PROGRAM),
+            ]),
+            empty_token_accounts_response(),
+        )
+        .on(
+            Match::all([
+                Match::method("getTokenAccountsByOwner"),
+                Match::body_contains(TOKEN_2022_PROGRAM),
+            ]),
+            token_accounts_response(NFT_MINT),
+        )
+        .on(
+            Match::all([
+                Match::method("getAccountInfo"),
+                Match::body_contains(&pda_str),
+            ]),
+            account_response(&position_account(
+                &pool,
+                -60,
+                60,
+                1_000_000_000,
+                1_000_000,
+                2_000_000,
+            )),
+        )
+        .on(
+            Match::all([
+                Match::method("getAccountInfo"),
+                Match::body_contains(&pool_str),
+            ]),
+            account_response(&pool_account(0, sqrt_x64, &mint0, &mint1, 9, 6)),
+        );
+    let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let reading = RaydiumClmm::new()
+        .read(
+            &Wallet::Solana(NFT_MINT.to_string()),
+            Chain::Solana,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+
+    assert_eq!(reading.positions.len(), 1);
+    let Position::Liquidity(p) = &reading.positions[0] else {
+        panic!("expected a liquidity position");
+    };
+    assert_eq!((p.tick_lower, p.tick_upper, p.tick_current), (-60, 60, 0));
+    assert!(p.in_range);
+    assert_eq!(p.token0.decimals, 9);
+    assert_eq!(p.token1.decimals, 6);
 }
 
 #[tokio::test]

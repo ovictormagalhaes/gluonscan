@@ -19,3 +19,6 @@ async-trait = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

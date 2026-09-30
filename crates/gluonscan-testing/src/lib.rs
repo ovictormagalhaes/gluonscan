@@ -169,10 +169,15 @@ fn no_match(primary: &str, body: &str) -> Error {
     }
 }
 
+/// A request filter paired with a factory that produces the [`Error`] to fail it with. `Error` is
+/// not `Clone` (it carries an opaque provider source), so the failure is built per call.
+type ErrorContract = (Match, Box<dyn Fn() -> Error + Send + Sync>);
+
 /// A [`Http`] mock that replays contracts and records the calls it received.
 #[derive(Default)]
 pub struct MockHttp {
     contracts: Vec<Contract>,
+    errors: Vec<ErrorContract>,
     calls: Mutex<Vec<(String, String)>>,
 }
 
@@ -189,16 +194,46 @@ impl MockHttp {
         });
         self
     }
+    /// Fail matching requests with an injected error (checked before reply contracts). Use this to
+    /// test that an adapter propagates a transport failure (e.g. a 429 → [`Error::Transient`])
+    /// instead of swallowing it into an empty reading.
+    pub fn on_err(
+        mut self,
+        when: Match,
+        error: impl Fn() -> Error + Send + Sync + 'static,
+    ) -> Self {
+        self.errors.push((when, Box::new(error)));
+        self
+    }
+    /// Fail matching requests with a retryable [`Error::Transient`] (an HTTP 429 stand-in).
+    pub fn on_transient(self, when: Match) -> Self {
+        self.on_err(when, || Error::Transient {
+            message: "mock transient (HTTP 429)".into(),
+            retry_after: None,
+        })
+    }
     /// Build from a pre-assembled contract set.
     pub fn from_contracts(contracts: Vec<Contract>) -> Self {
         MockHttp {
             contracts,
+            errors: Vec::new(),
             calls: Mutex::new(Vec::new()),
         }
     }
     /// The (url, body) pairs seen so far — for assertions.
     pub fn calls(&self) -> Vec<(String, String)> {
         self.calls.lock().unwrap().clone()
+    }
+
+    fn reply(&self, primary: &str, body: &str) -> Result<String, Error> {
+        if let Some((_, factory)) = self.errors.iter().find(|(w, _)| w.matches(primary, body)) {
+            return Err(factory());
+        }
+        self.contracts
+            .iter()
+            .find(|c| c.when.matches(primary, body))
+            .map(|c| c.reply.clone())
+            .ok_or_else(|| no_match(primary, body))
     }
 }
 
@@ -214,11 +249,7 @@ impl Http for MockHttp {
             .lock()
             .unwrap()
             .push((url.to_string(), body.clone()));
-        self.contracts
-            .iter()
-            .find(|c| c.when.matches(url, &body))
-            .map(|c| c.reply.clone())
-            .ok_or_else(|| no_match(url, &body))
+        self.reply(url, &body)
     }
 
     async fn get(&self, url: &str, _headers: &[(&str, &str)]) -> Result<String, Error> {
@@ -226,11 +257,7 @@ impl Http for MockHttp {
             .lock()
             .unwrap()
             .push((url.to_string(), String::new()));
-        self.contracts
-            .iter()
-            .find(|c| c.when.matches(url, ""))
-            .map(|c| c.reply.clone())
-            .ok_or_else(|| no_match(url, ""))
+        self.reply(url, "")
     }
 }
 

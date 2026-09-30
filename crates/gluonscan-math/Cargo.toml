@@ -15,3 +15,6 @@ workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

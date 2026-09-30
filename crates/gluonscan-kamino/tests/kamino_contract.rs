@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use base64::Engine;
-use gluonscan_core::{Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Wallet};
+use gluonscan_core::{Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, Wallet};
 use gluonscan_kamino::KaminoApi;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
 use rust_decimal::Decimal;
@@ -94,6 +94,99 @@ async fn reads_obligation_with_reserve_join() {
         Decimal::from_str_exact("200").unwrap()
     );
     assert_eq!(usdc.apy, Some(Decimal::from_str_exact("0.089").unwrap()));
+}
+
+// Same obligation as OBLIGATIONS but with the `refreshedStats` block removed, so neither
+// `borrowLiquidationLimit` nor `userTotalBorrowBorrowFactorAdjusted` is present and no health factor
+// can be derived — while a non-zero borrow leg is still present.
+const OBLIGATIONS_DEBT_NO_HF: &str = r#"[{
+  "obligationAddress":"obl1",
+  "deposits":{},
+  "borrows":{},
+  "state":{
+    "deposits":[{"depositReserve":"RES_SOL","depositedAmount":"5000000000","marketValueSf":"864691128455135232000"}],
+    "borrows":[{"borrowReserve":"RES_USDC","borrowedAmountSf":"230584300921369395200000000","marketValueSf":"230584300921369395200"}]
+  }
+}]"#;
+
+#[tokio::test]
+async fn non_array_obligations_shape_fails_closed() {
+    // A 200 with an object body (not the expected array) must fail closed, not read as "no
+    // positions". The main market is queried first, so returning `{}` there triggers the error.
+    let http = MockHttp::new()
+        .on(Match::primary_contains("/reserves/metrics"), RESERVES)
+        .on(Match::primary_contains("/obligations"), "{}");
+    let rpc = MockChainProvider::new();
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let err = KaminoApi::new()
+        .read(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect_err("non-array obligations must fail closed");
+
+    assert!(
+        matches!(&err, Error::Integrity { message } if message.contains("non-array")),
+        "expected Integrity(non-array), got {err:?}"
+    );
+    assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn debt_without_health_factor_fails_closed() {
+    // An obligation carrying a borrow leg but no derivable health factor must fail closed rather
+    // than surface a debt position with an unknown liquidation risk.
+    let http = MockHttp::new()
+        .on(Match::primary_contains("/reserves/metrics"), RESERVES)
+        .on(Match::primary_contains(MAIN_MARKET), OBLIGATIONS_DEBT_NO_HF)
+        .on(Match::primary_contains("kamino-market"), "[]");
+    let rpc = MockChainProvider::new()
+        .on(Match::body_contains("MINT_SOL"), mint_account(9))
+        .on(Match::body_contains("MINT_USDC"), mint_account(6));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let err = KaminoApi::new()
+        .read(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect_err("debt with no health factor must fail closed");
+
+    assert!(
+        matches!(&err, Error::Integrity { message } if message.contains("health factor")),
+        "expected Integrity(health factor), got {err:?}"
+    );
+    assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn transient_obligations_transport_error_propagates() {
+    // A transport failure (HTTP 429 stand-in) on the obligations request must propagate as a
+    // retryable error, never be swallowed into an empty reading.
+    let http = MockHttp::new()
+        .on_transient(Match::primary_contains("/obligations"))
+        .on(Match::primary_contains("/reserves/metrics"), RESERVES);
+    let rpc = MockChainProvider::new();
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let err = KaminoApi::new()
+        .read(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect_err("transient transport failure must propagate");
+
+    assert!(err.is_retryable(), "expected retryable error, got {err:?}");
 }
 
 #[tokio::test]

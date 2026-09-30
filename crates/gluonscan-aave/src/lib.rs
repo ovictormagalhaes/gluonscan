@@ -315,10 +315,26 @@ fn parse_apy(item: &serde_json::Value) -> Option<Decimal> {
     item.pointer("/apy/value").and_then(json_decimal)
 }
 
+/// The positions array for a GraphQL field. An absent or null field means "no positions" (`Ok`
+/// empty); a field that is present but not an array is a malformed response and fails closed rather
+/// than being read as empty.
+fn as_position_array<'a>(
+    field: Option<&'a serde_json::Value>,
+    name: &str,
+) -> Result<&'a [serde_json::Value], Error> {
+    match field {
+        None | Some(serde_json::Value::Null) => Ok(&[]),
+        Some(v) => v
+            .as_array()
+            .map(Vec::as_slice)
+            .ok_or_else(|| Error::Integrity {
+                message: format!("Aave {name} present but not an array"),
+            }),
+    }
+}
+
 fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>, Error> {
-    let Some(items) = list.and_then(|v| v.as_array()) else {
-        return Ok(Vec::new());
-    };
+    let items = as_position_array(list, "userSupplies")?;
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         let amount = parse_amount_entry(item, "balance")?;
@@ -342,9 +358,7 @@ fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>
 }
 
 fn parse_borrowed(list: Option<&serde_json::Value>) -> Result<Vec<BorrowedAsset>, Error> {
-    let Some(items) = list.and_then(|v| v.as_array()) else {
-        return Ok(Vec::new());
-    };
+    let items = as_position_array(list, "userBorrows")?;
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         let amount = parse_amount_entry(item, "debt")?;
