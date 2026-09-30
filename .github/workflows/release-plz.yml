@@ -30,7 +30,12 @@ jobs:
       - name: crates.io auth (OIDC trusted publishing)
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
+      # `release` only: publish crates whose version is ahead of the registry, tag, and cut the
+      # GitHub Release. The version bump is done manually in Cargo.toml (beta line), so the
+      # release-PR command is not used — it also needs the org setting that lets Actions open PRs.
       - uses: release-plz/action@v0.5
+        with:
+          command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
