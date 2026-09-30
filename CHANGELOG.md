@@ -8,6 +8,17 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.3] - 2026-09-30
+
+### Changed
+
+- `Token.address` is now a chain-agnostic `Option<TokenAddress>` (`enum TokenAddress { Evm(Address),
+  Solana(String) }`) instead of `Option<Address>`. Solana adapters (Kamino, Raydium, the Solana
+  wallet reader) now populate the SPL mint, which they previously dropped — so consumers can price
+  and label Solana tokens by mint. `Token::evm` / `Token::solana` constructors added; `TokenAddress`
+  implements `Display` (`0x…` for EVM, base58 for Solana). Breaking for consumers reading
+  `token.address`.
+
 ## [0.0.1-beta.2] - 2026-09-30
 
 ### Fixed
@@ -32,6 +43,7 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.2...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.3...HEAD
+[0.0.1-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.2...v0.0.1-beta.3
 [0.0.1-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.1...v0.0.1-beta.2
 [0.0.1-beta.1]: https://github.com/ovictormagalhaes/gluonscan/releases/tag/v0.0.1-beta.1

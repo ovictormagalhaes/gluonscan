@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use gluonscan_core::{
     scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail, Error,
     LockPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
-    Staleness, Timestamp, Token, Wallet, YieldKind, YieldPosition,
+    Staleness, Timestamp, Token, TokenAddress, Wallet, YieldKind, YieldPosition,
 };
 use gluonscan_evm::{
     decode_two_u256, decode_u256, encode_balance_of, encode_selector_with_address, eth_call,
@@ -166,9 +166,14 @@ impl ProtocolAdapter for PendleApi {
         // consumer listing raw balances does not double-count them as loose tokens.
         let mut receipt_tokens = Vec::new();
         for c in candidates {
-            let token_addr = c.token.address.ok_or_else(|| Error::Integrity {
-                message: format!("Pendle token `{}` has no address", c.token.symbol),
-            })?;
+            let token_addr = c
+                .token
+                .address
+                .as_ref()
+                .and_then(TokenAddress::as_evm)
+                .ok_or_else(|| Error::Integrity {
+                    message: format!("Pendle token `{}` has no EVM address", c.token.symbol),
+                })?;
             let out = eth_call(rpc, chain, None, token_addr, encode_balance_of(owner)).await?;
             let balance = decode_u256(&out)?;
             if balance.is_zero() {
@@ -226,24 +231,8 @@ async fn read_lock(
         let gov = decode_u256(&eth_call(rpc, chain, None, ve, encode_balance_of(owner)).await?)?;
         out.push(Position::Lock(
             LockPosition::new(vec![
-                Amount::from_raw(
-                    Token {
-                        symbol: "PENDLE".to_string(),
-                        name: None,
-                        address: pendle_token,
-                        decimals: 18,
-                    },
-                    locked_pendle,
-                )?,
-                Amount::from_raw(
-                    Token {
-                        symbol: "vePENDLE".to_string(),
-                        name: None,
-                        address: Some(ve),
-                        decimals: 18,
-                    },
-                    gov,
-                )?,
+                Amount::from_raw(Token::evm("PENDLE", pendle_token, 18), locked_pendle)?,
+                Amount::from_raw(Token::evm("vePENDLE", Some(ve), 18), gov)?,
             ])
             .with_unlock_at(Some(Timestamp(expiry.saturating_to::<i64>()))),
         ));
@@ -270,12 +259,7 @@ fn parse_token(v: &serde_json::Value) -> Result<Token, Error> {
         .and_then(|s| s.as_str())
         .and_then(|s| Address::from_str(s).ok());
     let name = v.get("name").and_then(|s| s.as_str()).map(str::to_string);
-    Ok(Token {
-        symbol,
-        name,
-        address,
-        decimals,
-    })
+    Ok(Token::evm(symbol, address, decimals).with_name(name))
 }
 
 fn priced_amount(token: Token, raw: U256, price_usd: Option<Decimal>) -> Result<Amount, Error> {

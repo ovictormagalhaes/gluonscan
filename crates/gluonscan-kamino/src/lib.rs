@@ -291,16 +291,7 @@ async fn build_leg<'a>(
             currency: Currency::Usd,
         });
 
-    let amount = Amount::from_raw(
-        Token {
-            symbol,
-            name: None,
-            address: None,
-            decimals,
-        },
-        raw,
-    )?
-    .with_usd(usd);
+    let amount = Amount::from_raw(Token::solana(symbol, Some(mint), decimals), raw)?.with_usd(usd);
 
     Ok((amount, meta))
 }

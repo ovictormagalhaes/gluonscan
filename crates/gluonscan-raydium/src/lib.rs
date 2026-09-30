@@ -42,6 +42,8 @@ const POS_FEE1: usize = 137;
 // mint_decimals_0[233], mint_decimals_1[234], tick_spacing[235..237], liquidity[237..253],
 // sqrt_price_x64[253..269], tick_current[269..273].
 const POOL_MIN_LEN: usize = 273;
+const POOL_MINT0: usize = 73;
+const POOL_MINT1: usize = 105;
 const POOL_DEC0: usize = 233;
 const POOL_DEC1: usize = 234;
 const POOL_SQRT_X64: usize = 253;
@@ -149,10 +151,12 @@ async fn parse_position(
     let tick_current = i32_at(&pool, POOL_TICK)?;
     let sqrt_x64 = u128_at(&pool, POOL_SQRT_X64)?;
     // The two mints and their decimals live in the pool account itself, so no extra mint reads.
+    let mint0 = pubkey_str(&pubkey_at(&pool, POOL_MINT0)?);
+    let mint1 = pubkey_str(&pubkey_at(&pool, POOL_MINT1)?);
     let dec0 = *pool.get(POOL_DEC0).ok_or_else(short)?;
     let dec1 = *pool.get(POOL_DEC1).ok_or_else(short)?;
-    let token0 = Token::new(String::new(), None, dec0);
-    let token1 = Token::new(String::new(), None, dec1);
+    let token0 = Token::solana(String::new(), Some(mint0), dec0);
+    let token1 = Token::solana(String::new(), Some(mint1), dec1);
 
     // Principal amounts via the shared Q64.96 math (Raydium's sqrt price is Q64.64 → shift up 32).
     let sqrt_price = U256::from(sqrt_x64) << 32;

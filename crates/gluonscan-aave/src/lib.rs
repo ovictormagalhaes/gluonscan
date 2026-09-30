@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use gluonscan_core::{
     Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Currency, Detail, Error,
     LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
-    Staleness, SuppliedAsset, Token, Wallet,
+    Staleness, SuppliedAsset, Token, TokenAddress, Wallet,
 };
 use rust_decimal::Decimal;
 
@@ -177,7 +177,13 @@ async fn enrich_risk(
     let addrs: Vec<Address> = {
         let mut seen = Vec::new();
         for s in supplied.iter() {
-            if let Some(a) = s.amount.token.address {
+            if let Some(a) = s
+                .amount
+                .token
+                .address
+                .as_ref()
+                .and_then(TokenAddress::as_evm)
+            {
                 if !seen.contains(&a) {
                     seen.push(a);
                 }
@@ -220,7 +226,13 @@ async fn enrich_risk(
         }
     }
     for s in supplied.iter_mut() {
-        if let Some(a) = s.amount.token.address {
+        if let Some(a) = s
+            .amount
+            .token
+            .address
+            .as_ref()
+            .and_then(TokenAddress::as_evm)
+        {
             if let Some((mlt, lt)) = risk.get(&a) {
                 s.max_ltv = *mlt;
                 s.liquidation_threshold = *lt;
@@ -299,12 +311,7 @@ fn parse_amount_entry(item: &serde_json::Value, balance_key: &str) -> Result<Amo
         });
 
     Ok(Amount::from_decimal(
-        Token {
-            symbol,
-            name,
-            address,
-            decimals,
-        },
+        Token::evm(symbol, address, decimals).with_name(name),
         amount,
     )?
     .with_usd(usd))

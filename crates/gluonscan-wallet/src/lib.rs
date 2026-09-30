@@ -161,12 +161,7 @@ impl ProtocolAdapter for EvmWallet {
             let name = t.get("name").and_then(|n| n.as_str()).map(str::to_string);
 
             let amount = Amount::from_raw(
-                Token {
-                    symbol,
-                    name,
-                    address,
-                    decimals,
-                },
+                Token::evm(symbol, address, decimals).with_name(name),
                 raw_u256,
             )?;
             // Spam/verified flags are passed through, not acted on — the consumer decides.
@@ -239,7 +234,7 @@ impl ProtocolAdapter for SolanaWallet {
                 message: format!("Solana balance not a number: {e}"),
             })?;
             positions.push(Position::Wallet(WalletBalance::new(Amount::from_raw(
-                Token::new(String::new(), None, b.decimals),
+                Token::solana(String::new(), Some(b.mint.clone()), b.decimals),
                 raw,
             )?)));
         }

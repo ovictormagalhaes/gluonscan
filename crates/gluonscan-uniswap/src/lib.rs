@@ -312,12 +312,7 @@ fn parse_token(v: Option<&serde_json::Value>) -> Result<Token, Error> {
         .pointer("/name")
         .and_then(|s| s.as_str())
         .map(str::to_string);
-    Ok(Token {
-        symbol,
-        name,
-        address,
-        decimals,
-    })
+    Ok(Token::evm(symbol, address, decimals).with_name(name))
 }
 
 /// Build an [`Amount`] from a raw base-unit integer, scaling by the token's decimals.

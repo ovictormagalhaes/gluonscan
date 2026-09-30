@@ -147,6 +147,38 @@ impl Money {
     }
 }
 
+/// A token's on-chain identity, chain-agnostic: an EVM contract address or a Solana SPL mint.
+/// EVM addresses keep their 20-byte type; Solana mints are base58 strings (they do not fit an
+/// [`Address`]). `Display` renders an EVM address as `0x…` and a Solana mint as its base58 form, so
+/// a consumer can use one string field for both.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TokenAddress {
+    /// An EVM contract address.
+    Evm(Address),
+    /// A Solana SPL mint (base58).
+    Solana(String),
+}
+
+impl TokenAddress {
+    /// The EVM address, if this token is an EVM contract (for on-chain calls that need one).
+    pub fn as_evm(&self) -> Option<Address> {
+        match self {
+            TokenAddress::Evm(a) => Some(*a),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TokenAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenAddress::Evm(a) => write!(f, "{a:#x}"),
+            TokenAddress::Solana(m) => f.write_str(m),
+        }
+    }
+}
+
 /// A token identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
@@ -154,21 +186,31 @@ pub struct Token {
     pub symbol: String,
     /// Full name, when the source provides it.
     pub name: Option<String>,
-    /// Contract address, when applicable.
-    pub address: Option<Address>,
+    /// On-chain identity (EVM contract or Solana mint), when applicable.
+    pub address: Option<TokenAddress>,
     /// Decimal precision.
     pub decimals: u8,
 }
 
 impl Token {
-    /// A token with just symbol/address/decimals (no name yet).
-    pub fn new(symbol: impl Into<String>, address: Option<Address>, decimals: u8) -> Self {
+    /// A token with a chain-agnostic address (no name yet).
+    pub fn new(symbol: impl Into<String>, address: Option<TokenAddress>, decimals: u8) -> Self {
         Token {
             symbol: symbol.into(),
             name: None,
             address,
             decimals,
         }
+    }
+
+    /// An EVM token from an optional contract address (no name yet).
+    pub fn evm(symbol: impl Into<String>, address: Option<Address>, decimals: u8) -> Self {
+        Token::new(symbol, address.map(TokenAddress::Evm), decimals)
+    }
+
+    /// A Solana token from an optional SPL mint (no name yet).
+    pub fn solana(symbol: impl Into<String>, mint: Option<String>, decimals: u8) -> Self {
+        Token::new(symbol, mint.map(TokenAddress::Solana), decimals)
     }
 
     /// Attach a display name (builder-style).
