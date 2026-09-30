@@ -7,15 +7,24 @@
 # single `vX.Y.Z` git tag and a single GitHub Release — not one tag/release per crate.
 
 [workspace]
-# One tag for the whole workspace release (all crates resolve to the same version).
-git_tag_name = "v{{ version }}"
-# Publish a GitHub Release for that tag, with the changelog section as its body.
-git_release_enable = true
-git_release_name = "gluonscan v{{ version }}"
-# Maintain the changelog (Keep a Changelog format, at the repo root).
-changelog_update = true
 # Publish every crate, including the gluonscan-testing helper.
 publish = true
+# Maintain the changelog (Keep a Changelog format, at the repo root).
+changelog_update = true
+# Per-crate tags/releases are OFF: the whole workspace shares one version, so a single tag and a
+# single GitHub Release are cut by the facade crate only (below). Enabling them per crate makes
+# every crate try to create the same `v{{version}}` tag, which collides.
+git_tag_enable = false
+git_release_enable = false
+
+# The facade crate owns the single workspace tag + GitHub Release for the shared version. It is last
+# in dependency order, so by the time it is processed every crate has already been published.
+[[package]]
+name = "gluonscan"
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+git_release_enable = true
+git_release_name = "gluonscan v{{ version }}"
 
 [changelog]
 # A `!`/BREAKING commit is never silently folded into a patch bump.
