@@ -41,7 +41,7 @@ async fn reads_held_pt_prices_it_and_skips_zero_yt() {
             ]),
             yt_reply,
         )
-        // vePENDLE positionData -> (0, 0): no lock. sPENDLE balanceOf -> 0: no stake.
+        // vePENDLE positionData -> (0, 0): no lock.
         .on(
             Match::body_contains("cb6b4f3c"),
             format!(
@@ -106,8 +106,8 @@ async fn unsupported_chain_errors() {
 }
 
 #[tokio::test]
-async fn reads_vependle_lock_and_spendle_stake() {
-    // Empty catalog isolates the Ethereum-only vePENDLE lock + sPENDLE stake reads.
+async fn reads_vependle_lock() {
+    // Empty catalog isolates the Ethereum-only vePENDLE lock read.
     let http = MockHttp::new().on(
         Match::primary_contains("markets"),
         r#"{"total":0,"limit":100,"skip":0,"results":[]}"#,
@@ -123,10 +123,6 @@ async fn reads_vependle_lock_and_spendle_stake() {
         r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:0>64}"}}"#,
         "1bc16d674ec80000"
     ); // 2e18
-    let spendle = format!(
-        r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:0>64}"}}"#,
-        "4563918244f40000"
-    ); // 5e18
 
     let rpc = MockChainProvider::new()
         .on(Match::body_contains("cb6b4f3c"), position_data)
@@ -136,10 +132,6 @@ async fn reads_vependle_lock_and_spendle_stake() {
                 Match::body_contains("70a08231"),
             ]),
             gov,
-        )
-        .on(
-            Match::body_contains("07282f2ceebd7a65451fcd268b364300d9e6d7f5"),
-            spendle,
         );
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 
@@ -168,23 +160,9 @@ async fn reads_vependle_lock_and_spendle_stake() {
     assert_eq!(lock.locked[1].amount, Decimal::from_str_exact("2").unwrap());
     assert_eq!(lock.unlock_at, Some(Timestamp(1_800_000_000)));
 
-    let stake = reading
+    // No spurious sPENDLE stake is emitted.
+    assert!(!reading
         .positions
         .iter()
-        .find_map(|p| match p {
-            Position::Stake(s) => Some(s),
-            _ => None,
-        })
-        .expect("an sPENDLE stake");
-    assert_eq!(stake.staked[0].token.symbol, "sPENDLE");
-    assert_eq!(
-        stake.staked[0].amount,
-        Decimal::from_str_exact("5").unwrap()
-    );
-
-    // sPENDLE is an ERC-20 the wallet holds → recorded as a receipt token for dedup.
-    assert!(reading
-        .receipt_tokens
-        .iter()
-        .any(|a| format!("{a:#x}") == "0x07282f2ceebd7a65451fcd268b364300d9e6d7f5"));
+        .any(|p| matches!(p, Position::Stake(_))));
 }

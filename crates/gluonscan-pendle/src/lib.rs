@@ -5,7 +5,7 @@
 //! `balanceOf` per token. Any non-zero balance is a held [`YieldPosition`], priced from the catalog.
 //!
 //! On Ethereum it also reads the vePENDLE lock ([`Position::Lock`] — locked PENDLE + governance
-//! power + unlock time) and the sPENDLE liquid-staking balance ([`Position::Stake`]).
+//! power + unlock time).
 
 use std::str::FromStr;
 
@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use gluonscan_core::{
     scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail, Error,
     LockPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
-    StakePosition, Staleness, Timestamp, Token, Wallet, YieldKind, YieldPosition,
+    Staleness, Timestamp, Token, Wallet, YieldKind, YieldPosition,
 };
 use gluonscan_evm::{
     decode_two_u256, decode_u256, encode_balance_of, encode_selector_with_address, eth_call,
@@ -182,9 +182,9 @@ impl ProtocolAdapter for PendleApi {
             ));
         }
 
-        // 3. vePENDLE lock + sPENDLE stake live only on Ethereum mainnet.
+        // 3. The vePENDLE lock lives only on Ethereum mainnet.
         if chain == Chain::Ethereum {
-            positions.extend(read_lock_and_stake(rpc, chain, owner, &mut receipt_tokens).await?);
+            positions.extend(read_lock(rpc, chain, owner).await?);
         }
 
         let reading = Reading::new(
@@ -199,19 +199,16 @@ impl ProtocolAdapter for PendleApi {
     }
 }
 
-/// Read the Ethereum-only vePENDLE lock and sPENDLE stake for `owner`.
-async fn read_lock_and_stake(
+/// Read the Ethereum-only vePENDLE lock for `owner`.
+async fn read_lock(
     rpc: &dyn ChainProvider,
     chain: Chain,
     owner: Address,
-    receipt_tokens: &mut Vec<Address>,
 ) -> Result<Vec<Position>, Error> {
     // Ethereum mainnet contracts (lowercased so parsing never depends on EIP-55 checksum).
     let pendle_token = Address::from_str("0x808507121b80c02388fad14726482e061b8da827").ok();
     let ve = Address::from_str("0x4f30a9d41b80ecc5b94306ab4364951ae3170210")
         .expect("valid vePENDLE address");
-    let spendle = Address::from_str("0x07282f2ceebd7a65451fcd268b364300d9e6d7f5")
-        .expect("valid sPENDLE address");
 
     let mut out = Vec::new();
 
@@ -250,21 +247,6 @@ async fn read_lock_and_stake(
             ])
             .with_unlock_at(Some(Timestamp(expiry.saturating_to::<i64>()))),
         ));
-    }
-
-    // sPENDLE liquid staking: balanceOf(user).
-    let sp = decode_u256(&eth_call(rpc, chain, None, spendle, encode_balance_of(owner)).await?)?;
-    if sp > U256::ZERO {
-        receipt_tokens.push(spendle);
-        out.push(Position::Stake(StakePosition::new(vec![Amount::from_raw(
-            Token {
-                symbol: "sPENDLE".to_string(),
-                name: None,
-                address: Some(spendle),
-                decimals: 18,
-            },
-            sp,
-        )?])));
     }
 
     Ok(out)
