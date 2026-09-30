@@ -1,0 +1,5 @@
+{
+  "data": {
+    "r0": { "supplyInfo": { "maxLTV": { "value": "0.805" }, "liquidationThreshold": { "value": "0.83" } } }
+  }
+}

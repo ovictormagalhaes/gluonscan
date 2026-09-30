@@ -1,0 +1,4 @@
+{
+  "body_contains": "underlyingToken",
+  "reply_path": "../responses/aave_reserve.json"
+}

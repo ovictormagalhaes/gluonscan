@@ -1,12 +1,16 @@
 //! Contract-based test: Raydium CLMM read over Solana RPC (MockChainProvider). Account bytes are
-//! built here to match the adapter's slice layout, so decoder and fixture stay self-consistent.
+//! built here to match the on-chain `PersonalPositionState` / `PoolState` byte offsets, so decoder
+//! and fixture stay in lockstep with the real layout.
 
 use std::sync::Arc;
 
 use base64::Engine;
 use gluonscan_core::{Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Wallet};
 use gluonscan_raydium::RaydiumClmm;
-use gluonscan_solana::{find_program_address, pubkey_bytes, pubkey_str, RAYDIUM_CLMM_PROGRAM};
+use gluonscan_solana::{
+    find_program_address, pubkey_bytes, pubkey_str, RAYDIUM_CLMM_PROGRAM, TOKEN_2022_PROGRAM,
+    TOKEN_PROGRAM,
+};
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
 use rust_decimal::Decimal;
 
@@ -23,6 +27,12 @@ fn token_accounts_response(mint: &str) -> String {
     )
 }
 
+fn empty_token_accounts_response() -> String {
+    r#"{"jsonrpc":"2.0","id":1,"result":{"value":[]}}"#.to_string()
+}
+
+// PersonalPositionState: pool_id[41..73], ticks[73..81], liquidity[81..97],
+// fee_growth_inside_0/1[97..129], token_fees_owed_0[129..137], token_fees_owed_1[137..145].
 fn position_account(
     pool: &[u8; 32],
     lower: i32,
@@ -31,28 +41,33 @@ fn position_account(
     f0: u64,
     f1: u64,
 ) -> Vec<u8> {
-    let mut b = vec![0u8; 113];
+    let mut b = vec![0u8; 145];
     b[41..73].copy_from_slice(pool);
     b[73..77].copy_from_slice(&lower.to_le_bytes());
     b[77..81].copy_from_slice(&upper.to_le_bytes());
     b[81..97].copy_from_slice(&liq.to_le_bytes());
-    b[97..105].copy_from_slice(&f0.to_le_bytes());
-    b[105..113].copy_from_slice(&f1.to_le_bytes());
+    b[129..137].copy_from_slice(&f0.to_le_bytes());
+    b[137..145].copy_from_slice(&f1.to_le_bytes());
     b
 }
 
-fn pool_account(tick: i32, sqrt_x64: u128, mint0: &[u8; 32], mint1: &[u8; 32]) -> Vec<u8> {
-    let mut b = vec![0u8; 92];
-    b[8..12].copy_from_slice(&tick.to_le_bytes());
-    b[12..28].copy_from_slice(&sqrt_x64.to_le_bytes());
-    b[28..60].copy_from_slice(mint0);
-    b[60..92].copy_from_slice(mint1);
-    b
-}
-
-fn mint_account(decimals: u8) -> Vec<u8> {
-    let mut b = vec![0u8; 45];
-    b[44] = decimals;
+// PoolState: token_mint_0[73..105], token_mint_1[105..137], mint_decimals_0[233],
+// mint_decimals_1[234], sqrt_price_x64[253..269], tick_current[269..273].
+fn pool_account(
+    tick: i32,
+    sqrt_x64: u128,
+    mint0: &[u8; 32],
+    mint1: &[u8; 32],
+    dec0: u8,
+    dec1: u8,
+) -> Vec<u8> {
+    let mut b = vec![0u8; 273];
+    b[73..105].copy_from_slice(mint0);
+    b[105..137].copy_from_slice(mint1);
+    b[233] = dec0;
+    b[234] = dec1;
+    b[253..269].copy_from_slice(&sqrt_x64.to_le_bytes());
+    b[269..273].copy_from_slice(&tick.to_le_bytes());
     b
 }
 
@@ -66,16 +81,25 @@ async fn reads_a_clmm_position_from_chain() {
     let pool = [1u8; 32];
     let mint0 = [2u8; 32];
     let mint1 = [3u8; 32];
-    let (pool_str, mint0_str, mint1_str) =
-        (pubkey_str(&pool), pubkey_str(&mint0), pubkey_str(&mint1));
+    let pool_str = pubkey_str(&pool);
 
     // sqrt price Q64.64 at tick 0 = 2^64; shifted to Q64.96 it equals get_sqrt_ratio_at_tick(0).
     let sqrt_x64: u128 = 1u128 << 64;
 
     let rpc = MockChainProvider::new()
         .on(
-            Match::method("getTokenAccountsByOwner"),
+            Match::all([
+                Match::method("getTokenAccountsByOwner"),
+                Match::body_contains(TOKEN_PROGRAM),
+            ]),
             token_accounts_response(NFT_MINT),
+        )
+        .on(
+            Match::all([
+                Match::method("getTokenAccountsByOwner"),
+                Match::body_contains(TOKEN_2022_PROGRAM),
+            ]),
+            empty_token_accounts_response(),
         )
         .on(
             Match::all([
@@ -96,21 +120,7 @@ async fn reads_a_clmm_position_from_chain() {
                 Match::method("getAccountInfo"),
                 Match::body_contains(&pool_str),
             ]),
-            account_response(&pool_account(0, sqrt_x64, &mint0, &mint1)),
-        )
-        .on(
-            Match::all([
-                Match::method("getAccountInfo"),
-                Match::body_contains(&mint0_str),
-            ]),
-            account_response(&mint_account(9)),
-        )
-        .on(
-            Match::all([
-                Match::method("getAccountInfo"),
-                Match::body_contains(&mint1_str),
-            ]),
-            account_response(&mint_account(6)),
+            account_response(&pool_account(0, sqrt_x64, &mint0, &mint1, 9, 6)),
         );
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 

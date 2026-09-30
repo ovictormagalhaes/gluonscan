@@ -7,6 +7,7 @@
 //! A future on-chain backend would live in a sibling crate and register for the same
 //! [`Protocol::AaveV3`]; the engine routes capabilities between them.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use alloy_primitives::Address;
@@ -111,11 +112,12 @@ impl ProtocolAdapter for AaveApi {
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
             message: format!("Aave response was not valid JSON: {e}"),
         })?;
+        check_graphql_errors(&json)?;
         let data = json.get("data").ok_or_else(|| Error::Integrity {
             message: "Aave response missing `data`".into(),
         })?;
 
-        let supplied = parse_supplied(data.get("userSupplies"))?;
+        let mut supplied = parse_supplied(data.get("userSupplies"))?;
         let borrowed = parse_borrowed(data.get("userBorrows"))?;
 
         let has_debt = !borrowed.is_empty();
@@ -125,6 +127,12 @@ impl ProtocolAdapter for AaveApi {
             return Err(Error::Integrity {
                 message: "Aave account has debt but no health factor was returned".into(),
             });
+        }
+
+        // Per-reserve risk config (liquidation threshold, max LTV) is a separate query — fetched at
+        // Full detail so offline health-factor recompute has the parameters.
+        if matches!(_detail, Detail::Full) && !supplied.is_empty() {
+            enrich_risk(cx, self.endpoint(), market, chain_id, &mut supplied).await?;
         }
 
         let position = LendingPosition {
@@ -150,13 +158,95 @@ impl ProtocolAdapter for AaveApi {
     }
 }
 
+/// Fail closed if the GraphQL response carries an `errors` array — never return the empty `data`
+/// that accompanies a failed query as if it were "no positions".
+fn check_graphql_errors(json: &serde_json::Value) -> Result<(), Error> {
+    if let Some(errs) = json.get("errors").and_then(|e| e.as_array()) {
+        if !errs.is_empty() {
+            let msg = errs
+                .iter()
+                .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(Error::Integrity {
+                message: format!("Aave GraphQL error: {msg}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Fetch per-reserve `maxLTV` / `liquidationThreshold` for the supplied assets in one batched query
+/// (an alias per token) and set them on each [`SuppliedAsset`].
+async fn enrich_risk(
+    cx: &Ctx,
+    endpoint: &str,
+    market: &str,
+    chain_id: u64,
+    supplied: &mut [SuppliedAsset],
+) -> Result<(), Error> {
+    let addrs: Vec<Address> = {
+        let mut seen = Vec::new();
+        for s in supplied.iter() {
+            if let Some(a) = s.amount.token.address {
+                if !seen.contains(&a) {
+                    seen.push(a);
+                }
+            }
+        }
+        seen
+    };
+    if addrs.is_empty() {
+        return Ok(());
+    }
+
+    let mut fields = String::new();
+    for (i, a) in addrs.iter().enumerate() {
+        fields.push_str(&format!(
+            r#"r{i}:reserve(request:{{market:"{market}",chainId:{chain_id},underlyingToken:"{a:#x}"}}){{supplyInfo{{maxLTV{{value}} liquidationThreshold{{value}}}}}} "#
+        ));
+    }
+    let body = serde_json::json!({ "query": format!("query{{{fields}}}") }).to_string();
+    let raw = cx.http.post(endpoint, body, &[]).await?;
+    let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+        message: format!("Aave reserve response not JSON: {e}"),
+    })?;
+    check_graphql_errors(&json)?;
+    let data = json.get("data").ok_or_else(|| Error::Integrity {
+        message: "Aave reserve response missing `data`".into(),
+    })?;
+
+    let mut risk: HashMap<Address, (Option<Decimal>, Option<Decimal>)> = HashMap::new();
+    for (i, a) in addrs.iter().enumerate() {
+        if let Some(node) = data.get(format!("r{i}")) {
+            risk.insert(
+                *a,
+                (
+                    node.pointer("/supplyInfo/maxLTV/value")
+                        .and_then(json_decimal),
+                    node.pointer("/supplyInfo/liquidationThreshold/value")
+                        .and_then(json_decimal),
+                ),
+            );
+        }
+    }
+    for s in supplied.iter_mut() {
+        if let Some(a) = s.amount.token.address {
+            if let Some((mlt, lt)) = risk.get(&a) {
+                s.max_ltv = *mlt;
+                s.liquidation_threshold = *lt;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn query_body(market: &str, chain_id: u64, user: &str) -> String {
     // Combined query: supplies + borrows + account state, in one round trip.
     let query = r#"query($market:String!,$chainId:Int!,$user:String!){
       userSupplies(request:{markets:[{address:$market,chainId:$chainId}],user:$user}){
         currency{symbol name address decimals} balance{amount{value} usd}
         apy{value} isCollateral canBeCollateral
-        reserve{supplyInfo{maxLTV{value} liquidationThreshold{value}}}
       }
       userBorrows(request:{markets:[{address:$market,chainId:$chainId}],user:$user}){
         currency{symbol name address decimals} debt{amount{value} usd} apy{value}
@@ -244,12 +334,9 @@ fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>
         let amount = parse_amount_entry(item, "balance")?;
         out.push(SuppliedAsset {
             amount,
-            liquidation_threshold: item
-                .pointer("/reserve/supplyInfo/liquidationThreshold/value")
-                .and_then(json_decimal),
-            max_ltv: item
-                .pointer("/reserve/supplyInfo/maxLTV/value")
-                .and_then(json_decimal),
+            // Filled by the separate reserve() query in enrich_risk (Full detail).
+            liquidation_threshold: None,
+            max_ltv: None,
             is_collateral: item
                 .get("isCollateral")
                 .and_then(|v| v.as_bool())

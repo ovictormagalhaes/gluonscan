@@ -1,21 +1,24 @@
 //! # gluonscan-kamino
 //!
-//! Kamino adapter (Solana lending), [`Source::Api`]: reads a wallet's obligations from the Kamino
-//! HTTP API across its known markets and normalizes them into [`LendingPosition`]s. HTTP-only for
-//! the position read (the Kamino API resolves USD values); on-chain reads are only needed for the
-//! historical path (a follow-up).
-//!
-//! Note: this slice models the obligation shape directly; the real API's scaled-fraction fields and
-//! the `reserves/metrics` join (for exact token/price resolution) are a reconciliation follow-up.
+//! Kamino adapter (Solana lending), [`Source::Api`] + on-chain mint decimals: reads a wallet's
+//! obligations from the Kamino HTTP API across its markets and normalizes them into
+//! [`LendingPosition`]s. USD values come from the API's scaled-fraction `marketValueSf` (divided by
+//! `2^60`); the human token amount is the raw underlying amount scaled by the mint's decimals (read
+//! on-chain). The health factor is derived (`borrowLiquidationLimit / borrowFactorAdjustedDebt`)
+//! since the API does not expose it directly.
 
+use std::collections::HashMap;
+use std::str::FromStr;
+
+use alloy_primitives::U256;
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Currency, Detail, Error,
-    LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
-    Staleness, SuppliedAsset, Token, Wallet,
+    Amount, BorrowedAsset, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail,
+    Error, LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading,
+    Source, Staleness, SuppliedAsset, Token, Wallet,
 };
+use gluonscan_solana::get_mint_decimals;
 use rust_decimal::Decimal;
-use std::str::FromStr;
 
 const KAMINO_API: &str = "https://api.kamino.finance";
 const CAPABILITIES: &[Capability] = &[
@@ -32,7 +35,7 @@ const MARKETS: &[&str] = &[
     "DxXdAyU3kCjnyggvHmY5nAwg5cRbbmdyX3npfDMjjMek",
 ];
 
-/// Kamino adapter backed by the public HTTP API.
+/// Kamino adapter backed by the public HTTP API + on-chain mint decimals.
 #[derive(Debug, Default, Clone)]
 pub struct KaminoApi {
     base: Option<String>,
@@ -86,6 +89,8 @@ impl ProtocolAdapter for KaminoApi {
             });
         }
         let wallet = owner.solana()?;
+        let rpc = cx.rpc()?.as_ref();
+        let mut decimals_cache: HashMap<String, u8> = HashMap::new();
 
         let mut positions = Vec::new();
         for market in MARKETS {
@@ -105,8 +110,23 @@ impl ProtocolAdapter for KaminoApi {
                     "Kamino market {market} returned a non-array obligations response"
                 ),
             })?;
+            if items.is_empty() {
+                continue;
+            }
+
+            // Join the reserve metadata (symbol, mint, risk, rates) for this market.
+            let res_url = format!("{}/kamino-market/{market}/reserves/metrics", self.base());
+            let res_raw = cx.http.get(&res_url, &[]).await?;
+            let reserves: serde_json::Value =
+                serde_json::from_str(&res_raw).map_err(|e| Error::Integrity {
+                    message: format!("Kamino reserves not JSON: {e}"),
+                })?;
+            let reserve_map = build_reserve_map(&reserves)?;
+
             for ob in items {
-                positions.push(Position::Lending(parse_obligation(ob)?));
+                positions.push(Position::Lending(
+                    parse_obligation(ob, &reserve_map, rpc, &mut decimals_cache).await?,
+                ));
             }
         }
 
@@ -128,16 +148,111 @@ impl ProtocolAdapter for KaminoApi {
     }
 }
 
-fn parse_obligation(ob: &serde_json::Value) -> Result<LendingPosition, Error> {
-    let supplied = parse_supplied(ob.get("deposits"))?;
-    let borrowed = parse_borrowed(ob.get("borrows"))?;
-    let health_factor = ob
-        .pointer("/refreshedStats/healthFactor")
-        .and_then(json_decimal);
+/// Per-reserve metadata joined from `reserves/metrics`.
+struct ReserveMeta {
+    symbol: String,
+    mint: String,
+    max_ltv: Option<Decimal>,
+    supply_apy: Option<Decimal>,
+    borrow_apy: Option<Decimal>,
+}
+
+fn build_reserve_map(reserves: &serde_json::Value) -> Result<HashMap<String, ReserveMeta>, Error> {
+    let arr = reserves.as_array().ok_or_else(|| Error::Integrity {
+        message: "Kamino reserves response was not an array".into(),
+    })?;
+    let mut map = HashMap::with_capacity(arr.len());
+    for r in arr {
+        let Some(reserve) = r.get("reserve").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        map.insert(
+            reserve.to_string(),
+            ReserveMeta {
+                symbol: r
+                    .get("liquidityToken")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                mint: r
+                    .get("liquidityTokenMint")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                max_ltv: decimal_at(r, "/maxLtv"),
+                supply_apy: decimal_at(r, "/supplyApy"),
+                borrow_apy: decimal_at(r, "/borrowApy"),
+            },
+        );
+    }
+    Ok(map)
+}
+
+async fn parse_obligation(
+    ob: &serde_json::Value,
+    reserves: &HashMap<String, ReserveMeta>,
+    rpc: &dyn ChainProvider,
+    decimals_cache: &mut HashMap<String, u8>,
+) -> Result<LendingPosition, Error> {
+    // The API does not return a health factor; derive it from the refreshed stats.
+    let liq_limit = decimal_at(ob, "/refreshedStats/borrowLiquidationLimit");
+    let adj_debt = decimal_at(ob, "/refreshedStats/userTotalBorrowBorrowFactorAdjusted");
+    let health_factor = match (liq_limit, adj_debt) {
+        (Some(l), Some(a)) if a > Decimal::ZERO => l.checked_div(a),
+        _ => None,
+    };
+
+    // The per-asset legs live under the decoded on-chain account `state` (the top-level
+    // `deposits`/`borrows` are empty aggregation maps). Deposit amounts are plain base units;
+    // borrow amounts are scaled fractions (`borrowedAmountSf`, divide by 2^60).
+    let mut supplied = Vec::new();
+    for dep in ob
+        .pointer("/state/deposits")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let raw = int_at(dep, "depositedAmount")?;
+        if raw.is_zero() {
+            continue;
+        }
+        let (amount, meta) =
+            build_leg(dep, "depositReserve", raw, reserves, rpc, decimals_cache).await?;
+        supplied.push(SuppliedAsset {
+            amount,
+            // Per-asset liquidation threshold is not exposed by reserves/metrics (only maxLtv);
+            // a consumer recomputes it from the reserve config if needed.
+            liquidation_threshold: None,
+            max_ltv: meta.and_then(|m| m.max_ltv),
+            is_collateral: true,
+            can_be_collateral: true,
+            apy: meta.and_then(|m| m.supply_apy),
+        });
+    }
+
+    let mut borrowed = Vec::new();
+    for bor in ob
+        .pointer("/state/borrows")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let raw = sf_to_base(&int_at(bor, "borrowedAmountSf")?);
+        if raw.is_zero() {
+            continue;
+        }
+        let (amount, meta) =
+            build_leg(bor, "borrowReserve", raw, reserves, rpc, decimals_cache).await?;
+        borrowed.push(BorrowedAsset {
+            amount,
+            borrow_factor: None,
+            apy: meta.and_then(|m| m.borrow_apy),
+        });
+    }
 
     if !borrowed.is_empty() && health_factor.is_none() {
         return Err(Error::Integrity {
-            message: "Kamino obligation has debt but no health factor".into(),
+            message: "Kamino obligation has debt but no health factor could be derived".into(),
         });
     }
 
@@ -148,96 +263,98 @@ fn parse_obligation(ob: &serde_json::Value) -> Result<LendingPosition, Error> {
     })
 }
 
-/// Build the [`Amount`] from a deposit/borrow item (symbol + decimals + amount + usdValue).
-fn parse_amount_entry(item: &serde_json::Value) -> Result<Amount, Error> {
-    let symbol = item
-        .get("symbol")
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
-    let decimals = item
-        .get("decimals")
-        .and_then(|d| d.as_u64())
+/// Build the [`Amount`] for one deposit/borrow leg from a pre-computed raw base-unit amount: scaled
+/// by the mint's on-chain decimals, priced from the scaled-fraction `marketValueSf` (`/ 2^60`).
+async fn build_leg<'a>(
+    leg: &serde_json::Value,
+    reserve_key: &str,
+    raw: U256,
+    reserves: &'a HashMap<String, ReserveMeta>,
+    rpc: &dyn ChainProvider,
+    decimals_cache: &mut HashMap<String, u8>,
+) -> Result<(Amount, Option<&'a ReserveMeta>), Error> {
+    let reserve = leg
+        .get(reserve_key)
+        .and_then(|v| v.as_str())
         .ok_or_else(|| Error::Integrity {
-            message: format!("Kamino asset `{symbol}` missing decimals"),
-        })? as u8;
-    let amount = item
-        .get("amount")
-        .and_then(json_decimal)
-        .ok_or_else(|| Error::Integrity {
-            message: format!("Kamino asset `{symbol}` missing amount"),
+            message: format!("Kamino leg missing `{reserve_key}`"),
         })?;
-    let usd = item
-        .get("usdValue")
-        .and_then(json_decimal)
+    let meta = reserves.get(reserve);
+    let (symbol, mint) = match meta {
+        Some(m) => (m.symbol.clone(), m.mint.clone()),
+        None => (String::new(), String::new()),
+    };
+    if mint.is_empty() {
+        return Err(Error::Integrity {
+            message: format!("Kamino reserve {reserve} not found in metrics"),
+        });
+    }
+
+    let decimals = match decimals_cache.get(&mint) {
+        Some(d) => *d,
+        None => {
+            let d = get_mint_decimals(rpc, &mint).await?;
+            decimals_cache.insert(mint.clone(), d);
+            d
+        }
+    };
+
+    let usd = leg
+        .get("marketValueSf")
+        .and_then(|v| v.as_str())
+        .and_then(sf_to_usd)
         .map(|amount| Money {
             amount,
             currency: Currency::Usd,
         });
-    let name = item
-        .get("name")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    Ok(Amount::from_decimal(
+
+    let amount = Amount::from_raw(
         Token {
             symbol,
-            name,
+            name: None,
             address: None,
             decimals,
         },
-        amount,
+        raw,
     )?
-    .with_usd(usd))
+    .with_usd(usd);
+
+    Ok((amount, meta))
 }
 
-fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>, Error> {
-    let Some(items) = list.and_then(|v| v.as_array()) else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        let amount = parse_amount_entry(item)?;
-        out.push(SuppliedAsset {
-            amount,
-            liquidation_threshold: item.get("liquidationThreshold").and_then(json_decimal),
-            max_ltv: item.get("maxLtv").and_then(json_decimal),
-            // Kamino deposits back the loan; treat as collateral unless the reserve says otherwise.
-            is_collateral: item
-                .get("isCollateral")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
-            can_be_collateral: item
-                .get("canBeCollateral")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
-            apy: item.get("apy").and_then(json_decimal),
-        });
-    }
-    Ok(out)
+/// Read a base-10 integer amount (a JSON string) into a [`U256`].
+fn int_at(leg: &serde_json::Value, key: &str) -> Result<U256, Error> {
+    let s = leg
+        .get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("Kamino leg missing `{key}`"),
+        })?;
+    U256::from_str(s).map_err(|e| Error::Integrity {
+        message: format!("Kamino `{key}` not an integer: {e}"),
+    })
 }
 
-fn parse_borrowed(list: Option<&serde_json::Value>) -> Result<Vec<BorrowedAsset>, Error> {
-    let Some(items) = list.and_then(|v| v.as_array()) else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        let amount = parse_amount_entry(item)?;
-        out.push(BorrowedAsset {
-            amount,
-            borrow_factor: item.get("borrowFactor").and_then(json_decimal),
-            apy: item.get("apy").and_then(json_decimal),
-        });
-    }
-    Ok(out)
+/// Convert a scaled-fraction amount (`2^60` scale) to whole base units by integer division.
+fn sf_to_base(sf: &U256) -> U256 {
+    // 2^60 = 1_152_921_504_606_846_976.
+    sf / U256::from(1_152_921_504_606_846_976u64)
 }
 
-/// Read a decimal from a JSON string or number literal (never via `f64`).
-fn json_decimal(v: &serde_json::Value) -> Option<Decimal> {
-    if let Some(s) = v.as_str() {
+/// Kamino's scaled-fraction (`Sf`) values are fixed-point with a `2^60` scale.
+fn sf_to_usd(sf: &str) -> Option<Decimal> {
+    let n = Decimal::from_str(sf).ok()?;
+    // 2^60 = 1_152_921_504_606_846_976.
+    n.checked_div(Decimal::from(1_152_921_504_606_846_976u64))
+}
+
+/// Read a decimal from a JSON string or number literal at `pointer` (never via `f64`).
+fn decimal_at(v: &serde_json::Value, pointer: &str) -> Option<Decimal> {
+    let node = v.pointer(pointer)?;
+    if let Some(s) = node.as_str() {
         Decimal::from_str(s).ok()
-    } else if v.is_number() {
-        Decimal::from_str(&v.to_string()).ok()
+    } else if node.is_number() {
+        Decimal::from_str(&node.to_string()).ok()
     } else {
         None
     }

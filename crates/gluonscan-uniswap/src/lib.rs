@@ -140,9 +140,16 @@ impl UniswapV3 {
     ) -> Result<Position, Error> {
         let id = str_at(item, "/id")?;
         let liquidity = str_at(item, "/liquidity")?;
-        let lower: i32 = parse_at(item, "/tickLower/tickIdx")?;
-        let upper: i32 = parse_at(item, "/tickUpper/tickIdx")?;
-        let current: i32 = parse_at(item, "/pool/tick")?;
+        // tickLower/tickUpper are `{tickIdx}` on the canonical subgraph but a bare scalar on some
+        // (e.g. Base); accept both. pool.tick is always a scalar.
+        let lower = tick_at(item, "tickLower")?;
+        let upper = tick_at(item, "tickUpper")?;
+        let current =
+            item.pointer("/pool/tick")
+                .and_then(to_i32)
+                .ok_or_else(|| Error::Integrity {
+                    message: "Uniswap position missing `/pool/tick`".into(),
+                })?;
         if !(MIN_TICK..=MAX_TICK).contains(&lower) || !(MIN_TICK..=MAX_TICK).contains(&upper) {
             return Err(Error::Integrity {
                 message: format!("Uniswap ticks out of range: {lower}..{upper}"),
@@ -231,8 +238,25 @@ impl UniswapV3 {
 }
 
 fn query_body(owner: &str) -> String {
-    let query = r#"query($owner:String!){positions(where:{owner:$owner}){id liquidity depositedToken0 depositedToken1 withdrawnToken0 withdrawnToken1 collectedFeesToken0 collectedFeesToken1 tickLower{tickIdx} tickUpper{tickIdx} pool{tick sqrtPrice feeTier token0{id symbol decimals} token1{id symbol decimals}}}}"#;
+    let query = r#"query($owner:String!){positions(where:{owner:$owner}){id liquidity depositedToken0 depositedToken1 withdrawnToken0 withdrawnToken1 collectedFeesToken0 collectedFeesToken1 tickLower{tickIdx} tickUpper{tickIdx} pool{tick sqrtPrice feeTier token0{id symbol name decimals} token1{id symbol name decimals}}}}"#;
     serde_json::json!({ "query": query, "variables": { "owner": owner } }).to_string()
+}
+
+/// Read an `i32` from a JSON number or numeric string.
+fn to_i32(v: &serde_json::Value) -> Option<i32> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        .and_then(|n| i32::try_from(n).ok())
+}
+
+/// Parse a tick from either `{ tickIdx: N }` (canonical subgraph) or a bare scalar `N` (Base).
+fn tick_at(item: &serde_json::Value, field: &str) -> Result<i32, Error> {
+    let v = item.get(field).ok_or_else(|| Error::Integrity {
+        message: format!("Uniswap position missing `{field}`"),
+    })?;
+    to_i32(v.get("tickIdx").unwrap_or(v)).ok_or_else(|| Error::Integrity {
+        message: format!("Uniswap `{field}` is not a tick: {v}"),
+    })
 }
 
 fn str_at(v: &serde_json::Value, pointer: &str) -> Result<String, Error> {
@@ -241,14 +265,6 @@ fn str_at(v: &serde_json::Value, pointer: &str) -> Result<String, Error> {
         .map(|s| s.to_string())
         .ok_or_else(|| Error::Integrity {
             message: format!("Uniswap position missing `{pointer}`"),
-        })
-}
-
-fn parse_at<T: FromStr>(v: &serde_json::Value, pointer: &str) -> Result<T, Error> {
-    str_at(v, pointer)?
-        .parse::<T>()
-        .map_err(|_| Error::Integrity {
-            message: format!("Uniswap position field `{pointer}` did not parse"),
         })
 }
 
@@ -261,9 +277,14 @@ fn parse_token(v: Option<&serde_json::Value>) -> Result<Token, Error> {
         .and_then(|s| s.as_str())
         .unwrap_or("")
         .to_string();
-    let decimals: u8 = str_at(v, "/decimals")?
-        .parse()
-        .map_err(|_| Error::Integrity {
+    let decimals: u8 = v
+        .pointer("/decimals")
+        .and_then(|d| {
+            d.as_u64()
+                .or_else(|| d.as_str().and_then(|s| s.parse::<u64>().ok()))
+        })
+        .and_then(|n| u8::try_from(n).ok())
+        .ok_or_else(|| Error::Integrity {
             message: format!("Uniswap token `{symbol}` bad decimals"),
         })?;
     let address = v

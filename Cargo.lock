@@ -1181,8 +1181,11 @@ dependencies = [
 name = "gluonscan-kamino"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "async-trait",
+ "base64 0.22.1",
  "gluonscan-core",
+ "gluonscan-solana",
  "gluonscan-testing",
  "rust_decimal",
  "serde_json",

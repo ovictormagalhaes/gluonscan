@@ -5,8 +5,9 @@
 //! pool and mint accounts into a [`LiquidityPosition`] (principal amounts via the Q64.96 math,
 //! uncollected fees from the position's owed fields, in-range from the pool tick).
 //!
-//! The account byte layouts here are a **slice layout** kept self-consistent with the tests; exact
-//! on-chain layout fidelity (and Token-2022 discovery) is a reconciliation follow-up.
+//! The account byte offsets match the on-chain Raydium CLMM `PersonalPositionState` and `PoolState`
+//! layouts. Discovery queries both the classic SPL Token program and Token-2022 (Raydium's newer
+//! position NFTs mint under Token-2022).
 
 use alloy_primitives::U256;
 use async_trait::async_trait;
@@ -26,24 +27,25 @@ use gluonscan_solana::{
 const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Solana];
 
-// Position account slice layout (byte offsets).
-const POS_MIN_LEN: usize = 113;
+// PersonalPositionState layout (byte offsets): 8-byte discriminator, bump, nft_mint[9..41],
+// pool_id[41..73], tick_lower[73..77], tick_upper[77..81], liquidity[81..97],
+// fee_growth_inside_0/1[97..129], token_fees_owed_0[129..137], token_fees_owed_1[137..145].
+const POS_MIN_LEN: usize = 145;
 const POS_POOL: usize = 41;
 const POS_TICK_LOWER: usize = 73;
 const POS_TICK_UPPER: usize = 77;
 const POS_LIQUIDITY: usize = 81;
-const POS_FEE0: usize = 97;
-const POS_FEE1: usize = 105;
+const POS_FEE0: usize = 129;
+const POS_FEE1: usize = 137;
 
-// Pool account slice layout.
-const POOL_MIN_LEN: usize = 92;
-const POOL_TICK: usize = 8;
-const POOL_SQRT_X64: usize = 12;
-const POOL_MINT0: usize = 28;
-const POOL_MINT1: usize = 60;
-
-// SPL mint: decimals byte.
-const MINT_DECIMALS: usize = 44;
+// PoolState layout (byte offsets): token_mint_0[73..105], token_mint_1[105..137],
+// mint_decimals_0[233], mint_decimals_1[234], tick_spacing[235..237], liquidity[237..253],
+// sqrt_price_x64[253..269], tick_current[269..273].
+const POOL_MIN_LEN: usize = 273;
+const POOL_DEC0: usize = 233;
+const POOL_DEC1: usize = 234;
+const POOL_SQRT_X64: usize = 253;
+const POOL_TICK: usize = 269;
 
 /// The Raydium CLMM adapter.
 #[derive(Debug, Default, Clone)]
@@ -148,11 +150,9 @@ async fn parse_position(
     }
     let tick_current = i32_at(&pool, POOL_TICK)?;
     let sqrt_x64 = u128_at(&pool, POOL_SQRT_X64)?;
-    let mint0 = pubkey_at(&pool, POOL_MINT0)?;
-    let mint1 = pubkey_at(&pool, POOL_MINT1)?;
-
-    let dec0 = mint_decimals(rpc, &mint0).await?;
-    let dec1 = mint_decimals(rpc, &mint1).await?;
+    // The two mints and their decimals live in the pool account itself, so no extra mint reads.
+    let dec0 = *pool.get(POOL_DEC0).ok_or_else(short)?;
+    let dec1 = *pool.get(POOL_DEC1).ok_or_else(short)?;
     let token0 = Token::new(String::new(), None, dec0);
     let token1 = Token::new(String::new(), None, dec1);
 
@@ -192,22 +192,6 @@ async fn parse_position(
             PositionStatus::Active
         },
     }))
-}
-
-async fn mint_decimals(
-    rpc: &dyn gluonscan_core::ChainProvider,
-    mint: &[u8; 32],
-) -> Result<u8, Error> {
-    let data = get_account_info(rpc, &pubkey_str(mint))
-        .await?
-        .ok_or_else(|| Error::Integrity {
-            message: "Raydium token mint account missing".into(),
-        })?;
-    data.get(MINT_DECIMALS)
-        .copied()
-        .ok_or_else(|| Error::Integrity {
-            message: "mint account too short for decimals".into(),
-        })
 }
 
 fn raw_amount(token: Token, raw: U256) -> Result<Amount, Error> {

@@ -12,6 +12,9 @@ use sha2::{Digest, Sha256};
 
 /// The SPL Token program id.
 pub const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+/// The Token-2022 program id. Newer position NFTs (e.g. Raydium CLMM) mint under this program, so
+/// discovery must query it alongside the classic SPL Token program or it silently misses them.
+pub const TOKEN_2022_PROGRAM: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 /// Raydium's concentrated-liquidity (CLMM) program id.
 pub const RAYDIUM_CLMM_PROGRAM: &str = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK";
 /// The Metaplex Token Metadata program id.
@@ -61,14 +64,31 @@ pub fn find_program_address(seeds: &[&[u8]], program_id: &[u8; 32]) -> ([u8; 32]
     panic!("no off-curve program address found");
 }
 
-/// List the wallet's token accounts (SPL Token program) and return the mints it holds as an NFT
-/// (`amount == 1`, `decimals == 0`) — the discovery step for position NFTs.
+/// List the wallet's NFT mints (`amount == 1`, `decimals == 0`) across both the classic SPL Token
+/// program and Token-2022 — the discovery step for position NFTs. Querying only one program silently
+/// misses positions minted under the other.
 pub async fn get_token_accounts_by_owner(
     rpc: &dyn ChainProvider,
     owner: &str,
 ) -> Result<Vec<String>, Error> {
-    let params =
-        format!(r#"["{owner}",{{"programId":"{TOKEN_PROGRAM}"}},{{"encoding":"jsonParsed"}}]"#);
+    let mut mints = Vec::new();
+    for program in [TOKEN_PROGRAM, TOKEN_2022_PROGRAM] {
+        for mint in nft_mints_for_program(rpc, owner, program).await? {
+            // A mint is globally unique to one token program, so any repeat is a duplicate read.
+            if !mints.contains(&mint) {
+                mints.push(mint);
+            }
+        }
+    }
+    Ok(mints)
+}
+
+async fn nft_mints_for_program(
+    rpc: &dyn ChainProvider,
+    owner: &str,
+    program: &str,
+) -> Result<Vec<String>, Error> {
+    let params = format!(r#"["{owner}",{{"programId":"{program}"}},{{"encoding":"jsonParsed"}}]"#);
     let raw = rpc
         .call(Chain::Solana, "getTokenAccountsByOwner", params)
         .await?;
@@ -98,6 +118,18 @@ pub async fn get_token_accounts_by_owner(
         }
     }
     Ok(mints)
+}
+
+/// Read an SPL mint's `decimals` (byte 44 of the mint account layout).
+pub async fn get_mint_decimals(rpc: &dyn ChainProvider, mint: &str) -> Result<u8, Error> {
+    let data = get_account_info(rpc, mint)
+        .await?
+        .ok_or_else(|| Error::Integrity {
+            message: format!("mint account {mint} not found"),
+        })?;
+    data.get(44).copied().ok_or_else(|| Error::Integrity {
+        message: format!("mint account {mint} too short for decimals"),
+    })
 }
 
 /// Read an account's native SOL balance in lamports (`getBalance`).

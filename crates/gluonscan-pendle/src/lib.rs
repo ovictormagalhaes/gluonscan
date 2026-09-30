@@ -91,22 +91,47 @@ impl ProtocolAdapter for PendleApi {
             });
         }
 
-        // 1. Catalog (wallet-independent): every PT/YT for the chain.
-        let url = format!("{}/v1/{}/markets", self.base(), chain_id);
-        let raw = cx.http.get(&url, &[]).await?;
-        let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
-            message: format!("Pendle catalog not JSON: {e}"),
-        })?;
-        let markets = json
-            .pointer("/markets")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| Error::Integrity {
-                message: "Pendle catalog missing `markets`".into(),
-            })?;
+        // 1. Catalog (wallet-independent): every PT/YT for the chain. The API paginates under
+        // `results` (with a `total`); walk the pages.
+        let mut markets = Vec::new();
+        let mut skip = 0usize;
+        loop {
+            let url = format!(
+                "{}/v1/{}/markets?limit=100&skip={skip}",
+                self.base(),
+                chain_id
+            );
+            let raw = cx.http.get(&url, &[]).await?;
+            let json: serde_json::Value =
+                serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+                    message: format!("Pendle catalog not JSON: {e}"),
+                })?;
+            let total = json.get("total").and_then(|t| t.as_u64()).unwrap_or(0) as usize;
+            let page = json
+                .pointer("/results")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| Error::Integrity {
+                    message: "Pendle catalog missing `results`".into(),
+                })?;
+            let n = page.len();
+            markets.extend(page.iter().cloned());
+            skip += n;
+            if n == 0 || markets.len() >= total {
+                break;
+            }
+        }
 
         let mut candidates = Vec::new();
-        for m in markets {
-            let expiry = m.get("expiry").and_then(|e| e.as_i64()).map(Timestamp);
+        for m in &markets {
+            // Only active markets carry live PT/YT worth a balance check.
+            if !m.get("isActive").and_then(|v| v.as_bool()).unwrap_or(true) {
+                continue;
+            }
+            let expiry = m
+                .get("expiry")
+                .and_then(|e| e.as_str())
+                .and_then(iso_to_unix)
+                .map(Timestamp);
             let apy = decimal_at(m, "/impliedApy");
             for (key, kind) in [
                 ("pt", YieldKind::PrincipalToken),
@@ -298,6 +323,27 @@ fn decimal_at(v: &serde_json::Value, pointer: &str) -> Option<Decimal> {
     } else {
         None
     }
+}
+
+/// Parse an RFC3339 UTC timestamp (`YYYY-MM-DDTHH:MM:SS...Z`) to Unix seconds via the
+/// days-from-civil algorithm — no date crate needed.
+fn iso_to_unix(s: &str) -> Option<i64> {
+    if s.len() < 19 {
+        return None;
+    }
+    let y: i64 = s.get(0..4)?.parse().ok()?;
+    let mo: i64 = s.get(5..7)?.parse().ok()?;
+    let d: i64 = s.get(8..10)?.parse().ok()?;
+    let h: i64 = s.get(11..13)?.parse().ok()?;
+    let mi: i64 = s.get(14..16)?.parse().ok()?;
+    let se: i64 = s.get(17..19)?.parse().ok()?;
+    let yy = if mo <= 2 { y - 1 } else { y };
+    let era = (if yy >= 0 { yy } else { yy - 399 }) / 400;
+    let yoe = yy - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(days * 86400 + h * 3600 + mi * 60 + se)
 }
 
 fn json_u64(v: &serde_json::Value) -> Option<u64> {
