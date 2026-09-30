@@ -26,7 +26,7 @@ authors = ["Victor Magalhães"]
 
 # Single source of truth for lint policy; each crate opts in with `[lints] workspace = true`.
 [workspace.lints.rust]
-missing_docs = "warn"
+missing_docs = "deny"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]

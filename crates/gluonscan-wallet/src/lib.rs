@@ -16,9 +16,8 @@ use std::str::FromStr;
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, NftPosition, Position,
-    Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
-    WalletBalance,
+    Amount, Capability, Chain, Complete, Ctx, Detail, Error, NftPosition, Position, Protocol,
+    ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet, WalletBalance,
 };
 use gluonscan_evm::eth_get_balance;
 use gluonscan_solana::{
@@ -161,38 +160,30 @@ impl ProtocolAdapter for EvmWallet {
                 .and_then(|s| Address::from_str(s).ok());
             let name = t.get("name").and_then(|n| n.as_str()).map(str::to_string);
 
-            positions.push(Position::Wallet(WalletBalance {
-                amount: Amount {
-                    raw: raw_u256,
-                    amount: scaled(raw_u256, decimals)?,
-                    token: Token {
-                        symbol,
-                        name,
-                        address,
-                        decimals,
-                    },
-                    usd: None,
+            let amount = Amount::from_raw(
+                Token {
+                    symbol,
+                    name,
+                    address,
+                    decimals,
                 },
-                // Passed through, not acted on — the consumer decides what to hide.
-                possible_spam: t.get("possible_spam").and_then(|v| v.as_bool()),
-                verified_contract: t.get("verified_contract").and_then(|v| v.as_bool()),
-            }));
+                raw_u256,
+            )?;
+            // Spam/verified flags are passed through, not acted on — the consumer decides.
+            positions.push(Position::Wallet(
+                WalletBalance::new(amount)
+                    .with_possible_spam(t.get("possible_spam").and_then(|v| v.as_bool()))
+                    .with_verified_contract(t.get("verified_contract").and_then(|v| v.as_bool())),
+            ));
         }
 
-        let reading = Reading {
-            protocol: Protocol::Wallet,
+        let reading = Reading::new(
+            Protocol::Wallet,
             chain,
-            source: Source::Api,
+            Source::Api,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::Api,
-                chain,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(Source::Api, chain, cx.clock.now(), Staleness::Live),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -247,37 +238,24 @@ impl ProtocolAdapter for SolanaWallet {
             let raw = U256::from_str(&b.amount_raw).map_err(|e| Error::Integrity {
                 message: format!("Solana balance not a number: {e}"),
             })?;
-            positions.push(Position::Wallet(WalletBalance {
-                amount: Amount {
-                    raw,
-                    amount: scaled(raw, b.decimals)?,
-                    token: Token {
-                        symbol: String::new(),
-                        name: None,
-                        address: None,
-                        decimals: b.decimals,
-                    },
-                    usd: None,
-                },
-                possible_spam: None,
-                verified_contract: None,
-            }));
+            positions.push(Position::Wallet(WalletBalance::new(Amount::from_raw(
+                Token::new(String::new(), None, b.decimals),
+                raw,
+            )?)));
         }
 
-        let reading = Reading {
-            protocol: Protocol::Wallet,
-            chain: Chain::Solana,
-            source: Source::OnChain,
+        let reading = Reading::new(
+            Protocol::Wallet,
+            Chain::Solana,
+            Source::OnChain,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::OnChain,
-                chain: Chain::Solana,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(
+                Source::OnChain,
+                Chain::Solana,
+                cx.clock.now(),
+                Staleness::Live,
+            ),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -364,37 +342,24 @@ impl ProtocolAdapter for BitcoinWallet {
 
         let mut positions = Vec::new();
         if sats > 0 {
-            positions.push(Position::Wallet(WalletBalance {
-                amount: Amount {
-                    raw: U256::from(sats),
-                    amount: scaled(U256::from(sats), 8)?,
-                    token: Token {
-                        symbol: "BTC".to_string(),
-                        name: Some("Bitcoin".to_string()),
-                        address: None,
-                        decimals: 8,
-                    },
-                    usd: None,
+            positions.push(Position::Wallet(WalletBalance::new(Amount::from_raw(
+                Token {
+                    symbol: "BTC".to_string(),
+                    name: Some("Bitcoin".to_string()),
+                    address: None,
+                    decimals: 8,
                 },
-                possible_spam: None,
-                verified_contract: None,
-            }));
+                U256::from(sats),
+            )?)));
         }
 
-        let reading = Reading {
-            protocol: Protocol::Wallet,
-            chain: Chain::Bitcoin,
-            source: Source::Api,
+        let reading = Reading::new(
+            Protocol::Wallet,
+            Chain::Bitcoin,
+            Source::Api,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::Api,
-                chain: Chain::Bitcoin,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(Source::Api, Chain::Bitcoin, cx.clock.now(), Staleness::Live),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -502,29 +467,21 @@ impl ProtocolAdapter for EvmNfts {
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
 
-            positions.push(Position::Nft(NftPosition {
-                collection: collection.to_string(),
-                token_id,
-                name,
-                floor_price: None,
-                possible_spam: it.get("possible_spam").and_then(|s| s.as_bool()),
-            }));
+            positions.push(Position::Nft(
+                NftPosition::new(collection.to_string(), token_id)
+                    .with_name(name)
+                    .with_possible_spam(it.get("possible_spam").and_then(|s| s.as_bool())),
+            ));
         }
 
-        let reading = Reading {
-            protocol: Protocol::Nfts,
+        let reading = Reading::new(
+            Protocol::Nfts,
             chain,
-            source: Source::Api,
+            Source::Api,
             positions,
-            receipt_tokens,
-            provenance: Provenance {
-                source: Source::Api,
-                chain,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(Source::Api, chain, cx.clock.now(), Staleness::Live),
+        )
+        .with_receipt_tokens(receipt_tokens);
         Ok(Complete::new(reading))
     }
 }
@@ -587,29 +544,24 @@ impl ProtocolAdapter for SolanaNfts {
                 Some(data) => decode_metadata(&data),
                 None => Default::default(),
             };
-            positions.push(Position::Nft(NftPosition {
-                collection: metadata.collection.unwrap_or_else(|| mint.clone()),
-                token_id: mint,
-                name: metadata.name,
-                floor_price: None,
-                possible_spam: None,
-            }));
+            let collection = metadata.collection.unwrap_or_else(|| mint.clone());
+            positions.push(Position::Nft(
+                NftPosition::new(collection, mint).with_name(metadata.name),
+            ));
         }
 
-        let reading = Reading {
-            protocol: Protocol::Nfts,
-            chain: Chain::Solana,
-            source: Source::OnChain,
+        let reading = Reading::new(
+            Protocol::Nfts,
+            Chain::Solana,
+            Source::OnChain,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::OnChain,
-                chain: Chain::Solana,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(
+                Source::OnChain,
+                Chain::Solana,
+                cx.clock.now(),
+                Staleness::Live,
+            ),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -666,20 +618,13 @@ impl ProtocolAdapter for EvmNativeBalance {
             )?)));
         }
 
-        let reading = Reading {
-            protocol: Protocol::Wallet,
+        let reading = Reading::new(
+            Protocol::Wallet,
             chain,
-            source: Source::OnChain,
+            Source::OnChain,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::OnChain,
-                chain,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(Source::OnChain, chain, cx.clock.now(), Staleness::Live),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -737,20 +682,18 @@ impl ProtocolAdapter for SolanaNativeBalance {
             )?)));
         }
 
-        let reading = Reading {
-            protocol: Protocol::Wallet,
-            chain: Chain::Solana,
-            source: Source::OnChain,
+        let reading = Reading::new(
+            Protocol::Wallet,
+            Chain::Solana,
+            Source::OnChain,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::OnChain,
-                chain: Chain::Solana,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(
+                Source::OnChain,
+                Chain::Solana,
+                cx.clock.now(),
+                Staleness::Live,
+            ),
+        );
         Ok(Complete::new(reading))
     }
 }

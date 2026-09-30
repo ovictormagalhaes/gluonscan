@@ -2,15 +2,18 @@
 //!
 //! The read + normalize **contract** for gluonscan: domain types, the adapter ports (traits),
 //! the integrity wrapper [`Complete`], the typed [`Error`], and the taxonomy enums
-//! ([`Chain`], [`Protocol`], [`Source`], [`Capability`], [`Detail`], [`Execution`]).
+//! ([`Chain`], [`Protocol`], [`Source`], [`Capability`], [`Detail`]).
 //!
 //! This crate does **no I/O**: no HTTP, no RPC, no runtime. Everything that touches the network
 //! is injected through a port (see [`ports`]). The types a fetch returns ARE the contract — there
 //! is no wire/DTO layer here; consumers map these types to whatever they need.
 //!
+//! The public API exposes [`alloy_primitives`] types ([`Address`], [`U256`]); it is re-exported so
+//! consumers can name the exact version this crate builds against and avoid a version mismatch.
+//!
 //! ## Invariants
-//! - **Complete or error.** A fetch returns [`Complete<T>`](Complete) only when every required
-//!   source succeeded. There is no way to wrap a partial value.
+//! - **Complete or error.** An adapter wraps a value in [`Complete<T>`](Complete) only after every
+//!   required source succeeded — the convention that keeps partial data out of a reading.
 //! - **No fabricated value.** A missing price is [`Error::AbsentPrice`], never `0` or `1`.
 
 pub mod error;
@@ -27,7 +30,7 @@ pub use model::{
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 
-pub use alloy_primitives::Address;
+pub use alloy_primitives::{self, Address, U256};
 
 /// A wallet identifier across ecosystems.
 #[non_exhaustive]
@@ -162,19 +165,4 @@ pub enum Detail {
     Summary,
     /// Everything: exact amounts, fees, ranges, health factor.
     Full,
-}
-
-/// How the engine schedules the fetch work. This — and nothing else — is what separates a strictly
-/// sequential caller from a massively parallel one; the same adapters serve both.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Execution {
-    /// One fetch in flight at a time, in order.
-    #[default]
-    Sequential,
-    /// Bounded fan-out; still capped by each provider's own rate limiter.
-    Parallel {
-        /// Maximum concurrent in-flight fetches.
-        max_inflight: usize,
-    },
 }

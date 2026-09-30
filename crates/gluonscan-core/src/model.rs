@@ -40,9 +40,10 @@ pub fn scaled(raw: U256, decimals: u8) -> Result<Decimal, Error> {
         })
 }
 
-/// A value that is guaranteed complete. There is **no public constructor for a partial value**:
-/// [`Complete::new`] wraps an already-assembled `T`, and an adapter only calls it once every
-/// required source has succeeded. Incomplete data is therefore untypeable at the API boundary.
+/// A value an adapter has assembled from a fully-successful read. [`Complete::new`] is the single
+/// wrapping point: adapters call it only after every required source has succeeded, so a `Complete`
+/// in a reading signals "no partial data reached here." It is a construction convention the adapters
+/// uphold — `new` is public so they (separate crates) can build it — not a type-system proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
 pub struct Complete<T>(T);
@@ -79,6 +80,7 @@ pub enum Staleness {
 }
 
 /// Where a value came from and when — travels with every reading so trust is inspectable.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provenance {
     /// The backend that produced the value.
@@ -91,6 +93,26 @@ pub struct Provenance {
     pub at: Timestamp,
     /// Freshness assessment.
     pub staleness: Staleness,
+}
+
+impl Provenance {
+    /// Provenance for a value read at `at` from `source` on `chain`, with no block height.
+    pub fn new(source: Source, chain: Chain, at: Timestamp, staleness: Staleness) -> Self {
+        Provenance {
+            source,
+            chain,
+            block: None,
+            at,
+            staleness,
+        }
+    }
+
+    /// Attach a block height (builder-style).
+    #[must_use]
+    pub fn with_block(mut self, block: Option<u64>) -> Self {
+        self.block = block;
+        self
+    }
 }
 
 /// A fiat/quote currency. Kept explicit so amounts always carry their unit.
@@ -108,6 +130,21 @@ pub struct Money {
     pub amount: Decimal,
     /// The currency the amount is denominated in.
     pub currency: Currency,
+}
+
+impl Money {
+    /// A monetary value denominated in `currency`.
+    pub fn new(amount: Decimal, currency: Currency) -> Self {
+        Money { amount, currency }
+    }
+
+    /// A USD-denominated value.
+    pub fn usd(amount: Decimal) -> Self {
+        Money {
+            amount,
+            currency: Currency::Usd,
+        }
+    }
 }
 
 /// A token identity.
@@ -218,6 +255,7 @@ impl Amount {
 ///
 /// The `possible_spam` / `verified_contract` flags are passed through from the indexer, not acted
 /// on: gluonscan returns every balance it sees and lets the consumer decide what to hide.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletBalance {
     /// The idle token amount.
@@ -237,12 +275,27 @@ impl WalletBalance {
             verified_contract: None,
         }
     }
+
+    /// Attach the indexer's spam flag (builder-style).
+    #[must_use]
+    pub fn with_possible_spam(mut self, possible_spam: Option<bool>) -> Self {
+        self.possible_spam = possible_spam;
+        self
+    }
+
+    /// Attach the indexer's contract-verification flag (builder-style).
+    #[must_use]
+    pub fn with_verified_contract(mut self, verified_contract: Option<bool>) -> Self {
+        self.verified_contract = verified_contract;
+        self
+    }
 }
 
 /// A supplied (deposited) lending asset with its collateral risk parameters and supply rate.
 ///
 /// The risk fields let a consumer recompute the health factor offline (capture-once, reprice-later)
 /// and render risk without a second round trip. Fractions are `0..1` (e.g. `0.83` = 83%).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SuppliedAsset {
     /// The supplied amount.
@@ -271,9 +324,39 @@ impl SuppliedAsset {
             apy: None,
         }
     }
+
+    /// Set the liquidation threshold fraction (builder-style).
+    #[must_use]
+    pub fn with_liquidation_threshold(mut self, lt: Option<Decimal>) -> Self {
+        self.liquidation_threshold = lt;
+        self
+    }
+
+    /// Set the maximum loan-to-value fraction (builder-style).
+    #[must_use]
+    pub fn with_max_ltv(mut self, max_ltv: Option<Decimal>) -> Self {
+        self.max_ltv = max_ltv;
+        self
+    }
+
+    /// Set the collateral flags: currently enabled, and eligible (builder-style).
+    #[must_use]
+    pub fn with_collateral(mut self, is_collateral: bool, can_be_collateral: bool) -> Self {
+        self.is_collateral = is_collateral;
+        self.can_be_collateral = can_be_collateral;
+        self
+    }
+
+    /// Set the supply APY fraction (builder-style).
+    #[must_use]
+    pub fn with_apy(mut self, apy: Option<Decimal>) -> Self {
+        self.apy = apy;
+        self
+    }
 }
 
 /// A borrowed lending asset (debt) with its borrow factor and rate.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BorrowedAsset {
     /// The borrowed amount (debt).
@@ -293,10 +376,25 @@ impl BorrowedAsset {
             apy: None,
         }
     }
+
+    /// Set the borrow factor fraction (builder-style).
+    #[must_use]
+    pub fn with_borrow_factor(mut self, borrow_factor: Option<Decimal>) -> Self {
+        self.borrow_factor = borrow_factor;
+        self
+    }
+
+    /// Set the borrow APY fraction (builder-style).
+    #[must_use]
+    pub fn with_apy(mut self, apy: Option<Decimal>) -> Self {
+        self.apy = apy;
+        self
+    }
 }
 
 /// A lending position (supplies and/or borrows) with an optional account health factor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LendingPosition {
     /// Supplied (deposited) assets with per-asset risk parameters.
     pub supplied: Vec<SuppliedAsset>,
@@ -306,8 +404,27 @@ pub struct LendingPosition {
     pub health_factor: Option<Decimal>,
 }
 
+impl LendingPosition {
+    /// A lending position from its supplied and borrowed legs (no health factor yet).
+    pub fn new(supplied: Vec<SuppliedAsset>, borrowed: Vec<BorrowedAsset>) -> Self {
+        LendingPosition {
+            supplied,
+            borrowed,
+            health_factor: None,
+        }
+    }
+
+    /// Attach the account health factor (builder-style).
+    #[must_use]
+    pub fn with_health_factor(mut self, health_factor: Option<Decimal>) -> Self {
+        self.health_factor = health_factor;
+        self
+    }
+}
+
 /// A concentrated-liquidity position. Carries the complete resource an AMM exposes — not a
 /// cherry-picked subset (see the return-completeness invariant).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiquidityPosition {
     /// The pool's first token.
@@ -341,6 +458,92 @@ pub struct LiquidityPosition {
     pub status: PositionStatus,
 }
 
+impl LiquidityPosition {
+    /// A liquidity position from its pool geometry. The amount vectors, fee tier and APR default to
+    /// empty/absent; attach them with the `with_*` setters. `status` defaults per [`PositionStatus`].
+    pub fn new(
+        token0: Token,
+        token1: Token,
+        tick_lower: i32,
+        tick_upper: i32,
+        tick_current: i32,
+        in_range: bool,
+    ) -> Self {
+        LiquidityPosition {
+            token0,
+            token1,
+            fee_tier_bps: None,
+            tick_lower,
+            tick_upper,
+            tick_current,
+            in_range,
+            assets: Vec::new(),
+            uncollected_fees: Vec::new(),
+            deposited: Vec::new(),
+            withdrawn: Vec::new(),
+            collected_fees: Vec::new(),
+            apr: None,
+            status: PositionStatus::Active,
+        }
+    }
+
+    /// Set the fee tier in hundredths of a basis point (builder-style).
+    #[must_use]
+    pub fn with_fee_tier_bps(mut self, fee_tier_bps: Option<u32>) -> Self {
+        self.fee_tier_bps = fee_tier_bps;
+        self
+    }
+
+    /// Set the current principal amounts `[token0, token1]` (builder-style).
+    #[must_use]
+    pub fn with_assets(mut self, assets: Vec<Amount>) -> Self {
+        self.assets = assets;
+        self
+    }
+
+    /// Set the uncollected (claimable) fees `[token0, token1]` (builder-style).
+    #[must_use]
+    pub fn with_uncollected_fees(mut self, uncollected_fees: Vec<Amount>) -> Self {
+        self.uncollected_fees = uncollected_fees;
+        self
+    }
+
+    /// Set the lifetime deposited amounts `[token0, token1]` (builder-style).
+    #[must_use]
+    pub fn with_deposited(mut self, deposited: Vec<Amount>) -> Self {
+        self.deposited = deposited;
+        self
+    }
+
+    /// Set the lifetime withdrawn amounts `[token0, token1]` (builder-style).
+    #[must_use]
+    pub fn with_withdrawn(mut self, withdrawn: Vec<Amount>) -> Self {
+        self.withdrawn = withdrawn;
+        self
+    }
+
+    /// Set the lifetime collected fees `[token0, token1]` (builder-style).
+    #[must_use]
+    pub fn with_collected_fees(mut self, collected_fees: Vec<Amount>) -> Self {
+        self.collected_fees = collected_fees;
+        self
+    }
+
+    /// Set the annualized rate fraction (builder-style).
+    #[must_use]
+    pub fn with_apr(mut self, apr: Option<Decimal>) -> Self {
+        self.apr = apr;
+        self
+    }
+
+    /// Set the position status (builder-style).
+    #[must_use]
+    pub fn with_status(mut self, status: PositionStatus) -> Self {
+        self.status = status;
+        self
+    }
+}
+
 /// Whether a position is live or dormant.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -365,6 +568,7 @@ pub enum YieldKind {
 }
 
 /// A yield-bearing token holding (e.g. a Pendle PT/YT), with its maturity.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YieldPosition {
     /// The held amount (priced when a price was available).
@@ -377,7 +581,34 @@ pub struct YieldPosition {
     pub apy: Option<Decimal>,
 }
 
+impl YieldPosition {
+    /// A yield holding of `kind` for `amount` (no maturity or APY yet).
+    pub fn new(amount: Amount, kind: YieldKind) -> Self {
+        YieldPosition {
+            amount,
+            kind,
+            expiry: None,
+            apy: None,
+        }
+    }
+
+    /// Set the maturity (builder-style).
+    #[must_use]
+    pub fn with_expiry(mut self, expiry: Option<Timestamp>) -> Self {
+        self.expiry = expiry;
+        self
+    }
+
+    /// Set the implied/aggregated APY fraction (builder-style).
+    #[must_use]
+    pub fn with_apy(mut self, apy: Option<Decimal>) -> Self {
+        self.apy = apy;
+        self
+    }
+}
+
 /// An NFT held by the wallet.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NftPosition {
     /// The collection identifier (contract address or program id).
@@ -392,7 +623,42 @@ pub struct NftPosition {
     pub possible_spam: Option<bool>,
 }
 
+impl NftPosition {
+    /// An NFT identified by collection + token id (no name/floor/spam metadata yet).
+    pub fn new(collection: impl Into<String>, token_id: impl Into<String>) -> Self {
+        NftPosition {
+            collection: collection.into(),
+            token_id: token_id.into(),
+            name: None,
+            floor_price: None,
+            possible_spam: None,
+        }
+    }
+
+    /// Attach a display name (builder-style).
+    #[must_use]
+    pub fn with_name(mut self, name: Option<String>) -> Self {
+        self.name = name;
+        self
+    }
+
+    /// Attach a floor price (builder-style).
+    #[must_use]
+    pub fn with_floor_price(mut self, floor_price: Option<Money>) -> Self {
+        self.floor_price = floor_price;
+        self
+    }
+
+    /// Attach the indexer's spam flag (builder-style).
+    #[must_use]
+    pub fn with_possible_spam(mut self, possible_spam: Option<bool>) -> Self {
+        self.possible_spam = possible_spam;
+        self
+    }
+}
+
 /// A locked position (assets locked until an unlock time, e.g. Pendle vePENDLE).
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LockPosition {
     /// The locked assets.
@@ -401,11 +667,36 @@ pub struct LockPosition {
     pub unlock_at: Option<Timestamp>,
 }
 
+impl LockPosition {
+    /// A lock over `locked` assets (no unlock time yet).
+    pub fn new(locked: Vec<Amount>) -> Self {
+        LockPosition {
+            locked,
+            unlock_at: None,
+        }
+    }
+
+    /// Set the unlock timestamp (builder-style).
+    #[must_use]
+    pub fn with_unlock_at(mut self, unlock_at: Option<Timestamp>) -> Self {
+        self.unlock_at = unlock_at;
+        self
+    }
+}
+
 /// A staked position (assets staked in a protocol, e.g. Pendle sPENDLE liquid staking).
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StakePosition {
     /// The staked assets.
     pub staked: Vec<Amount>,
+}
+
+impl StakePosition {
+    /// A stake over `staked` assets.
+    pub fn new(staked: Vec<Amount>) -> Self {
+        StakePosition { staked }
+    }
 }
 
 /// A single normalized position within a protocol.
@@ -429,6 +720,7 @@ pub enum Position {
 }
 
 /// A protocol's normalized reading for one wallet on one chain, with provenance.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reading {
     /// Which protocol.
@@ -445,6 +737,34 @@ pub struct Reading {
     pub receipt_tokens: Vec<Address>,
     /// Where/when this reading came from.
     pub provenance: Provenance,
+}
+
+impl Reading {
+    /// A reading of `positions` for `protocol` on `chain` from `source`, with `provenance` and no
+    /// receipt tokens. Attach receipt tokens with [`Reading::with_receipt_tokens`].
+    pub fn new(
+        protocol: Protocol,
+        chain: Chain,
+        source: Source,
+        positions: Vec<Position>,
+        provenance: Provenance,
+    ) -> Self {
+        Reading {
+            protocol,
+            chain,
+            source,
+            positions,
+            receipt_tokens: Vec::new(),
+            provenance,
+        }
+    }
+
+    /// Set the receipt / wrapper token contracts (builder-style).
+    #[must_use]
+    pub fn with_receipt_tokens(mut self, receipt_tokens: Vec<Address>) -> Self {
+        self.receipt_tokens = receipt_tokens;
+        self
+    }
 }
 
 #[cfg(test)]

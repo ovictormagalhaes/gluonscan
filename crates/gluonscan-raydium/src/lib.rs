@@ -106,20 +106,18 @@ impl ProtocolAdapter for RaydiumClmm {
             positions.push(parse_position(rpc, &data).await?);
         }
 
-        let reading = Reading {
-            protocol: Protocol::Raydium,
-            chain: Chain::Solana,
-            source: Source::OnChain,
+        let reading = Reading::new(
+            Protocol::Raydium,
+            Chain::Solana,
+            Source::OnChain,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::OnChain,
-                chain: Chain::Solana,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(
+                Source::OnChain,
+                Chain::Solana,
+                cx.clock.now(),
+                Staleness::Live,
+            ),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -165,33 +163,33 @@ async fn parse_position(
         U256::from(liquidity),
     );
 
-    Ok(Position::Liquidity(LiquidityPosition {
-        assets: vec![
-            raw_amount(token0.clone(), amt0)?,
-            raw_amount(token1.clone(), amt1)?,
-        ],
-        uncollected_fees: vec![
-            raw_amount(token0.clone(), U256::from(fee0))?,
-            raw_amount(token1.clone(), U256::from(fee1))?,
-        ],
-        deposited: Vec::new(),
-        withdrawn: Vec::new(),
-        collected_fees: Vec::new(),
-        fee_tier_bps: None,
-        tick_lower,
-        tick_upper,
-        tick_current,
-        in_range: is_in_range(tick_current, tick_lower, tick_upper),
-        token0,
-        token1,
-        // Pool APR would come from the Raydium API, not the on-chain position; left to the consumer.
-        apr: None,
-        status: if liquidity == 0 {
-            PositionStatus::Inactive
-        } else {
-            PositionStatus::Active
-        },
-    }))
+    let status = if liquidity == 0 {
+        PositionStatus::Inactive
+    } else {
+        PositionStatus::Active
+    };
+    let assets = vec![
+        raw_amount(token0.clone(), amt0)?,
+        raw_amount(token1.clone(), amt1)?,
+    ];
+    let uncollected_fees = vec![
+        raw_amount(token0.clone(), U256::from(fee0))?,
+        raw_amount(token1.clone(), U256::from(fee1))?,
+    ];
+    // Pool APR would come from the Raydium API, not the on-chain position; left to the consumer.
+    Ok(Position::Liquidity(
+        LiquidityPosition::new(
+            token0,
+            token1,
+            tick_lower,
+            tick_upper,
+            tick_current,
+            is_in_range(tick_current, tick_lower, tick_upper),
+        )
+        .with_assets(assets)
+        .with_uncollected_fees(uncollected_fees)
+        .with_status(status),
+    ))
 }
 
 fn raw_amount(token: Token, raw: U256) -> Result<Amount, Error> {

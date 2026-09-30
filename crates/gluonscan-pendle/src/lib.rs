@@ -175,12 +175,11 @@ impl ProtocolAdapter for PendleApi {
                 continue;
             }
             receipt_tokens.push(token_addr);
-            positions.push(Position::Yield(YieldPosition {
-                amount: priced_amount(c.token, balance, c.price_usd)?,
-                kind: c.kind,
-                expiry: c.expiry,
-                apy: c.apy,
-            }));
+            positions.push(Position::Yield(
+                YieldPosition::new(priced_amount(c.token, balance, c.price_usd)?, c.kind)
+                    .with_expiry(c.expiry)
+                    .with_apy(c.apy),
+            ));
         }
 
         // 3. vePENDLE lock + sPENDLE stake live only on Ethereum mainnet.
@@ -188,20 +187,14 @@ impl ProtocolAdapter for PendleApi {
             positions.extend(read_lock_and_stake(rpc, chain, owner, &mut receipt_tokens).await?);
         }
 
-        let reading = Reading {
-            protocol: Protocol::Pendle,
+        let reading = Reading::new(
+            Protocol::Pendle,
             chain,
-            source: Source::Api,
+            Source::Api,
             positions,
-            receipt_tokens,
-            provenance: Provenance {
-                source: Source::Api,
-                chain,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(Source::Api, chain, cx.clock.now(), Staleness::Live),
+        )
+        .with_receipt_tokens(receipt_tokens);
         Ok(Complete::new(reading))
     }
 }
@@ -234,8 +227,8 @@ async fn read_lock_and_stake(
     let (locked_pendle, expiry) = decode_two_u256(&pd)?;
     if locked_pendle > U256::ZERO {
         let gov = decode_u256(&eth_call(rpc, chain, None, ve, encode_balance_of(owner)).await?)?;
-        out.push(Position::Lock(LockPosition {
-            locked: vec![
+        out.push(Position::Lock(
+            LockPosition::new(vec![
                 Amount::from_raw(
                     Token {
                         symbol: "PENDLE".to_string(),
@@ -254,26 +247,24 @@ async fn read_lock_and_stake(
                     },
                     gov,
                 )?,
-            ],
-            unlock_at: Some(Timestamp(expiry.saturating_to::<i64>())),
-        }));
+            ])
+            .with_unlock_at(Some(Timestamp(expiry.saturating_to::<i64>()))),
+        ));
     }
 
     // sPENDLE liquid staking: balanceOf(user).
     let sp = decode_u256(&eth_call(rpc, chain, None, spendle, encode_balance_of(owner)).await?)?;
     if sp > U256::ZERO {
         receipt_tokens.push(spendle);
-        out.push(Position::Stake(StakePosition {
-            staked: vec![Amount::from_raw(
-                Token {
-                    symbol: "sPENDLE".to_string(),
-                    name: None,
-                    address: Some(spendle),
-                    decimals: 18,
-                },
-                sp,
-            )?],
-        }));
+        out.push(Position::Stake(StakePosition::new(vec![Amount::from_raw(
+            Token {
+                symbol: "sPENDLE".to_string(),
+                name: None,
+                address: Some(spendle),
+                decimals: 18,
+            },
+            sp,
+        )?])));
     }
 
     Ok(out)

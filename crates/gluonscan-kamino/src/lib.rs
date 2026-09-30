@@ -130,20 +130,13 @@ impl ProtocolAdapter for KaminoApi {
             }
         }
 
-        let reading = Reading {
-            protocol: Protocol::Kamino,
-            chain: Chain::Solana,
-            source: Source::Api,
+        let reading = Reading::new(
+            Protocol::Kamino,
+            Chain::Solana,
+            Source::Api,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::Api,
-                chain: Chain::Solana,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(Source::Api, Chain::Solana, cx.clock.now(), Staleness::Live),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -218,16 +211,14 @@ async fn parse_obligation(
         }
         let (amount, meta) =
             build_leg(dep, "depositReserve", raw, reserves, rpc, decimals_cache).await?;
-        supplied.push(SuppliedAsset {
-            amount,
-            // Per-asset liquidation threshold is not exposed by reserves/metrics (only maxLtv);
-            // a consumer recomputes it from the reserve config if needed.
-            liquidation_threshold: None,
-            max_ltv: meta.and_then(|m| m.max_ltv),
-            is_collateral: true,
-            can_be_collateral: true,
-            apy: meta.and_then(|m| m.supply_apy),
-        });
+        // Per-asset liquidation threshold is not exposed by reserves/metrics (only maxLtv);
+        // a consumer recomputes it from the reserve config if needed.
+        supplied.push(
+            SuppliedAsset::new(amount)
+                .with_max_ltv(meta.and_then(|m| m.max_ltv))
+                .with_collateral(true, true)
+                .with_apy(meta.and_then(|m| m.supply_apy)),
+        );
     }
 
     let mut borrowed = Vec::new();
@@ -243,11 +234,7 @@ async fn parse_obligation(
         }
         let (amount, meta) =
             build_leg(bor, "borrowReserve", raw, reserves, rpc, decimals_cache).await?;
-        borrowed.push(BorrowedAsset {
-            amount,
-            borrow_factor: None,
-            apy: meta.and_then(|m| m.borrow_apy),
-        });
+        borrowed.push(BorrowedAsset::new(amount).with_apy(meta.and_then(|m| m.borrow_apy)));
     }
 
     if !borrowed.is_empty() && health_factor.is_none() {
@@ -256,11 +243,7 @@ async fn parse_obligation(
         });
     }
 
-    Ok(LendingPosition {
-        supplied,
-        borrowed,
-        health_factor,
-    })
+    Ok(LendingPosition::new(supplied, borrowed).with_health_factor(health_factor))
 }
 
 /// Build the [`Amount`] for one deposit/borrow leg from a pre-computed raw base-unit amount: scaled

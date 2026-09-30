@@ -111,20 +111,13 @@ impl ProtocolAdapter for UniswapV3 {
             );
         }
 
-        let reading = Reading {
-            protocol: Protocol::UniswapV3,
+        let reading = Reading::new(
+            Protocol::UniswapV3,
             chain,
-            source: Source::Subgraph,
+            Source::Subgraph,
             positions,
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::Subgraph,
-                chain,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Provenance::new(Source::Subgraph, chain, cx.clock.now(), Staleness::Live),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -233,29 +226,31 @@ impl UniswapV3 {
             uncollected_fees.push(raw_amount(token1.clone(), fee1)?);
         }
 
-        Ok(Position::Liquidity(LiquidityPosition {
-            token0,
-            token1,
-            fee_tier_bps,
-            tick_lower: lower,
-            tick_upper: upper,
-            tick_current: current,
-            in_range: is_in_range(current, lower, upper),
-            assets,
-            uncollected_fees,
-            deposited,
-            withdrawn,
-            collected_fees,
-            // The subgraph position does not expose an APR; a consumer derives it from pool stats.
-            apr: None,
-            // Zero-liquidity positions are returned (not dropped) so the consumer can account for
-            // a dormant LP without it touching totals.
-            status: if liquidity == "0" {
-                PositionStatus::Inactive
-            } else {
-                PositionStatus::Active
-            },
-        }))
+        // Zero-liquidity positions are returned (not dropped) so the consumer can account for a
+        // dormant LP without it touching totals. The subgraph exposes no APR (derived from pool
+        // stats by the consumer).
+        let status = if liquidity == "0" {
+            PositionStatus::Inactive
+        } else {
+            PositionStatus::Active
+        };
+        Ok(Position::Liquidity(
+            LiquidityPosition::new(
+                token0,
+                token1,
+                lower,
+                upper,
+                current,
+                is_in_range(current, lower, upper),
+            )
+            .with_fee_tier_bps(fee_tier_bps)
+            .with_assets(assets)
+            .with_uncollected_fees(uncollected_fees)
+            .with_deposited(deposited)
+            .with_withdrawn(withdrawn)
+            .with_collected_fees(collected_fees)
+            .with_status(status),
+        ))
     }
 }
 

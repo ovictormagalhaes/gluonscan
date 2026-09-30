@@ -135,25 +135,14 @@ impl ProtocolAdapter for AaveApi {
             enrich_risk(cx, self.endpoint(), market, chain_id, &mut supplied).await?;
         }
 
-        let position = LendingPosition {
-            supplied,
-            borrowed,
-            health_factor,
-        };
-        let reading = Reading {
-            protocol: Protocol::AaveV3,
+        let position = LendingPosition::new(supplied, borrowed).with_health_factor(health_factor);
+        let reading = Reading::new(
+            Protocol::AaveV3,
             chain,
-            source: Source::Api,
-            positions: vec![Position::Lending(position)],
-            receipt_tokens: Vec::new(),
-            provenance: Provenance {
-                source: Source::Api,
-                chain,
-                block: None,
-                at: cx.clock.now(),
-                staleness: Staleness::Live,
-            },
-        };
+            Source::Api,
+            vec![Position::Lending(position)],
+            Provenance::new(Source::Api, chain, cx.clock.now(), Staleness::Live),
+        );
         Ok(Complete::new(reading))
     }
 }
@@ -333,21 +322,21 @@ fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         let amount = parse_amount_entry(item, "balance")?;
-        out.push(SuppliedAsset {
-            amount,
-            // Filled by the separate reserve() query in enrich_risk (Full detail).
-            liquidation_threshold: None,
-            max_ltv: None,
-            is_collateral: item
-                .get("isCollateral")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            can_be_collateral: item
-                .get("canBeCollateral")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            apy: parse_apy(item),
-        });
+        // liquidation_threshold / max_ltv are filled by the separate reserve() query in
+        // enrich_risk (Full detail).
+        let is_collateral = item
+            .get("isCollateral")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let can_be_collateral = item
+            .get("canBeCollateral")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        out.push(
+            SuppliedAsset::new(amount)
+                .with_collateral(is_collateral, can_be_collateral)
+                .with_apy(parse_apy(item)),
+        );
     }
     Ok(out)
 }
@@ -359,12 +348,12 @@ fn parse_borrowed(list: Option<&serde_json::Value>) -> Result<Vec<BorrowedAsset>
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         let amount = parse_amount_entry(item, "debt")?;
-        out.push(BorrowedAsset {
-            amount,
-            // Aave V3 pins the borrow factor to 1.0 (no borrow-factor haircut).
-            borrow_factor: Some(Decimal::ONE),
-            apy: parse_apy(item),
-        });
+        // Aave V3 pins the borrow factor to 1.0 (no borrow-factor haircut).
+        out.push(
+            BorrowedAsset::new(amount)
+                .with_borrow_factor(Some(Decimal::ONE))
+                .with_apy(parse_apy(item)),
+        );
     }
     Ok(out)
 }

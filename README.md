@@ -14,11 +14,11 @@ or database.
   inside the adapters — you get normalized results.
 
 ```rust
-use gluonscan::{Gluonscan, AaveApi, Chain, Detail, Protocol, Address};
+use gluonscan::{Gluonscan, AaveApi, Address, Chain, Detail, Protocol, Wallet};
 
 let engine = Gluonscan::builder().backend(AaveApi::new()).build();
 let reading = engine
-    .read(Protocol::AaveV3, owner, Chain::Ethereum, Detail::Full)
+    .read(Protocol::AaveV3, Wallet::Evm(Address::ZERO), Chain::Ethereum, Detail::Full)
     .await?;
 ```
 

@@ -5,6 +5,7 @@
 //! the read methods — conversions, math and normalization stay hidden inside the adapters.
 //!
 //! ```no_run
+//! # #[cfg(feature = "aave")]
 //! # async fn demo() -> Result<(), gluonscan::Error> {
 //! use gluonscan::{Gluonscan, AaveApi, Chain, Detail, Protocol, Address, Wallet};
 //!
