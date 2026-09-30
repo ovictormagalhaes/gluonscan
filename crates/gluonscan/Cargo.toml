@@ -13,17 +13,34 @@ workspace = true
 
 [dependencies]
 gluonscan-core = { workspace = true }
-gluonscan-aave = { workspace = true }
-gluonscan-uniswap = { workspace = true }
-gluonscan-pendle = { workspace = true }
-gluonscan-kamino = { workspace = true }
-gluonscan-raydium = { workspace = true }
-gluonscan-sources = { workspace = true }
-gluonscan-wallet = { workspace = true }
+gluonscan-aave = { workspace = true, optional = true }
+gluonscan-uniswap = { workspace = true, optional = true }
+gluonscan-pendle = { workspace = true, optional = true }
+gluonscan-kamino = { workspace = true, optional = true }
+gluonscan-raydium = { workspace = true, optional = true }
+gluonscan-sources = { workspace = true, optional = true }
+gluonscan-wallet = { workspace = true, optional = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 rust_decimal = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
+
+[features]
+# Convenience default: everything wired. Opt out with `default-features = false` and pick only the
+# protocols you need, so a consumer never compiles an ecosystem's stack (EVM's alloy or Solana's
+# crypto) it does not use. Features are additive, so widening them later is never a breaking change.
+default = ["full"]
+aave = ["dep:gluonscan-aave"]
+uniswap = ["dep:gluonscan-uniswap"]
+pendle = ["dep:gluonscan-pendle"]
+kamino = ["dep:gluonscan-kamino"]
+raydium = ["dep:gluonscan-raydium"]
+prices = ["dep:gluonscan-sources"]
+wallet = ["dep:gluonscan-wallet"]
+# Ecosystem umbrellas.
+evm = ["aave", "uniswap", "pendle"]
+solana = ["kamino", "raydium"]
+full = ["evm", "solana", "prices", "wallet"]
 
 [dev-dependencies]
 gluonscan-testing = { workspace = true }

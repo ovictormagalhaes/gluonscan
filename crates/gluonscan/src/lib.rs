@@ -19,13 +19,23 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-pub use gluonscan_aave::AaveApi;
 pub use gluonscan_core::*;
+
+// Protocol adapters are re-exported only when their feature is enabled, so a consumer that opts out
+// of an ecosystem never compiles its dependency stack.
+#[cfg(feature = "aave")]
+pub use gluonscan_aave::AaveApi;
+#[cfg(feature = "kamino")]
 pub use gluonscan_kamino::KaminoApi;
+#[cfg(feature = "pendle")]
 pub use gluonscan_pendle::PendleApi;
+#[cfg(feature = "raydium")]
 pub use gluonscan_raydium::RaydiumClmm;
+#[cfg(feature = "prices")]
 pub use gluonscan_sources::{CoinGecko, CoinMarketCap};
+#[cfg(feature = "uniswap")]
 pub use gluonscan_uniswap::UniswapV3;
+#[cfg(feature = "wallet")]
 pub use gluonscan_wallet::{
     BitcoinWallet, EvmNativeBalance, EvmNfts, EvmWallet, SolanaNativeBalance, SolanaNfts,
     SolanaWallet,
