@@ -1,0 +1,22 @@
+# release-plz configuration.
+#
+# Inert until the repo variable PUBLISH_ENABLED == "true" (see .github/workflows/release-plz.yml).
+#
+# The workspace ships as ONE cohesive release: every crate shares the same version
+# (`version.workspace = true`), so release-plz bumps them in lockstep and a release produces a
+# single `vX.Y.Z` git tag and a single GitHub Release — not one tag/release per crate.
+
+[workspace]
+# One tag for the whole workspace release (all crates resolve to the same version).
+git_tag_name = "v{{ version }}"
+# Publish a GitHub Release for that tag, with the changelog section as its body.
+git_release_enable = true
+git_release_name = "gluonscan v{{ version }}"
+# Maintain the changelog (Keep a Changelog format, at the repo root).
+changelog_update = true
+# Publish every crate, including the gluonscan-testing helper.
+publish = true
+
+[changelog]
+# A `!`/BREAKING commit is never silently folded into a patch bump.
+protect_breaking_commits = true
