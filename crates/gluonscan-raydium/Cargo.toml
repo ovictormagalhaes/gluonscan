@@ -1,6 +1,8 @@
 [package]
 name = "gluonscan-raydium"
 description = "Raydium CLMM protocol adapter for gluonscan (Solana on-chain position reads)."
+keywords = ["defi", "raydium", "liquidity", "solana", "clmm"]
+categories = ["finance", "cryptography::cryptocurrencies"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

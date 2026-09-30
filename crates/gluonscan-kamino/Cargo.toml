@@ -1,6 +1,8 @@
 [package]
 name = "gluonscan-kamino"
 description = "Kamino protocol adapter for gluonscan (Solana lending via the Kamino HTTP API)."
+keywords = ["defi", "kamino", "lending", "solana", "borrow"]
+categories = ["finance", "cryptography::cryptocurrencies"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,8 @@
 [package]
 name = "gluonscan-evm"
 description = "EVM on-chain helpers for gluonscan: eth_call over an injected ChainProvider, minimal ABI encode/decode."
+keywords = ["ethereum", "evm", "abi", "rpc", "defi"]
+categories = ["cryptography::cryptocurrencies", "api-bindings"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

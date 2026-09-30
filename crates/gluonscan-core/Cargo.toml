@@ -1,6 +1,8 @@
 [package]
 name = "gluonscan-core"
 description = "Core domain types and adapter ports for gluonscan: the read + normalize contract."
+keywords = ["defi", "blockchain", "portfolio", "ethereum", "solana"]
+categories = ["finance", "cryptography::cryptocurrencies"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

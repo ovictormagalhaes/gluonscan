@@ -1,6 +1,8 @@
 [package]
 name = "gluonscan-math"
 description = "Exact-integer DeFi math for gluonscan (Uniswap V3 Q64.96 tick math, etc.). No floats."
+keywords = ["defi", "uniswap", "liquidity", "tick-math", "clmm"]
+categories = ["mathematics", "finance"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

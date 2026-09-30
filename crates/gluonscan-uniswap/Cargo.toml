@@ -1,6 +1,8 @@
 [package]
 name = "gluonscan-uniswap"
 description = "Uniswap V3 protocol adapter for gluonscan (subgraph discovery + on-chain uncollected fees)."
+keywords = ["defi", "uniswap", "liquidity", "ethereum", "clmm"]
+categories = ["finance", "cryptography::cryptocurrencies"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,8 @@
 [package]
 name = "gluonscan-aave"
 description = "Aave V3 protocol adapter for gluonscan (HTTP API backend)."
+keywords = ["defi", "aave", "lending", "ethereum", "portfolio"]
+categories = ["finance", "cryptography::cryptocurrencies"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
