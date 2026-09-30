@@ -92,12 +92,17 @@ impl ProtocolAdapter for PendleApi {
         }
 
         // 1. Catalog (wallet-independent): every PT/YT for the chain. The API paginates under
-        // `results` (with a `total`); walk the pages.
+        // `results`; walk pages until a short/empty one. `total` is deliberately NOT trusted as the
+        // stop condition — a missing or inaccurate `total` must never silently drop held positions
+        // in later pages. A hard bound turns a runaway (always-full) response into a fail-closed
+        // error rather than an infinite loop or silent truncation.
+        const PAGE: usize = 100;
+        const MAX_MARKETS: usize = 100_000;
         let mut markets = Vec::new();
         let mut skip = 0usize;
         loop {
             let url = format!(
-                "{}/v1/{}/markets?limit=100&skip={skip}",
+                "{}/v1/{}/markets?limit={PAGE}&skip={skip}",
                 self.base(),
                 chain_id
             );
@@ -106,7 +111,6 @@ impl ProtocolAdapter for PendleApi {
                 serde_json::from_str(&raw).map_err(|e| Error::Integrity {
                     message: format!("Pendle catalog not JSON: {e}"),
                 })?;
-            let total = json.get("total").and_then(|t| t.as_u64()).unwrap_or(0) as usize;
             let page = json
                 .pointer("/results")
                 .and_then(|v| v.as_array())
@@ -115,9 +119,15 @@ impl ProtocolAdapter for PendleApi {
                 })?;
             let n = page.len();
             markets.extend(page.iter().cloned());
-            skip += n;
-            if n == 0 || markets.len() >= total {
+            if n < PAGE {
                 break;
+            }
+            skip += n;
+            if skip > MAX_MARKETS {
+                return Err(Error::Integrity {
+                    message: "Pendle catalog exceeded the sane page bound; refusing to truncate"
+                        .into(),
+                });
             }
         }
 
@@ -278,9 +288,10 @@ fn parse_token(v: &serde_json::Value) -> Result<Token, Error> {
     let decimals = v
         .get("decimals")
         .and_then(json_u64)
+        .and_then(|n| u8::try_from(n).ok())
         .ok_or_else(|| Error::Integrity {
-            message: format!("Pendle token `{symbol}` missing decimals"),
-        })? as u8;
+            message: format!("Pendle token `{symbol}` missing or out-of-range decimals"),
+        })?;
     let address = v
         .get("address")
         .and_then(|s| s.as_str())

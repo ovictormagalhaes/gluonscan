@@ -190,6 +190,28 @@ impl UniswapV3 {
             human_amount(token0.clone(), item, "/withdrawnToken0")?,
             human_amount(token1.clone(), item, "/withdrawnToken1")?,
         ];
+        // Known subgraph corruption: token0's collected fees mirrored into token1, seen as
+        // byte-identical non-zero values across two distinct tokens (it produced phantom fees and
+        // absurd APY downstream). That is not physically plausible, so fail closed rather than emit
+        // degraded fee data.
+        if let (Some(a), Some(b)) = (
+            item.pointer("/collectedFeesToken0")
+                .and_then(|v| v.as_str()),
+            item.pointer("/collectedFeesToken1")
+                .and_then(|v| v.as_str()),
+        ) {
+            if a == b
+                && Decimal::from_str(a)
+                    .map(|v| v != Decimal::ZERO)
+                    .unwrap_or(false)
+            {
+                return Err(Error::Integrity {
+                    message: "Uniswap subgraph collectedFees token0 == token1 (known corruption); \
+                         refusing to emit phantom fees"
+                        .into(),
+                });
+            }
+        }
         let collected_fees = vec![
             human_amount(token0.clone(), item, "/collectedFeesToken0")?,
             human_amount(token1.clone(), item, "/collectedFeesToken1")?,

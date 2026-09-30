@@ -277,9 +277,10 @@ fn parse_amount_entry(item: &serde_json::Value, balance_key: &str) -> Result<Amo
     let decimals = currency
         .get("decimals")
         .and_then(|v| v.as_u64())
+        .and_then(|n| u8::try_from(n).ok())
         .ok_or_else(|| Error::Integrity {
-            message: format!("Aave currency `{symbol}` missing decimals"),
-        })? as u8;
+            message: format!("Aave currency `{symbol}` missing or out-of-range decimals"),
+        })?;
     let address = currency
         .get("address")
         .and_then(|v| v.as_str())

@@ -139,12 +139,13 @@ impl ProtocolAdapter for EvmWallet {
                 .and_then(|s| s.as_str())
                 .unwrap_or("")
                 .to_string();
-            let decimals =
-                t.get("decimals")
-                    .and_then(|d| d.as_u64())
-                    .ok_or_else(|| Error::Integrity {
-                        message: format!("wallet balance `{symbol}` missing decimals"),
-                    })? as u8;
+            let decimals = t
+                .get("decimals")
+                .and_then(|d| d.as_u64())
+                .and_then(|n| u8::try_from(n).ok())
+                .ok_or_else(|| Error::Integrity {
+                    message: format!("wallet balance `{symbol}` missing or out-of-range decimals"),
+                })?;
             let raw_balance =
                 t.get("balance")
                     .and_then(|b| b.as_str())

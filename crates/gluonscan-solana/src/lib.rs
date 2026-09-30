@@ -320,10 +320,13 @@ pub async fn get_token_balances(
         let mint = info.and_then(|i| i.get("mint")).and_then(|m| m.as_str());
         if let (Some(amount), Some(decimals), Some(mint)) = (amount, decimals, mint) {
             if amount != "0" {
+                let decimals = u8::try_from(decimals).map_err(|_| Error::Integrity {
+                    message: format!("Solana token `{mint}` decimals out of range: {decimals}"),
+                })?;
                 out.push(TokenBalance {
                     mint: mint.to_string(),
                     amount_raw: amount.to_string(),
-                    decimals: decimals as u8,
+                    decimals,
                 });
             }
         }
