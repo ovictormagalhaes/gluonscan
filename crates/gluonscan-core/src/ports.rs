@@ -4,7 +4,8 @@
 //! implementations; tests supply mocks. This is what keeps the engine stateless and reproducible.
 
 use crate::{
-    Asset, Capability, Chain, Complete, Detail, Error, Protocol, Reading, Source, Timestamp, Wallet,
+    Asset, Capability, Chain, Complete, Detail, Error, History, Protocol, Reading, Source,
+    Timestamp, Wallet,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -111,4 +112,22 @@ pub trait ProtocolAdapter: Send + Sync + 'static {
         detail: Detail,
         cx: &Ctx,
     ) -> Result<Complete<Reading>, Error>;
+
+    /// Read `owner`'s event history for this protocol on `chain`, limited to events after `since`
+    /// (`None` = from the beginning). Defaults to [`Error::Unsupported`]; a backend that can serve
+    /// [`Capability::History`] overrides it.
+    async fn read_history(
+        &self,
+        owner: &Wallet,
+        chain: Chain,
+        since: Option<Timestamp>,
+        cx: &Ctx,
+    ) -> Result<Complete<History>, Error> {
+        let _ = (owner, chain, since, cx);
+        Err(Error::Unsupported {
+            protocol: self.protocol(),
+            capability: Capability::History,
+            backend: self.source(),
+        })
+    }
 }

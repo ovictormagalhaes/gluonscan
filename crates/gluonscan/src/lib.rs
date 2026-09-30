@@ -308,6 +308,26 @@ impl Gluonscan {
         adapter.read(&owner, chain, detail, &self.cx).await
     }
 
+    /// Read one protocol's event history for `owner` on `chain`, limited to events after `since`
+    /// (`None` = from the beginning). Fails with [`Error::Permanent`] if no registered backend for
+    /// that protocol supports the chain, or [`Error::Unsupported`] if the backend has no history.
+    pub async fn history(
+        &self,
+        protocol: Protocol,
+        owner: Wallet,
+        chain: Chain,
+        since: Option<Timestamp>,
+    ) -> Result<Complete<History>, Error> {
+        let adapter = self
+            .adapters
+            .iter()
+            .find(|a| a.protocol() == protocol && a.supported_chains().contains(&chain))
+            .ok_or_else(|| Error::Permanent {
+                message: format!("no registered {protocol:?} backend supports {chain:?}"),
+            })?;
+        adapter.read_history(&owner, chain, since, &self.cx).await
+    }
+
     /// Price an [`Asset`] in USD via the configured price source — a **separate** operation from
     /// [`read`](Gluonscan::read). Reading positions and pricing assets are two distinct calls. The
     /// [`Asset`] key is chain-agnostic, so native coins (BTC, ETH, SOL) and SPL mints price too.

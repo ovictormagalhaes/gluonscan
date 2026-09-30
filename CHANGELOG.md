@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.4] - 2026-09-30
+
+### Added
+
+- Event history (`Capability::History`): `History` / `HistoryEvent` / `EventKind` and
+  `ProtocolAdapter::read_history` (facade `Gluonscan::history`), a normalized past-events stream
+  separate from current positions. Defaults to `Unsupported`; the Aave adapter implements it over a
+  per-chain subgraph (`AaveApi::with_subgraphs`) — supply/withdraw/borrow/repay events. Valuation
+  and derived analytics (PnL, impermanent loss, cost basis) remain the consumer's.
+
 ## [0.0.1-beta.3] - 2026-09-30
 
 ### Changed
@@ -43,7 +53,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.3...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.4...HEAD
+[0.0.1-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.3...v0.0.1-beta.4
 [0.0.1-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.2...v0.0.1-beta.3
 [0.0.1-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.1...v0.0.1-beta.2
 [0.0.1-beta.1]: https://github.com/ovictormagalhaes/gluonscan/releases/tag/v0.0.1-beta.1

@@ -10,12 +10,12 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Currency, Detail, Error,
-    LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
-    Staleness, SuppliedAsset, Token, TokenAddress, Wallet,
+    Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Currency, Detail, Error, EventKind,
+    History, HistoryEvent, LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance,
+    Reading, Source, Staleness, SuppliedAsset, Timestamp, Token, TokenAddress, Wallet,
 };
 use rust_decimal::Decimal;
 
@@ -25,6 +25,7 @@ const CAPABILITIES: &[Capability] = &[
     Capability::Positions,
     Capability::HealthFactor,
     Capability::RiskConfig,
+    Capability::History,
 ];
 const SUPPORTED_CHAINS: &[Chain] = &[
     Chain::Ethereum,
@@ -35,21 +36,33 @@ const SUPPORTED_CHAINS: &[Chain] = &[
     Chain::Bnb,
 ];
 
-/// The Aave V3 adapter backed by the official GraphQL API.
+/// The Aave V3 adapter backed by the official GraphQL API. Position reads use the API; event
+/// history reads a per-chain subgraph (The Graph), injected via [`AaveApi::with_subgraphs`].
 #[derive(Debug, Default, Clone)]
 pub struct AaveApi {
     endpoint: Option<String>,
+    subgraphs: HashMap<Chain, String>,
 }
 
 impl AaveApi {
-    /// Construct with the default public endpoint.
+    /// Construct with the default public endpoint and no history subgraphs.
     pub fn new() -> Self {
-        AaveApi { endpoint: None }
+        AaveApi {
+            endpoint: None,
+            subgraphs: HashMap::new(),
+        }
     }
 
     /// Override the endpoint (for a private gateway or tests).
     pub fn with_endpoint(mut self, url: impl Into<String>) -> Self {
         self.endpoint = Some(url.into());
+        self
+    }
+
+    /// Set the per-chain history subgraph URLs (The Graph gateway). Without these, `read_history`
+    /// returns an empty history for the chain.
+    pub fn with_subgraphs(mut self, subgraphs: HashMap<Chain, String>) -> Self {
+        self.subgraphs = subgraphs;
         self
     }
 
@@ -145,6 +158,132 @@ impl ProtocolAdapter for AaveApi {
         );
         Ok(Complete::new(reading))
     }
+
+    async fn read_history(
+        &self,
+        owner: &Wallet,
+        chain: Chain,
+        since: Option<Timestamp>,
+        cx: &Ctx,
+    ) -> Result<Complete<History>, Error> {
+        let owner = owner.evm()?;
+        let provenance = Provenance::new(Source::Subgraph, chain, cx.clock.now(), Staleness::Live);
+
+        // No history subgraph configured for this chain → no events (not an error).
+        let Some(subgraph) = self.subgraphs.get(&chain) else {
+            return Ok(Complete::new(History::new(
+                Protocol::AaveV3,
+                chain,
+                Vec::new(),
+                provenance,
+            )));
+        };
+
+        let since_ts = since.map(|t| t.0).unwrap_or(0);
+        let body = events_query(&format!("{owner:#x}"), since_ts);
+        let raw = cx.http.post(subgraph, body, &[]).await?;
+        let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+            message: format!("Aave events response not JSON: {e}"),
+        })?;
+        check_graphql_errors(&json)?;
+        let data = json.get("data").ok_or_else(|| Error::Integrity {
+            message: "Aave events response missing `data`".into(),
+        })?;
+
+        let mut events = Vec::new();
+        for (field, kind) in [
+            ("supplies", EventKind::Deposit),
+            ("redeemUnderlyings", EventKind::Withdraw),
+            ("borrows", EventKind::Borrow),
+            ("repays", EventKind::Repay),
+        ] {
+            for node in data
+                .get(field)
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+            {
+                events.push(parse_event(node, kind)?);
+            }
+        }
+        events.sort_by_key(|e| e.at.0);
+        Ok(Complete::new(History::new(
+            Protocol::AaveV3,
+            chain,
+            events,
+            provenance,
+        )))
+    }
+}
+
+/// The GraphQL query for a user's lending events after `since` (one page of 500 per kind).
+fn events_query(user: &str, since: i64) -> String {
+    const FIELDS: &str = "id timestamp amount txHash reserve{symbol name underlyingAsset decimals}";
+    let q = format!(
+        "query($user:Bytes!,$since:Int!){{\
+         supplies(where:{{user:$user,timestamp_gt:$since}},orderBy:timestamp,orderDirection:asc,first:500){{{FIELDS}}} \
+         redeemUnderlyings(where:{{user:$user,timestamp_gt:$since}},orderBy:timestamp,orderDirection:asc,first:500){{{FIELDS}}} \
+         borrows(where:{{user:$user,timestamp_gt:$since}},orderBy:timestamp,orderDirection:asc,first:500){{{FIELDS}}} \
+         repays(where:{{user:$user,timestamp_gt:$since}},orderBy:timestamp,orderDirection:asc,first:500){{{FIELDS}}}}}"
+    );
+    serde_json::json!({ "query": q, "variables": { "user": user, "since": since } }).to_string()
+}
+
+/// Parse one subgraph event node (raw `amount`, `reserve{...}`) into a normalized [`HistoryEvent`].
+fn parse_event(node: &serde_json::Value, kind: EventKind) -> Result<HistoryEvent, Error> {
+    let symbol = node
+        .pointer("/reserve/symbol")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let name = node
+        .pointer("/reserve/name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let decimals = node
+        .pointer("/reserve/decimals")
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .and_then(|n| u8::try_from(n).ok())
+        .ok_or_else(|| Error::Integrity {
+            message: "Aave event reserve missing/invalid decimals".into(),
+        })?;
+    let address = node
+        .pointer("/reserve/underlyingAsset")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Address::from_str(s).ok());
+    let raw = node
+        .get("amount")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::Integrity {
+            message: "Aave event missing amount".into(),
+        })?;
+    let raw = U256::from_str(raw).map_err(|e| Error::Integrity {
+        message: format!("Aave event amount not an integer: {e}"),
+    })?;
+    let at = node
+        .get("timestamp")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .ok_or_else(|| Error::Integrity {
+            message: "Aave event missing/invalid timestamp".into(),
+        })?;
+    let tx = node
+        .get("txHash")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            node.get("id")
+                .and_then(|v| v.as_str())
+                .map(|id| id.split(':').next().unwrap_or(id).to_string())
+        })
+        .unwrap_or_default();
+    let amount = Amount::from_raw(Token::evm(symbol, address, decimals).with_name(name), raw)?;
+    Ok(HistoryEvent::new(kind, amount, tx, Timestamp(at)))
 }
 
 /// Fail closed if the GraphQL response carries an `errors` array — never return the empty `data`

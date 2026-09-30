@@ -17,12 +17,14 @@
 //! - **No fabricated value.** A missing price is [`Error::AbsentPrice`], never `0` or `1`.
 
 pub mod error;
+pub mod history;
 pub mod model;
 pub mod ports;
 
 mod chain;
 pub use chain::{Chain, Ecosystem};
 pub use error::Error;
+pub use history::{EventKind, History, HistoryEvent};
 pub use model::{
     scaled, to_raw, Amount, BorrowedAsset, Complete, Currency, LendingPosition, LiquidityPosition,
     LockPosition, Money, NftPosition, Position, PositionStatus, Provenance, Reading, StakePosition,
