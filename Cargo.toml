@@ -53,4 +53,6 @@ gluonscan-raydium = { path = "crates/gluonscan-raydium", version = "0.0.1-beta.2
 gluonscan-sources = { path = "crates/gluonscan-sources", version = "0.0.1-beta.2" }
 gluonscan-wallet = { path = "crates/gluonscan-wallet", version = "0.0.1-beta.2" }
 gluonscan-evm = { path = "crates/gluonscan-evm", version = "0.0.1-beta.2" }
-gluonscan-testing = { path = "crates/gluonscan-testing", version = "0.0.1-beta.2" }
+# Dev-only helper: path-only (no version) so it is stripped from published manifests and never
+# forces a publish-order constraint on the crates that dev-depend on it.
+gluonscan-testing = { path = "crates/gluonscan-testing" }
