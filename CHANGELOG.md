@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.11] - 2026-10-01
+
+### Added
+
+- Batched pricing: `PriceSource::prices_usd(chain, &[Asset])` (default loops `price_usd`) with a
+  `CoinGecko` override that collapses all contract/mint addresses into one `contract_addresses` call
+  plus one native call, returning a result per asset in input order. Facade `Gluonscan::prices` and
+  the price source both expose it, so a consumer re-pricing many wallet tokens makes ~1 call per
+  chain instead of one per token.
+
 ## [0.0.1-beta.10] - 2026-10-01
 
 ### Changed

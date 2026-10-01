@@ -341,4 +341,17 @@ impl Gluonscan {
             .price_usd(chain, asset)
             .await
     }
+
+    /// Price several assets on one chain in one call (batched by the source when possible), one
+    /// result per asset in input order. Errors with [`Error::Permanent`] if no price source is set.
+    pub async fn prices(
+        &self,
+        chain: Chain,
+        assets: &[Asset],
+    ) -> Result<Vec<Result<rust_decimal::Decimal, Error>>, Error> {
+        let source = self.price.as_ref().ok_or_else(|| Error::Permanent {
+            message: "no price source configured".into(),
+        })?;
+        Ok(source.prices_usd(chain, assets).await)
+    }
 }

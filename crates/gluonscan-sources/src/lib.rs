@@ -5,6 +5,7 @@
 //!
 //! A missing price is [`Error::AbsentPrice`] — never a fabricated `0` or `1`.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -114,6 +115,34 @@ impl CoinGecko {
             asset: key.to_string(),
         })
     }
+
+    /// Batch several contract addresses / SPL mints on one platform into a single call. Returns a
+    /// map keyed by the address CoinGecko echoes (EVM lowercased, SPL mint case-preserved); an
+    /// address with no price is simply absent from the map.
+    async fn batch_token_prices(
+        &self,
+        platform: &str,
+        keys: &[String],
+    ) -> Result<HashMap<String, Decimal>, Error> {
+        let csv = keys.join(",");
+        let url = format!(
+            "{}/api/v3/simple/token_price/{platform}?contract_addresses={csv}&vs_currencies=usd",
+            self.base
+        );
+        let raw = self.http.get(&url, &self.headers()).await?;
+        let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+            message: format!("CoinGecko response not JSON: {e}"),
+        })?;
+        let mut out = HashMap::new();
+        if let Some(obj) = json.as_object() {
+            for (addr, v) in obj {
+                if let Some(price) = v.get("usd").and_then(json_decimal) {
+                    out.insert(addr.clone(), price);
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 #[async_trait]
@@ -150,6 +179,66 @@ impl PriceSource for CoinGecko {
                 message: format!("CoinGecko cannot price asset kind {other:?}"),
             }),
         }
+    }
+
+    /// Batched pricing: one call for all contract/mint addresses on the chain's platform, one call
+    /// for the native coin if requested. Results are returned per asset in input order.
+    async fn prices_usd(&self, chain: Chain, assets: &[Asset]) -> Vec<Result<Decimal, Error>> {
+        let contract_keys: Vec<String> = assets
+            .iter()
+            .filter_map(|a| match a {
+                Asset::Token(t) => Some(format!("{t:#x}")),
+                Asset::Mint(m) => Some(m.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let contract_prices: HashMap<String, Decimal> = if contract_keys.is_empty() {
+            HashMap::new()
+        } else if let Some(platform) = CoinGecko::platform(chain) {
+            self.batch_token_prices(platform, &contract_keys)
+                .await
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+        // EVM addresses come back lowercased; mints keep case. Match exact first, then lowercased.
+        let lowered: HashMap<String, Decimal> = contract_prices
+            .iter()
+            .map(|(k, v)| (k.to_lowercase(), *v))
+            .collect();
+
+        // One native lookup for the whole batch (a failure drops native to absent, not an error).
+        let native_price: Option<Decimal> = if assets.iter().any(|a| matches!(a, Asset::Native)) {
+            self.price_usd(chain, Asset::Native).await.ok()
+        } else {
+            None
+        };
+
+        assets
+            .iter()
+            .map(|asset| match asset {
+                Asset::Native => native_price.ok_or(Error::AbsentPrice {
+                    asset: "native".to_string(),
+                }),
+                Asset::Token(t) => {
+                    let key = format!("{t:#x}");
+                    contract_prices
+                        .get(&key)
+                        .or_else(|| lowered.get(&key.to_lowercase()))
+                        .copied()
+                        .ok_or(Error::AbsentPrice { asset: key })
+                }
+                Asset::Mint(m) => contract_prices
+                    .get(m)
+                    .or_else(|| lowered.get(&m.to_lowercase()))
+                    .copied()
+                    .ok_or(Error::AbsentPrice { asset: m.clone() }),
+                other => Err(Error::Permanent {
+                    message: format!("CoinGecko cannot price asset kind {other:?}"),
+                }),
+            })
+            .collect()
     }
 }
 

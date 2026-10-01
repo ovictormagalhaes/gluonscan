@@ -39,6 +39,21 @@ pub trait PriceSource: Send + Sync + 'static {
     /// Price an [`Asset`] on a chain in USD. The asset key is chain-agnostic, so native coins
     /// (BTC, ETH, SOL) and Solana SPL mints are priceable, not just EVM token contracts.
     async fn price_usd(&self, chain: Chain, asset: Asset) -> Result<rust_decimal::Decimal, Error>;
+
+    /// Price several assets on one chain, returning a result per asset in input order. The default
+    /// loops [`price_usd`](PriceSource::price_usd); a source backed by a batch endpoint should
+    /// override it to collapse the calls (e.g. CoinGecko's comma-separated `contract_addresses`).
+    async fn prices_usd(
+        &self,
+        chain: Chain,
+        assets: &[Asset],
+    ) -> Vec<Result<rust_decimal::Decimal, Error>> {
+        let mut out = Vec::with_capacity(assets.len());
+        for asset in assets {
+            out.push(self.price_usd(chain, asset.clone()).await);
+        }
+        out
+    }
 }
 
 /// An injected clock, so reads carry deterministic, testable timestamps.

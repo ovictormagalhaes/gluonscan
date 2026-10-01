@@ -119,3 +119,38 @@ async fn token_price_on_a_native_only_chain_errors() {
         .expect_err("no token platform for Bitcoin");
     assert!(!err.is_retryable());
 }
+
+#[tokio::test]
+async fn coingecko_prices_usd_batches_contracts_and_native() {
+    let a1: Address = WETH.parse().unwrap();
+    let a2: Address = "0x1111111111111111111111111111111111111111".parse().unwrap();
+    let k1 = format!("{a1:#x}");
+    let k2 = format!("{a2:#x}");
+    // One batched contract call (two addresses) + one native call.
+    let batch = format!(r#"{{"{k1}":{{"usd":"1500.0"}},"{k2}":{{"usd":"2.5"}}}}"#);
+    let native = r#"{"ethereum":{"usd":"3000.0"}}"#;
+    let http = MockHttp::new()
+        .on(Match::primary_contains("token_price"), batch)
+        .on(Match::primary_contains("simple/price?ids"), native);
+
+    let results = CoinGecko::new(Arc::new(http))
+        .prices_usd(
+            Chain::Ethereum,
+            &[Asset::Native, Asset::Token(a1), Asset::Token(a2)],
+        )
+        .await;
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(
+        results[0].as_ref().unwrap(),
+        &Decimal::from_str_exact("3000.0").unwrap()
+    );
+    assert_eq!(
+        results[1].as_ref().unwrap(),
+        &Decimal::from_str_exact("1500.0").unwrap()
+    );
+    assert_eq!(
+        results[2].as_ref().unwrap(),
+        &Decimal::from_str_exact("2.5").unwrap()
+    );
+}
