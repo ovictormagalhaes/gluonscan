@@ -5,6 +5,7 @@
 //! returns the **complete** position resource: principal amounts (from the Q64.96 liquidity math),
 //! lifetime deposited/withdrawn/collected, fee tier, tick range, and the in-range flag.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use alloy_primitives::{Address, U256};
@@ -23,28 +24,40 @@ use rust_decimal::Decimal;
 const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum, Chain::Base, Chain::Arbitrum];
 
-/// Uniswap V3 adapter (subgraph discovery + on-chain fees).
+/// Uniswap V3 adapter (subgraph discovery + on-chain fees). One instance serves every chain it has
+/// a subgraph URL for, so it can back a single long-lived engine that routes by chain.
 #[derive(Debug, Default, Clone)]
 pub struct UniswapV3 {
-    subgraph: Option<String>,
+    subgraphs: HashMap<Chain, String>,
 }
 
 impl UniswapV3 {
-    /// Construct with default (placeholder) subgraph endpoints.
+    /// Construct with no subgraphs configured (a chain with none fails closed on read).
     pub fn new() -> Self {
-        UniswapV3 { subgraph: None }
+        UniswapV3 {
+            subgraphs: HashMap::new(),
+        }
     }
 
-    /// Override the subgraph endpoint (real gateway URL, or a test double).
-    pub fn with_subgraph(mut self, url: impl Into<String>) -> Self {
-        self.subgraph = Some(url.into());
+    /// Set one chain's subgraph URL (real gateway URL, or a test double).
+    pub fn with_subgraph(mut self, chain: Chain, url: impl Into<String>) -> Self {
+        self.subgraphs.insert(chain, url.into());
         self
     }
 
-    fn subgraph_url(&self, chain: Chain) -> String {
-        self.subgraph
-            .clone()
-            .unwrap_or_else(|| format!("https://subgraph.invalid/uniswap-v3/{chain:?}"))
+    /// Set all per-chain subgraph URLs at once.
+    pub fn with_subgraphs(mut self, subgraphs: HashMap<Chain, String>) -> Self {
+        self.subgraphs = subgraphs;
+        self
+    }
+
+    fn subgraph_url(&self, chain: Chain) -> Result<&str, Error> {
+        self.subgraphs
+            .get(&chain)
+            .map(String::as_str)
+            .ok_or_else(|| Error::Permanent {
+                message: format!("no Uniswap V3 subgraph configured for {chain:?}"),
+            })
     }
 
     /// The NonfungiblePositionManager address per supported chain.
@@ -91,7 +104,7 @@ impl ProtocolAdapter for UniswapV3 {
         let owner = owner.evm()?;
 
         let body = query_body(&format!("{owner:#x}"));
-        let raw = cx.http.post(&self.subgraph_url(chain), body, &[]).await?;
+        let raw = cx.http.post(self.subgraph_url(chain)?, body, &[]).await?;
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
             message: format!("Uniswap subgraph response not JSON: {e}"),
         })?;

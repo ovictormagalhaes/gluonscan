@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.5] - 2026-09-30
+
+### Changed
+
+- `UniswapV3` now holds a per-chain subgraph map instead of a single endpoint, so one long-lived
+  instance can back an engine that routes Uniswap reads per chain. `with_subgraph` takes a `Chain`
+  plus its URL; `with_subgraphs(HashMap<Chain, String>)` sets them all at once. A supported chain
+  with no configured subgraph fails closed (`Permanent`) rather than hitting a placeholder endpoint.
+  This mirrors `AaveApi::with_subgraphs` and lets a single engine serve every chain a backend covers.
+
 ## [0.0.1-beta.4] - 2026-09-30
 
 ### Added

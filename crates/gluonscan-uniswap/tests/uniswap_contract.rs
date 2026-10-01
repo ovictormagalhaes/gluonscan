@@ -29,6 +29,7 @@ async fn full_returns_the_complete_position() {
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 
     let reading = UniswapV3::new()
+        .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
         .read(
             &Wallet::Evm(Address::ZERO),
             Chain::Ethereum,
@@ -85,6 +86,7 @@ async fn summary_has_principal_but_no_uncollected_fees_and_needs_no_rpc() {
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))); // no RPC configured
 
     let reading = UniswapV3::new()
+        .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
         .read(
             &Wallet::Evm(Address::ZERO),
             Chain::Ethereum,
@@ -114,4 +116,43 @@ async fn unsupported_chain_errors() {
         .await
         .expect_err("uniswap adapter not configured for BNB");
     assert!(!err.is_retryable());
+}
+
+// A chain the adapter is deployed on but with no subgraph URL configured must fail closed,
+// never fall through to a placeholder endpoint.
+#[tokio::test]
+async fn supported_chain_without_subgraph_fails_closed() {
+    let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)));
+    let err = UniswapV3::new()
+        .with_subgraph(Chain::Base, "https://subgraph.test/uniswap-v3")
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Summary,
+            &cx,
+        )
+        .await
+        .expect_err("Ethereum has no subgraph configured");
+    assert!(!err.is_retryable());
+}
+
+// One instance routes each chain to its own subgraph URL (the engine-sharing contract).
+#[tokio::test]
+async fn with_subgraphs_routes_per_chain() {
+    use std::collections::HashMap;
+    let mut subs = HashMap::new();
+    subs.insert(Chain::Base, "https://subgraph.test/base".to_string());
+    subs.insert(Chain::Arbitrum, "https://subgraph.test/arbitrum".to_string());
+    let adapter = UniswapV3::new().with_subgraphs(subs);
+
+    for chain in [Chain::Base, Chain::Arbitrum] {
+        let http = MockHttp::new().on(Match::body_contains("positions"), SUBGRAPH);
+        let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
+        let reading = adapter
+            .read(&Wallet::Evm(Address::ZERO), chain, Detail::Summary, &cx)
+            .await
+            .expect("configured chain reads")
+            .into_inner();
+        assert_eq!(reading.chain, chain);
+    }
 }

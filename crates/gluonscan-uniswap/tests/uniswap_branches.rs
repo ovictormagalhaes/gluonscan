@@ -32,6 +32,7 @@ fn ctx_with(body: &'static str) -> Ctx {
 
 async fn read(cx: &Ctx, detail: Detail) -> Result<gluonscan_core::Reading, Error> {
     UniswapV3::new()
+        .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
         .read(&Wallet::Evm(Address::ZERO), Chain::Ethereum, detail, cx)
         .await
         .map(gluonscan_core::Complete::into_inner)

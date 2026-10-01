@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "async-trait",
  "gluonscan-aave",
@@ -1146,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-aave"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-core"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-evm"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "gluonscan-core",
@@ -1182,7 +1182,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-kamino"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-math"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "proptest",
@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-pendle"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1219,7 +1219,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-raydium"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1234,7 +1234,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-solana"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -1248,7 +1248,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-sources"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-testing"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "async-trait",
  "gluonscan-core",
@@ -1271,7 +1271,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-uniswap"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1286,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-wallet"
-version = "0.0.1-beta.4"
+version = "0.0.1-beta.5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
