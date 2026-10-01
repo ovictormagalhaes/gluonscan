@@ -3,11 +3,13 @@ name = "gluonscan-pendle"
 description = "Pendle protocol adapter for gluonscan (market catalog via HTTP + on-chain PT/YT balances)."
 keywords = ["defi", "pendle", "yield", "ethereum", "fixed-yield"]
 categories = ["finance", "cryptography::cryptocurrencies"]
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 
 [lints]

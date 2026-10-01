@@ -1,4 +1,13 @@
-<img src="book/theme/favicon.svg" width="76" align="right" alt="gluonscan mark" />
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ovictormagalhaes/gluonscan/main/assets/logo.png" width="560" alt="gluonscan" />
+</p>
+
+<p align="center">
+  <a href="https://crates.io/crates/gluonscan"><img src="https://img.shields.io/crates/v/gluonscan.svg?logo=rust&color=22D3EE" alt="crates.io" /></a>
+  <a href="https://docs.rs/gluonscan"><img src="https://img.shields.io/docsrs/gluonscan?logo=docsdotrs" alt="docs.rs" /></a>
+  <a href="#license"><img src="https://img.shields.io/crates/l/gluonscan.svg?color=8A929E" alt="license" /></a>
+  <img src="https://img.shields.io/badge/rustc-1.85%2B-8A929E.svg" alt="MSRV 1.85" />
+</p>
 
 # gluonscan
 

@@ -3,11 +3,13 @@ name = "gluonscan-testing"
 description = "Contract-based mock transports for gluonscan: replay recorded request/response contracts (HTTP/GraphQL, on-chain RPC; gRPC-ready) matched by filters."
 keywords = ["defi", "testing", "mock", "contract", "gluonscan"]
 categories = ["development-tools::testing"]
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 
 [lints]

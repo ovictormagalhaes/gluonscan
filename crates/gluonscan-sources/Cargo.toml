@@ -3,11 +3,13 @@ name = "gluonscan-sources"
 description = "Price sources for gluonscan (CoinGecko, CoinMarketCap) implementing the PriceSource port."
 keywords = ["defi", "prices", "coingecko", "coinmarketcap", "crypto"]
 categories = ["finance", "api-bindings"]
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 
 [lints]

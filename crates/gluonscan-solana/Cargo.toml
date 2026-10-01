@@ -3,11 +3,13 @@ name = "gluonscan-solana"
 description = "Solana on-chain helpers for gluonscan: RPC over an injected ChainProvider, base58 pubkeys, program-derived addresses."
 keywords = ["solana", "spl", "rpc", "defi", "blockchain"]
 categories = ["cryptography::cryptocurrencies", "api-bindings"]
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 
 [lints]

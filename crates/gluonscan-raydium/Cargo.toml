@@ -3,11 +3,13 @@ name = "gluonscan-raydium"
 description = "Raydium CLMM protocol adapter for gluonscan (Solana on-chain position reads)."
 keywords = ["defi", "raydium", "liquidity", "solana", "clmm"]
 categories = ["finance", "cryptography::cryptocurrencies"]
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 
 [lints]

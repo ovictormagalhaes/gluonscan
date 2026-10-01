@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.6] - 2026-10-01
+
+### Changed
+
+- Packaging and presentation only; no API or behavior change. Added the black-and-silver brand
+  assets (`assets/logo.{svg,png}`, `assets/icon.{svg,png}`) and a logo + badge header in the README
+  (the logo now loads from an absolute URL so it renders on crates.io, not just GitHub). Every
+  published crate now ships its own README, a `homepage`, and the facade declares `docs.rs` metadata
+  so documentation builds with all features.
+
 ## [0.0.1-beta.5] - 2026-09-30
 
 ### Changed
