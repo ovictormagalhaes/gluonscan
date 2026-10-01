@@ -19,6 +19,9 @@ use gluonscan_core::{
     Amount, Capability, Chain, Complete, Ctx, Detail, Error, NftPosition, Position, Protocol,
     ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet, WalletBalance,
 };
+
+mod alchemy;
+pub use alchemy::AlchemyWallet;
 use gluonscan_evm::eth_get_balance;
 use gluonscan_solana::{
     decode_metadata, get_account_info, get_native_balance, get_token_accounts_by_owner,

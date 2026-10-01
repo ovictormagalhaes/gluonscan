@@ -18,6 +18,7 @@
 
 pub mod error;
 pub mod history;
+pub mod hygiene;
 pub mod model;
 pub mod ports;
 

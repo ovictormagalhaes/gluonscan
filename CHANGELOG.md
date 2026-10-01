@@ -8,6 +8,20 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.8] - 2026-10-01
+
+### Added
+
+- `AlchemyWallet` — EVM idle ERC-20 balances via Alchemy's Data API
+  (`/data/v1/{KEY}/assets/tokens/by-address`, key in path, `pageKey` pagination), `Protocol::Wallet`
+  / `Source::Api`. Unlike the raw `EvmWallet` (Moralis-shaped), it is batteries-included: applies the
+  full wallet hygiene and attaches USD from the bundled prices. Native coins are excluded (read by
+  `EvmNativeBalance`). A non-hex balance from a succeeded response fails closed (`Integrity`); an
+  astronomical (scam) balance beyond `Decimal` range drops that leaf, never the chain.
+- `gluonscan_core::hygiene` — `is_spoofed_token` / `sanitize_display` / `has_disguise_control`:
+  detect and strip the Unicode bidi/zero-width/control characters a spoofed token uses to disguise
+  its name or symbol (e.g. an RLO rendering "CDSU" as "USDC").
+
 ## [0.0.1-beta.7] - 2026-10-01
 
 ### Added
