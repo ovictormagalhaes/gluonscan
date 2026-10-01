@@ -287,7 +287,7 @@ impl Default for BitcoinWallet {
 #[async_trait]
 impl ProtocolAdapter for BitcoinWallet {
     fn protocol(&self) -> Protocol {
-        Protocol::Wallet
+        Protocol::Native
     }
 
     fn source(&self) -> Source {
@@ -349,7 +349,7 @@ impl ProtocolAdapter for BitcoinWallet {
         }
 
         let reading = Reading::new(
-            Protocol::Wallet,
+            Protocol::Native,
             Chain::Bitcoin,
             Source::Api,
             positions,
@@ -576,7 +576,7 @@ impl EvmNativeBalance {
 #[async_trait]
 impl ProtocolAdapter for EvmNativeBalance {
     fn protocol(&self) -> Protocol {
-        Protocol::Wallet
+        Protocol::Native
     }
 
     fn source(&self) -> Source {
@@ -614,7 +614,7 @@ impl ProtocolAdapter for EvmNativeBalance {
         }
 
         let reading = Reading::new(
-            Protocol::Wallet,
+            Protocol::Native,
             chain,
             Source::OnChain,
             positions,
@@ -638,7 +638,7 @@ impl SolanaNativeBalance {
 #[async_trait]
 impl ProtocolAdapter for SolanaNativeBalance {
     fn protocol(&self) -> Protocol {
-        Protocol::Wallet
+        Protocol::Native
     }
 
     fn source(&self) -> Source {
@@ -678,7 +678,7 @@ impl ProtocolAdapter for SolanaNativeBalance {
         }
 
         let reading = Reading::new(
-            Protocol::Wallet,
+            Protocol::Native,
             Chain::Solana,
             Source::OnChain,
             positions,

@@ -121,6 +121,10 @@ pub enum Protocol {
     Kamino,
     /// Idle wallet token balances (not a protocol; a capability).
     Wallet,
+    /// The chain's native coin balance (ETH, BNB, SOL, BTC, ...). Separate from [`Protocol::Wallet`]
+    /// so a single engine can route a native-balance read and a token-balance read independently on
+    /// the same chain (both would otherwise share one protocol and the engine would pick the first).
+    Native,
     /// Wallet NFTs.
     Nfts,
 }

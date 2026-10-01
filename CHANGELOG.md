@@ -8,6 +8,21 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.7] - 2026-10-01
+
+### Added
+
+- `Protocol::Native` — the chain's native coin balance (ETH, BNB, SOL, BTC, ...) is now its own
+  protocol, distinct from `Protocol::Wallet` (idle token balances). This lets one engine route a
+  native-balance read and a token-balance read independently on the same chain; previously both
+  bound to `Protocol::Wallet` and the engine would pick whichever backend was registered first.
+
+### Changed
+
+- `EvmNativeBalance`, `SolanaNativeBalance` and `BitcoinWallet` now report `Protocol::Native`
+  instead of `Protocol::Wallet`. `Protocol` is `#[non_exhaustive]`, so this is additive for
+  downstream matches.
+
 ## [0.0.1-beta.6] - 2026-10-01
 
 ### Changed

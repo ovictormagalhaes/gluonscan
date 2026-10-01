@@ -28,7 +28,7 @@ async fn reads_native_btc_balance() {
         .expect("read")
         .into_inner();
 
-    assert_eq!(reading.protocol, Protocol::Wallet);
+    assert_eq!(reading.protocol, Protocol::Native);
     assert_eq!(reading.positions.len(), 1);
     let Position::Wallet(btc) = &reading.positions[0] else {
         panic!("expected a wallet balance");
