@@ -1132,6 +1132,7 @@ dependencies = [
  "gluonscan-aave",
  "gluonscan-core",
  "gluonscan-kamino",
+ "gluonscan-math",
  "gluonscan-pendle",
  "gluonscan-raydium",
  "gluonscan-sources",
@@ -1202,6 +1203,8 @@ version = "0.0.1-beta.11"
 dependencies = [
  "alloy-primitives",
  "proptest",
+ "rust_decimal",
+ "rust_decimal_macros",
 ]
 
 [[package]]
@@ -2413,6 +2416,16 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "rust_decimal_macros"
+version = "1.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74a5a6f027e892c7a035c6fddb50435a1fbf5a734ffc0c2a9fed4d0221440519"
+dependencies = [
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

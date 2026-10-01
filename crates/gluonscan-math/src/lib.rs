@@ -1,9 +1,13 @@
 //! # gluonscan-math
 //!
-//! Exact-integer DeFi math. No floats — deriving a price from a tick in floating point is a bug.
+//! Exact DeFi math. No floats — deriving a price from a tick in floating point is a bug, and money
+//! math runs in [`rust_decimal::Decimal`].
 //!
-//! Currently: Uniswap V3 Q64.96 tick math ([`get_sqrt_ratio_at_tick`]), a direct port of the
-//! canonical `TickMath.getSqrtRatioAtTick`, checked against reference vectors (see tests).
+//! - Uniswap V3 Q64.96 tick math ([`get_sqrt_ratio_at_tick`]), a direct port of the canonical
+//!   `TickMath.getSqrtRatioAtTick`, checked against reference vectors (see tests).
+//! - Lending health-factor + liquidation-price math ([`lending`]).
+
+pub mod lending;
 
 use alloy_primitives::{U256, U512};
 

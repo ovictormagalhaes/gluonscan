@@ -22,6 +22,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 pub use gluonscan_core::*;
 
+/// Pure DeFi math (tick math, lending health-factor + liquidation-price). Re-exported so consumers
+/// reach it through the one facade, without a second version pin.
+pub use gluonscan_math as math;
+
 // Protocol adapters are re-exported only when their feature is enabled, so a consumer that opts out
 // of an ecosystem never compiles its dependency stack.
 #[cfg(feature = "aave")]

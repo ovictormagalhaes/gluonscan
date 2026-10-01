@@ -17,6 +17,8 @@ workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true }
+rust_decimal = { workspace = true }
 
 [dev-dependencies]
 proptest = "1"
+rust_decimal_macros = "1"
