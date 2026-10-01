@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use base64::Engine;
-use gluonscan_core::{Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, Wallet};
+use gluonscan_core::{
+    Chain, Ctx, Detail, Error, EventKind, Position, Protocol, ProtocolAdapter, Wallet,
+};
 use gluonscan_kamino::KaminoApi;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
 use rust_decimal::Decimal;
@@ -200,5 +202,64 @@ async fn rejects_non_solana_chain() {
         )
         .await
         .expect_err("Kamino is Solana-only");
+    assert!(!err.is_retryable());
+}
+
+// Two consecutive obligation snapshots; events are the per-mint deltas between them.
+const HISTORY: &str = r#"{"history":[
+  {"timestamp":"2026-01-01T00:00:00Z","deposits":[{"mintAddress":"MINT_SOL","amount":"5000000000"}],"borrows":[]},
+  {"timestamp":"2026-01-02T00:00:00Z","deposits":[{"mintAddress":"MINT_SOL","amount":"7000000000"}],"borrows":[{"mintAddress":"MINT_USDC","amount":"100000000"}]}
+]}"#;
+
+#[tokio::test]
+async fn reads_obligation_history_as_snapshot_deltas() {
+    let http = MockHttp::new()
+        .on(Match::primary_contains("/reserves/metrics"), RESERVES)
+        .on(Match::primary_contains("/metrics/history"), HISTORY);
+    let rpc = MockChainProvider::new()
+        .on(Match::body_contains("MINT_SOL"), mint_account(9))
+        .on(Match::body_contains("MINT_USDC"), mint_account(6));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let history = KaminoApi::new()
+        .read_history(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Some(&format!("obl1|{MAIN_MARKET}")),
+            None,
+            &cx,
+        )
+        .await
+        .expect("read_history")
+        .into_inner();
+
+    assert_eq!(history.protocol, Protocol::Kamino);
+    assert_eq!(history.events.len(), 2, "one SOL deposit delta + one USDC borrow delta");
+
+    let sol = history
+        .events
+        .iter()
+        .find(|e| e.amount.token.symbol == "SOL")
+        .expect("SOL event");
+    assert!(matches!(sol.kind, EventKind::Deposit));
+    assert_eq!(sol.amount.amount, Decimal::from_str_exact("2").unwrap()); // 7 - 5 SOL
+
+    let usdc = history
+        .events
+        .iter()
+        .find(|e| e.amount.token.symbol == "USDC")
+        .expect("USDC event");
+    assert!(matches!(usdc.kind, EventKind::Borrow));
+    assert_eq!(usdc.amount.amount, Decimal::from_str_exact("100").unwrap());
+}
+
+#[tokio::test]
+async fn history_requires_a_position_selector() {
+    let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)))
+        .with_rpc(Arc::new(MockChainProvider::new()));
+    let err = KaminoApi::new()
+        .read_history(&Wallet::Solana(WALLET.to_string()), Chain::Solana, None, None, &cx)
+        .await
+        .expect_err("Kamino history needs obligation|market");
     assert!(!err.is_retryable());
 }

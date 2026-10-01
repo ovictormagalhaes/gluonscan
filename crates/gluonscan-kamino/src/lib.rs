@@ -14,8 +14,9 @@ use alloy_primitives::U256;
 use async_trait::async_trait;
 use gluonscan_core::{
     Amount, BorrowedAsset, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail,
-    Error, LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading,
-    Source, Staleness, SuppliedAsset, Token, Wallet,
+    Error, EventKind, History, HistoryEvent, LendingPosition, Money, Position, Protocol,
+    ProtocolAdapter, Provenance, Reading, Source, Staleness, SuppliedAsset, Timestamp, Token,
+    Wallet,
 };
 use gluonscan_solana::get_mint_decimals;
 use rust_decimal::Decimal;
@@ -25,6 +26,7 @@ const CAPABILITIES: &[Capability] = &[
     Capability::Positions,
     Capability::HealthFactor,
     Capability::RiskConfig,
+    Capability::History,
 ];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Solana];
 
@@ -138,6 +140,180 @@ impl ProtocolAdapter for KaminoApi {
             Provenance::new(Source::Api, Chain::Solana, cx.clock.now(), Staleness::Live),
         );
         Ok(Complete::new(reading))
+    }
+
+    async fn read_history(
+        &self,
+        _owner: &Wallet,
+        chain: Chain,
+        position: Option<&str>,
+        since: Option<Timestamp>,
+        cx: &Ctx,
+    ) -> Result<Complete<History>, Error> {
+        if chain != Chain::Solana {
+            return Err(Error::Permanent {
+                message: format!("Kamino is Solana-only; got {chain:?}"),
+            });
+        }
+        // A Kamino position is identified by its obligation + market, not the wallet.
+        let selector = position.ok_or_else(|| Error::Permanent {
+            message: "Kamino history needs a position selector \"obligation|market\"".into(),
+        })?;
+        let (obligation, market) = selector.split_once('|').ok_or_else(|| Error::Permanent {
+            message: format!(
+                "Kamino position selector must be \"obligation|market\", got {selector:?}"
+            ),
+        })?;
+        let rpc = cx.rpc()?.as_ref();
+        let since_ts = since.map(|t| t.0).unwrap_or(0);
+
+        // mint -> symbol from the market's reserves (decimals are read on-chain per mint).
+        let res_url = format!("{}/kamino-market/{market}/reserves/metrics", self.base());
+        let res_raw = cx.http.get(&res_url, &[]).await?;
+        let reserves: serde_json::Value =
+            serde_json::from_str(&res_raw).map_err(|e| Error::Integrity {
+                message: format!("Kamino reserves not JSON: {e}"),
+            })?;
+        let mut mint_symbol: HashMap<String, String> = HashMap::new();
+        for meta in build_reserve_map(&reserves)?.values() {
+            if !meta.mint.is_empty() {
+                mint_symbol.insert(meta.mint.clone(), meta.symbol.clone());
+            }
+        }
+
+        // Obligation history snapshots (cumulative per-mint balances); events are the deltas between
+        // consecutive snapshots.
+        let hist_url = format!(
+            "{}/v2/kamino-market/{market}/obligations/{obligation}/metrics/history",
+            self.base()
+        );
+        let hist_raw = cx.http.get(&hist_url, &[]).await?;
+        let hist: serde_json::Value =
+            serde_json::from_str(&hist_raw).map_err(|e| Error::Integrity {
+                message: format!("Kamino history not JSON: {e}"),
+            })?;
+        let mut snaps: Vec<&serde_json::Value> = hist
+            .pointer("/history")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().collect())
+            .unwrap_or_default();
+        snaps.sort_by_key(|s| snapshot_ts(s));
+
+        let mut decimals_cache: HashMap<String, u8> = HashMap::new();
+        let mut events: Vec<HistoryEvent> = Vec::new();
+        for window in snaps.windows(2) {
+            let (prev, curr) = (window[0], window[1]);
+            let ts = snapshot_ts(curr);
+            diff_side(
+                prev, curr, "deposits", EventKind::Deposit, EventKind::Withdraw, obligation, ts,
+                &mint_symbol, rpc, &mut decimals_cache, &mut events,
+            )
+            .await?;
+            diff_side(
+                prev, curr, "borrows", EventKind::Borrow, EventKind::Repay, obligation, ts,
+                &mint_symbol, rpc, &mut decimals_cache, &mut events,
+            )
+            .await?;
+        }
+        events.retain(|e| e.at.0 > since_ts);
+        events.sort_by_key(|e| e.at.0);
+
+        let history = History::new(
+            Protocol::Kamino,
+            Chain::Solana,
+            events,
+            Provenance::new(Source::Api, Chain::Solana, cx.clock.now(), Staleness::Live),
+        );
+        Ok(Complete::new(history))
+    }
+}
+
+/// Epoch seconds from a snapshot's RFC3339 `timestamp` (0 if missing/unparseable).
+fn snapshot_ts(snap: &serde_json::Value) -> i64 {
+    snap.get("timestamp")
+        .and_then(|v| v.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0)
+}
+
+/// Sum raw base-unit amounts per mint from a snapshot side (`"deposits"` | `"borrows"`).
+fn side_amounts(snap: &serde_json::Value, side: &str) -> HashMap<String, i128> {
+    let mut out: HashMap<String, i128> = HashMap::new();
+    for e in snap.get(side).and_then(|v| v.as_array()).into_iter().flatten() {
+        let Some(mint) = e.get("mintAddress").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let raw = e
+            .get("amount")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<i128>().ok())
+            .unwrap_or(0);
+        *out.entry(mint.to_string()).or_insert(0) += raw;
+    }
+    out
+}
+
+/// Diff one snapshot side between two consecutive snapshots, pushing an event per mint whose balance
+/// changed: a positive delta is `inc_kind` (deposit/borrow), a negative delta is `dec_kind`
+/// (withdraw/repay). Sub-dust deltas are skipped.
+#[allow(clippy::too_many_arguments)]
+async fn diff_side(
+    prev: &serde_json::Value,
+    curr: &serde_json::Value,
+    side: &str,
+    inc_kind: EventKind,
+    dec_kind: EventKind,
+    obligation: &str,
+    ts: i64,
+    mint_symbol: &HashMap<String, String>,
+    rpc: &dyn ChainProvider,
+    decimals_cache: &mut HashMap<String, u8>,
+    events: &mut Vec<HistoryEvent>,
+) -> Result<(), Error> {
+    let prev_m = side_amounts(prev, side);
+    let curr_m = side_amounts(curr, side);
+    let mut mints: Vec<&String> = prev_m.keys().chain(curr_m.keys()).collect();
+    mints.sort();
+    mints.dedup();
+    for mint in mints {
+        let delta =
+            curr_m.get(mint).copied().unwrap_or(0) - prev_m.get(mint).copied().unwrap_or(0);
+        if delta == 0 {
+            continue;
+        }
+        let kind = if delta > 0 { inc_kind } else { dec_kind };
+        let decimals = match decimals_cache.get(mint) {
+            Some(d) => *d,
+            None => {
+                let d = get_mint_decimals(rpc, mint).await?;
+                decimals_cache.insert(mint.clone(), d);
+                d
+            }
+        };
+        let symbol = mint_symbol.get(mint).cloned().unwrap_or_default();
+        let amount = Amount::from_raw(
+            Token::solana(symbol, Some(mint.clone()), decimals),
+            U256::from(delta.unsigned_abs()),
+        )?;
+        // Sub-dust snapshot deltas are rounding noise, not real deposits/withdrawals.
+        if amount.amount < Decimal::new(1, 6) {
+            continue;
+        }
+        // No on-chain tx for a snapshot delta: a stable synthetic id keyed by the diff coordinates.
+        let tx = format!("kamino:{obligation}:{ts}:{}:{mint}", kind_tag(kind));
+        events.push(HistoryEvent::new(kind, amount, tx, Timestamp(ts)));
+    }
+    Ok(())
+}
+
+fn kind_tag(kind: EventKind) -> &'static str {
+    match kind {
+        EventKind::Deposit => "deposit",
+        EventKind::Withdraw => "withdraw",
+        EventKind::Borrow => "borrow",
+        EventKind::Repay => "repay",
+        _ => "event",
     }
 }
 
