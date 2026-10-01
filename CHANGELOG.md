@@ -8,6 +8,15 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.10] - 2026-10-01
+
+### Changed
+
+- `CoinGecko` price source now always sends a `User-Agent` (CoinGecko's edge 403s agent-less
+  requests and the `Http` port does not mandate one) and accepts an optional demo API key via
+  `with_api_key` (sent as `x-cg-demo-api-key`) and `with_user_agent`. Added Monad and Hyperliquid to
+  the platform / native-coin-id maps.
+
 ## [0.0.1-beta.9] - 2026-10-01
 
 ### Added

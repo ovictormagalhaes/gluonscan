@@ -13,12 +13,22 @@ use gluonscan_core::{Asset, Chain, Error, Http, PriceSource};
 use rust_decimal::Decimal;
 
 const COINGECKO_API: &str = "https://api.coingecko.com";
+/// CoinGecko's CloudFront edge 403s requests without a `User-Agent`, and the `Http` port does not
+/// mandate one, so this source always sends its own.
+const DEFAULT_USER_AGENT: &str = concat!(
+    "gluonscan-sources/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/ovictormagalhaes/gluonscan)"
+);
 
 /// CoinGecko price source: prices a native coin (by coin id), an EVM token (by contract address),
-/// or a Solana SPL mint (by mint address) on a chain.
+/// or a Solana SPL mint (by mint address) on a chain. Always sends a `User-Agent`; an optional
+/// demo API key is sent as `x-cg-demo-api-key`.
 pub struct CoinGecko {
     http: Arc<dyn Http>,
     base: String,
+    user_agent: String,
+    api_key: Option<String>,
 }
 
 impl CoinGecko {
@@ -27,6 +37,8 @@ impl CoinGecko {
         CoinGecko {
             http,
             base: COINGECKO_API.to_string(),
+            user_agent: DEFAULT_USER_AGENT.to_string(),
+            api_key: None,
         }
     }
 
@@ -34,6 +46,26 @@ impl CoinGecko {
     pub fn with_base(mut self, url: impl Into<String>) -> Self {
         self.base = url.into();
         self
+    }
+
+    /// Override the `User-Agent` sent on every request.
+    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        self.user_agent = user_agent.into();
+        self
+    }
+
+    /// Send a demo API key (`x-cg-demo-api-key`) on every request.
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    fn headers(&self) -> Vec<(&str, &str)> {
+        let mut headers = vec![("User-Agent", self.user_agent.as_str())];
+        if let Some(key) = &self.api_key {
+            headers.push(("x-cg-demo-api-key", key.as_str()));
+        }
+        headers
     }
 
     /// The CoinGecko asset-platform id for a chain (for token-by-contract pricing).
@@ -45,6 +77,8 @@ impl CoinGecko {
             Chain::Arbitrum => "arbitrum-one",
             Chain::Optimism => "optimistic-ethereum",
             Chain::Bnb => "binance-smart-chain",
+            Chain::Monad => "monad",
+            Chain::Hyperliquid => "hyperevm",
             Chain::Solana => "solana",
             _ => return None,
         })
@@ -57,6 +91,8 @@ impl CoinGecko {
             Chain::Ethereum | Chain::Base | Chain::Arbitrum | Chain::Optimism => "ethereum",
             Chain::Polygon => "matic-network",
             Chain::Bnb => "binancecoin",
+            Chain::Monad => "monad",
+            Chain::Hyperliquid => "hyperliquid",
             Chain::Solana => "solana",
             _ => return None,
         })
@@ -67,7 +103,7 @@ impl CoinGecko {
             "{}/api/v3/simple/token_price/{platform}?contract_addresses={key}&vs_currencies=usd",
             self.base
         );
-        let raw = self.http.get(&url, &[]).await?;
+        let raw = self.http.get(&url, &self.headers()).await?;
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
             message: format!("CoinGecko response not JSON: {e}"),
         })?;
@@ -92,7 +128,7 @@ impl PriceSource for CoinGecko {
                     "{}/api/v3/simple/price?ids={id}&vs_currencies=usd",
                     self.base
                 );
-                let raw = self.http.get(&url, &[]).await?;
+                let raw = self.http.get(&url, &self.headers()).await?;
                 let json: serde_json::Value =
                     serde_json::from_str(&raw).map_err(|e| Error::Integrity {
                         message: format!("CoinGecko response not JSON: {e}"),
