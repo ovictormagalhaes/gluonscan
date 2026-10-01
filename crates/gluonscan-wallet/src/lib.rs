@@ -21,7 +21,7 @@ use gluonscan_core::{
 };
 
 mod alchemy;
-pub use alchemy::AlchemyWallet;
+pub use alchemy::{AlchemySolanaWallet, AlchemyWallet};
 use gluonscan_evm::eth_get_balance;
 use gluonscan_solana::{
     decode_metadata, get_account_info, get_native_balance, get_token_accounts_by_owner,

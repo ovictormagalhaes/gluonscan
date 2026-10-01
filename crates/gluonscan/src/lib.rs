@@ -38,8 +38,8 @@ pub use gluonscan_sources::{CoinGecko, CoinMarketCap};
 pub use gluonscan_uniswap::UniswapV3;
 #[cfg(feature = "wallet")]
 pub use gluonscan_wallet::{
-    AlchemyWallet, BitcoinWallet, EvmNativeBalance, EvmNfts, EvmWallet, SolanaNativeBalance,
-    SolanaNfts, SolanaWallet,
+    AlchemySolanaWallet, AlchemyWallet, BitcoinWallet, EvmNativeBalance, EvmNfts, EvmWallet,
+    SolanaNativeBalance, SolanaNfts, SolanaWallet,
 };
 
 /// The default `User-Agent` sent on every request. Some provider edges (CoinGecko's CloudFront,

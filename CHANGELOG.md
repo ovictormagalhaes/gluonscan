@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.0.1-beta.9] - 2026-10-01
+
+### Added
+
+- `AlchemySolanaWallet` — SPL balances (including native SOL, which stays in the token list) via
+  Alchemy's Data API, same hygiene and USD attachment as `AlchemyWallet`, plus a per-mint secondary
+  price lookup (`/prices/v1/{KEY}/tokens/by-address`) for mints the token endpoint did not price.
+  Any price-lookup error fails closed. Native SOL decimals default to 9; a missing SPL decimals from
+  a succeeded response fails closed (`Integrity`).
+
 ## [0.0.1-beta.8] - 2026-10-01
 
 ### Added
