@@ -11,9 +11,9 @@ use std::str::FromStr;
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, LiquidityPosition, Position,
-    PositionStatus, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token,
-    Wallet,
+    scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, EventKind, History,
+    HistoryEvent, LiquidityPosition, Position, PositionStatus, Protocol, ProtocolAdapter,
+    Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet,
 };
 use gluonscan_evm::{decode_two_u256, encode_collect, eth_call};
 use gluonscan_math::{
@@ -21,7 +21,8 @@ use gluonscan_math::{
 };
 use rust_decimal::Decimal;
 
-const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees];
+const CAPABILITIES: &[Capability] =
+    &[Capability::Positions, Capability::Fees, Capability::History];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum, Chain::Base, Chain::Arbitrum];
 
 /// Uniswap V3 adapter (subgraph discovery + on-chain fees). One instance serves every chain it has
@@ -132,6 +133,133 @@ impl ProtocolAdapter for UniswapV3 {
             Provenance::new(Source::Subgraph, chain, cx.clock.now(), Staleness::Live),
         );
         Ok(Complete::new(reading))
+    }
+
+    /// Deposit/withdraw/collect history for one position. The V3 subgraph does not expose mints/burns
+    /// under `Position`, so history is reconstructed from `positionSnapshots` (taken at every
+    /// mint/burn/collect): deltas between consecutive snapshots become events. Each two-token delta is
+    /// emitted as paired single-token events sharing the same tx and timestamp; the consumer re-pairs
+    /// by token address. `position` is the NFT token id (required).
+    async fn read_history(
+        &self,
+        _owner: &Wallet,
+        chain: Chain,
+        position: Option<&str>,
+        since: Option<Timestamp>,
+        cx: &Ctx,
+    ) -> Result<Complete<History>, Error> {
+        let url = self.subgraph_url(chain)?;
+        let position_id = position.ok_or_else(|| Error::Permanent {
+            message: "Uniswap V3 history needs a position selector (the NFT token id)".into(),
+        })?;
+        let since_ts = since.map(|t| t.0).unwrap_or(0);
+        // Include the snapshot just before `since` so the first delta is computed correctly; on first
+        // sync (since == 0) the creation snapshot is the baseline.
+        let baseline_ts = if since_ts > 0 { since_ts - 1 } else { 0 };
+
+        let body = history_query_body(position_id, baseline_ts);
+        let raw = cx.http.post(url, body, &[]).await?;
+        let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+            message: format!("Uniswap snapshots response not JSON: {e}"),
+        })?;
+        let snaps = json
+            .pointer("/data/positionSnapshots")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| Error::Integrity {
+                message: "Uniswap response missing data.positionSnapshots".into(),
+            })?;
+
+        let mut events: Vec<HistoryEvent> = Vec::new();
+        if let Some(first) = snaps.first() {
+            let (token0, token1) = snapshot_tokens(first)?;
+
+            let mut prev = SnapshotTotals::default();
+            let mut is_first = true;
+            for snap in snaps {
+                // A snapshot with malformed numeric fields is skipped rather than diffed into
+                // synthetic zeroes (never fabricate history amounts).
+                let Some(curr) = SnapshotTotals::parse(snap) else {
+                    continue;
+                };
+                let tx = snapshot_tx(snap);
+
+                if is_first {
+                    // The baseline snapshot carries no event, except a first-ever sync whose creation
+                    // snapshot already holds a deposit.
+                    if since_ts == 0 && (curr.dep0 > Decimal::ZERO || curr.dep1 > Decimal::ZERO) {
+                        push_pair(
+                            &mut events,
+                            EventKind::Deposit,
+                            &token0,
+                            &token1,
+                            curr.dep0,
+                            curr.dep1,
+                            &tx,
+                            curr.ts,
+                        )?;
+                    }
+                    prev = curr;
+                    is_first = false;
+                    continue;
+                }
+
+                let d_dep0 = curr.dep0 - prev.dep0;
+                let d_dep1 = curr.dep1 - prev.dep1;
+                let d_wd0 = curr.wd0 - prev.wd0;
+                let d_wd1 = curr.wd1 - prev.wd1;
+                let d_col0 = curr.col0 - prev.col0;
+                let d_col1 = curr.col1 - prev.col1;
+
+                if d_dep0 > Decimal::ZERO || d_dep1 > Decimal::ZERO {
+                    push_pair(
+                        &mut events,
+                        EventKind::Deposit,
+                        &token0,
+                        &token1,
+                        d_dep0,
+                        d_dep1,
+                        &tx,
+                        curr.ts,
+                    )?;
+                }
+                if d_wd0 > Decimal::ZERO || d_wd1 > Decimal::ZERO {
+                    push_pair(
+                        &mut events,
+                        EventKind::Withdraw,
+                        &token0,
+                        &token1,
+                        d_wd0,
+                        d_wd1,
+                        &tx,
+                        curr.ts,
+                    )?;
+                }
+                if (d_col0 > Decimal::ZERO || d_col1 > Decimal::ZERO) && d_col0 != d_col1 {
+                    // Equal non-zero deltas are the known V3 subgraph bug (token1 denominated as
+                    // token0); a genuine collect never reports identical amounts, so it is dropped.
+                    push_pair(
+                        &mut events,
+                        EventKind::CollectFees,
+                        &token0,
+                        &token1,
+                        d_col0.max(Decimal::ZERO),
+                        d_col1.max(Decimal::ZERO),
+                        &tx,
+                        curr.ts,
+                    )?;
+                }
+
+                prev = curr;
+            }
+        }
+
+        let history = History::new(
+            Protocol::UniswapV3,
+            chain,
+            events,
+            Provenance::new(Source::Subgraph, chain, cx.clock.now(), Staleness::Live),
+        );
+        Ok(Complete::new(history))
     }
 }
 
@@ -346,4 +474,95 @@ fn human_amount(token: Token, item: &serde_json::Value, pointer: &str) -> Result
         message: format!("Uniswap `{pointer}` not a decimal: {e}"),
     })?;
     Amount::from_decimal(token, amount)
+}
+
+/// GraphQL body for one position's snapshot stream at/after `baseline_ts`, with the pool token
+/// identities needed to label each delta.
+fn history_query_body(position_id: &str, baseline_ts: i64) -> String {
+    let query = r#"query($pos:String!,$ts:BigInt!){positionSnapshots(where:{position:$pos,timestamp_gte:$ts},orderBy:timestamp,orderDirection:asc,first:1000){timestamp depositedToken0 depositedToken1 withdrawnToken0 withdrawnToken1 collectedFeesToken0 collectedFeesToken1 transaction{id} pool{token0{id symbol name decimals} token1{id symbol name decimals}}}}"#;
+    serde_json::json!({ "query": query, "variables": { "pos": position_id, "ts": baseline_ts } })
+        .to_string()
+}
+
+/// The `(token0, token1)` identities from a snapshot's pool.
+fn snapshot_tokens(snap: &serde_json::Value) -> Result<(Token, Token), Error> {
+    let token0 = parse_token(snap.pointer("/pool/token0"))?;
+    let token1 = parse_token(snap.pointer("/pool/token1"))?;
+    Ok((token0, token1))
+}
+
+/// A snapshot's transaction hash (empty when absent — history is still usable for delta math).
+fn snapshot_tx(snap: &serde_json::Value) -> String {
+    snap.pointer("/transaction/id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// The six cumulative lifetime totals a position snapshot carries, plus its timestamp.
+#[derive(Default, Clone, Copy)]
+struct SnapshotTotals {
+    dep0: Decimal,
+    dep1: Decimal,
+    wd0: Decimal,
+    wd1: Decimal,
+    col0: Decimal,
+    col1: Decimal,
+    ts: i64,
+}
+
+impl SnapshotTotals {
+    /// Parse the cumulative BigDecimal fields + timestamp. `None` if any is malformed, so the caller
+    /// skips the snapshot rather than diffing it into synthetic zeroes.
+    fn parse(snap: &serde_json::Value) -> Option<SnapshotTotals> {
+        let dec = |k: &str| {
+            snap.get(k)
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<Decimal>().ok())
+        };
+        Some(SnapshotTotals {
+            dep0: dec("depositedToken0")?,
+            dep1: dec("depositedToken1")?,
+            wd0: dec("withdrawnToken0")?,
+            wd1: dec("withdrawnToken1")?,
+            col0: dec("collectedFeesToken0")?,
+            col1: dec("collectedFeesToken1")?,
+            ts: snap
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<i64>().ok())?,
+        })
+    }
+}
+
+/// Emit a two-token delta as paired single-token events: one per non-zero side, sharing `kind`, `tx`
+/// and `ts`. The consumer re-pairs by token address.
+#[allow(clippy::too_many_arguments)]
+fn push_pair(
+    events: &mut Vec<HistoryEvent>,
+    kind: EventKind,
+    token0: &Token,
+    token1: &Token,
+    a0: Decimal,
+    a1: Decimal,
+    tx: &str,
+    ts: i64,
+) -> Result<(), Error> {
+    if a0 > Decimal::ZERO {
+        events.push(HistoryEvent::new(
+            kind,
+            Amount::from_decimal(token0.clone(), a0)?,
+            tx,
+            Timestamp(ts),
+        ));
+    }
+    if a1 > Decimal::ZERO {
+        events.push(HistoryEvent::new(
+            kind,
+            Amount::from_decimal(token1.clone(), a1)?,
+            tx,
+            Timestamp(ts),
+        ));
+    }
+    Ok(())
 }

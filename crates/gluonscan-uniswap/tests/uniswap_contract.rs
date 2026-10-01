@@ -156,3 +156,95 @@ async fn with_subgraphs_routes_per_chain() {
         assert_eq!(reading.chain, chain);
     }
 }
+
+mod history {
+    use super::*;
+    use gluonscan_core::{EventKind, Timestamp};
+
+    // Three consecutive snapshots of one WETH/USDC position. Deltas: a creation deposit (snap1),
+    // a withdraw (snap2), and a distinct-amount fee collect (snap3).
+    const SNAPSHOTS: &str = r#"{"data":{"positionSnapshots":[
+      {"timestamp":"1000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"0.0","withdrawnToken1":"0.0","collectedFeesToken0":"0.0","collectedFeesToken1":"0.0","transaction":{"id":"0xaaa"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}},
+      {"timestamp":"2000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"1.0","withdrawnToken1":"2500.0","collectedFeesToken0":"0.0","collectedFeesToken1":"0.0","transaction":{"id":"0xbbb"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}},
+      {"timestamp":"3000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"1.0","withdrawnToken1":"2500.0","collectedFeesToken0":"0.1","collectedFeesToken1":"300.0","transaction":{"id":"0xccc"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}}
+    ]}}"#;
+
+    fn ctx(body: &'static str) -> Ctx {
+        let http = MockHttp::new().on(Match::body_contains("positionSnapshots"), body);
+        Ctx::new(Arc::new(http), Arc::new(MockClock(0)))
+    }
+
+    async fn history(cx: &Ctx) -> gluonscan_core::History {
+        UniswapV3::new()
+            .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
+            .read_history(
+                &Wallet::Evm(Address::ZERO),
+                Chain::Ethereum,
+                Some("12345"),
+                None,
+                cx,
+            )
+            .await
+            .expect("read_history")
+            .into_inner()
+    }
+
+    #[tokio::test]
+    async fn snapshot_deltas_become_paired_events() {
+        let h = history(&ctx(SNAPSHOTS)).await;
+        assert_eq!(h.protocol, Protocol::UniswapV3);
+        // creation deposit (2) + withdraw (2) + collect (2) = 6 paired single-token events.
+        assert_eq!(h.events.len(), 6);
+
+        let find = |kind: EventKind, sym: &str| {
+            h.events
+                .iter()
+                .find(|e| e.kind == kind && e.amount.token.symbol == sym)
+                .unwrap_or_else(|| panic!("missing {kind:?} {sym}"))
+                .clone()
+        };
+
+        assert_eq!(
+            find(EventKind::Deposit, "WETH").amount.amount,
+            Decimal::from_str_exact("2").unwrap()
+        );
+        assert_eq!(
+            find(EventKind::Withdraw, "USDC").amount.amount,
+            Decimal::from_str_exact("2500").unwrap()
+        );
+        let collect_weth = find(EventKind::CollectFees, "WETH");
+        assert_eq!(
+            collect_weth.amount.amount,
+            Decimal::from_str_exact("0.1").unwrap()
+        );
+        assert_eq!(collect_weth.tx, "0xccc");
+        assert_eq!(collect_weth.at, Timestamp(3000));
+    }
+
+    #[tokio::test]
+    async fn equal_collect_deltas_are_dropped_as_subgraph_corruption() {
+        // snap3 reports identical collectedFees on both sides (the known V3 indexing bug) → no
+        // collect events; only the creation deposit + withdraw survive.
+        const CORRUPT: &str = r#"{"data":{"positionSnapshots":[
+          {"timestamp":"1000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"0.0","withdrawnToken1":"0.0","collectedFeesToken0":"0.0","collectedFeesToken1":"0.0","transaction":{"id":"0xaaa"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}},
+          {"timestamp":"2000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"1.0","withdrawnToken1":"2500.0","collectedFeesToken0":"0.0","collectedFeesToken1":"0.0","transaction":{"id":"0xbbb"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}},
+          {"timestamp":"3000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"1.0","withdrawnToken1":"2500.0","collectedFeesToken0":"949.0","collectedFeesToken1":"949.0","transaction":{"id":"0xccc"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}}
+        ]}}"#;
+        let h = history(&ctx(CORRUPT)).await;
+        assert!(
+            h.events.iter().all(|e| e.kind != EventKind::CollectFees),
+            "equal-delta collect must be dropped"
+        );
+        assert_eq!(h.events.len(), 4); // deposit pair + withdraw pair
+    }
+
+    #[tokio::test]
+    async fn history_requires_a_position_selector() {
+        let err = UniswapV3::new()
+            .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
+            .read_history(&Wallet::Evm(Address::ZERO), Chain::Ethereum, None, None, &ctx(SNAPSHOTS))
+            .await
+            .expect_err("history needs a position id");
+        assert!(!err.is_retryable());
+    }
+}
