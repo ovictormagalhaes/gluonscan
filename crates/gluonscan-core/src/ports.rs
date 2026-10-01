@@ -135,10 +135,11 @@ pub trait ProtocolAdapter: Send + Sync + 'static {
         &self,
         owner: &Wallet,
         chain: Chain,
+        position: Option<&str>,
         since: Option<Timestamp>,
         cx: &Ctx,
     ) -> Result<Complete<History>, Error> {
-        let _ = (owner, chain, since, cx);
+        let _ = (owner, chain, position, since, cx);
         Err(Error::Unsupported {
             protocol: self.protocol(),
             capability: Capability::History,

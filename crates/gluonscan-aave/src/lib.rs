@@ -163,6 +163,7 @@ impl ProtocolAdapter for AaveApi {
         &self,
         owner: &Wallet,
         chain: Chain,
+        _position: Option<&str>,
         since: Option<Timestamp>,
         cx: &Ctx,
     ) -> Result<Complete<History>, Error> {

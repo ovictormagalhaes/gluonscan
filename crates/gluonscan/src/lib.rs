@@ -316,6 +316,7 @@ impl Gluonscan {
         protocol: Protocol,
         owner: Wallet,
         chain: Chain,
+        position: Option<&str>,
         since: Option<Timestamp>,
     ) -> Result<Complete<History>, Error> {
         let adapter = self
@@ -325,7 +326,9 @@ impl Gluonscan {
             .ok_or_else(|| Error::Permanent {
                 message: format!("no registered {protocol:?} backend supports {chain:?}"),
             })?;
-        adapter.read_history(&owner, chain, since, &self.cx).await
+        adapter
+            .read_history(&owner, chain, position, since, &self.cx)
+            .await
     }
 
     /// Price an [`Asset`] in USD via the configured price source — a **separate** operation from
