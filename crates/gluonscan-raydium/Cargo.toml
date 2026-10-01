@@ -22,6 +22,9 @@ gluonscan-math = { workspace = true }
 async-trait = { workspace = true }
 rust_decimal = { workspace = true }
 alloy-primitives = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+bs58 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
