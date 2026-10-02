@@ -27,4 +27,4 @@ chrono = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 gluonscan-testing = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"

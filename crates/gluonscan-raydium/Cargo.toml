@@ -30,4 +30,4 @@ bs58 = { workspace = true }
 tokio = { workspace = true }
 gluonscan-testing = { workspace = true }
 gluonscan-solana = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"

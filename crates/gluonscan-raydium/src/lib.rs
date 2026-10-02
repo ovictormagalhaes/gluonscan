@@ -620,6 +620,83 @@ fn anchor_discriminator(method: &str) -> [u8; 8] {
     out
 }
 
+/// Inspect a parsed transaction's instructions (top-level + inner) for a Raydium CLMM
+/// liquidity-changing call. `open_position*`/`increase_liquidity*` → Deposit, `decrease_liquidity*` →
+/// Withdraw, and a `decrease_liquidity` whose `liquidity_amount == 0` → Collect (the UI's "Claim
+/// Fees" flushes fees via decrease_liquidity(0)).
+fn detect_clmm_event_kind(tx: &serde_json::Value) -> Option<ClmmEventKind> {
+    let deposit_discs: [[u8; 8]; 6] = [
+        anchor_discriminator("open_position"),
+        anchor_discriminator("open_position_v2"),
+        anchor_discriminator("open_position_with_metadata"),
+        anchor_discriminator("open_position_with_token22_nft"),
+        anchor_discriminator("increase_liquidity"),
+        anchor_discriminator("increase_liquidity_v2"),
+    ];
+    let withdraw_discs: [[u8; 8]; 2] = [
+        anchor_discriminator("decrease_liquidity"),
+        anchor_discriminator("decrease_liquidity_v2"),
+    ];
+
+    let check = |data_b58: &str| -> Option<ClmmEventKind> {
+        let bytes = bs58::decode(data_b58).into_vec().ok()?;
+        if bytes.len() < 8 {
+            return None;
+        }
+        let disc = &bytes[..8];
+        if deposit_discs.iter().any(|d| disc == d) {
+            return Some(ClmmEventKind::Deposit);
+        }
+        if withdraw_discs.iter().any(|d| disc == d) {
+            // decrease_liquidity data after the discriminator: liquidity_amount u128 (16 bytes LE).
+            // A zero liquidity_amount is a fee flush, not a withdraw.
+            if bytes.len() >= 24 {
+                let mut lq = [0u8; 16];
+                lq.copy_from_slice(&bytes[8..24]);
+                if u128::from_le_bytes(lq) == 0 {
+                    return Some(ClmmEventKind::Collect);
+                }
+            }
+            return Some(ClmmEventKind::Withdraw);
+        }
+        None
+    };
+
+    let scan = |arr: &[serde_json::Value]| -> Option<ClmmEventKind> {
+        for ix in arr {
+            if ix.get("programId").and_then(|p| p.as_str()) != Some(CLMM_PROGRAM_ID) {
+                continue;
+            }
+            if let Some(kind) = ix.get("data").and_then(|d| d.as_str()).and_then(check) {
+                return Some(kind);
+            }
+        }
+        None
+    };
+
+    if let Some(arr) = tx
+        .pointer("/transaction/message/instructions")
+        .and_then(|i| i.as_array())
+    {
+        if let Some(kind) = scan(arr) {
+            return Some(kind);
+        }
+    }
+    if let Some(inner) = tx
+        .pointer("/meta/innerInstructions")
+        .and_then(|i| i.as_array())
+    {
+        for entry in inner {
+            if let Some(arr) = entry.get("instructions").and_then(|i| i.as_array()) {
+                if let Some(kind) = scan(arr) {
+                    return Some(kind);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod history_tests {
     use super::*;
@@ -777,81 +854,4 @@ mod history_tests {
             .expect_err("needs nftMint|mintA|mintB");
         assert!(!err.is_retryable());
     }
-}
-
-/// Inspect a parsed transaction's instructions (top-level + inner) for a Raydium CLMM
-/// liquidity-changing call. `open_position*`/`increase_liquidity*` → Deposit, `decrease_liquidity*` →
-/// Withdraw, and a `decrease_liquidity` whose `liquidity_amount == 0` → Collect (the UI's "Claim
-/// Fees" flushes fees via decrease_liquidity(0)).
-fn detect_clmm_event_kind(tx: &serde_json::Value) -> Option<ClmmEventKind> {
-    let deposit_discs: [[u8; 8]; 6] = [
-        anchor_discriminator("open_position"),
-        anchor_discriminator("open_position_v2"),
-        anchor_discriminator("open_position_with_metadata"),
-        anchor_discriminator("open_position_with_token22_nft"),
-        anchor_discriminator("increase_liquidity"),
-        anchor_discriminator("increase_liquidity_v2"),
-    ];
-    let withdraw_discs: [[u8; 8]; 2] = [
-        anchor_discriminator("decrease_liquidity"),
-        anchor_discriminator("decrease_liquidity_v2"),
-    ];
-
-    let check = |data_b58: &str| -> Option<ClmmEventKind> {
-        let bytes = bs58::decode(data_b58).into_vec().ok()?;
-        if bytes.len() < 8 {
-            return None;
-        }
-        let disc = &bytes[..8];
-        if deposit_discs.iter().any(|d| disc == d) {
-            return Some(ClmmEventKind::Deposit);
-        }
-        if withdraw_discs.iter().any(|d| disc == d) {
-            // decrease_liquidity data after the discriminator: liquidity_amount u128 (16 bytes LE).
-            // A zero liquidity_amount is a fee flush, not a withdraw.
-            if bytes.len() >= 24 {
-                let mut lq = [0u8; 16];
-                lq.copy_from_slice(&bytes[8..24]);
-                if u128::from_le_bytes(lq) == 0 {
-                    return Some(ClmmEventKind::Collect);
-                }
-            }
-            return Some(ClmmEventKind::Withdraw);
-        }
-        None
-    };
-
-    let scan = |arr: &[serde_json::Value]| -> Option<ClmmEventKind> {
-        for ix in arr {
-            if ix.get("programId").and_then(|p| p.as_str()) != Some(CLMM_PROGRAM_ID) {
-                continue;
-            }
-            if let Some(kind) = ix.get("data").and_then(|d| d.as_str()).and_then(check) {
-                return Some(kind);
-            }
-        }
-        None
-    };
-
-    if let Some(arr) = tx
-        .pointer("/transaction/message/instructions")
-        .and_then(|i| i.as_array())
-    {
-        if let Some(kind) = scan(arr) {
-            return Some(kind);
-        }
-    }
-    if let Some(inner) = tx
-        .pointer("/meta/innerInstructions")
-        .and_then(|i| i.as_array())
-    {
-        for entry in inner {
-            if let Some(arr) = entry.get("instructions").and_then(|i| i.as_array()) {
-                if let Some(kind) = scan(arr) {
-                    return Some(kind);
-                }
-            }
-        }
-    }
-    None
 }

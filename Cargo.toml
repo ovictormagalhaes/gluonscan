@@ -19,7 +19,7 @@ members = [
 [workspace.package]
 version = "0.0.1-beta.15"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ovictormagalhaes/gluonscan"
 homepage = "https://github.com/ovictormagalhaes/gluonscan"
@@ -39,9 +39,9 @@ async-trait = "0.1"
 rust_decimal = { version = "1", default-features = false, features = ["serde", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-alloy-primitives = "0.8"
+alloy-primitives = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-sha2 = "0.10"
+sha2 = "0.11"
 bs58 = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -123,7 +123,9 @@ async fn token_price_on_a_native_only_chain_errors() {
 #[tokio::test]
 async fn coingecko_prices_usd_batches_contracts_and_native() {
     let a1: Address = WETH.parse().unwrap();
-    let a2: Address = "0x1111111111111111111111111111111111111111".parse().unwrap();
+    let a2: Address = "0x1111111111111111111111111111111111111111"
+        .parse()
+        .unwrap();
     let k1 = format!("{a1:#x}");
     let k2 = format!("{a2:#x}");
     // One batched contract call (two addresses) + one native call.

@@ -54,7 +54,10 @@ const RESPONSE: &str = r#"{
 async fn reads_clean_tokens_and_drops_bad_leaves() {
     // Inject the real right-to-left override (U+202E) via escape; a raw codepoint in source is denied.
     let response = RESPONSE.replace("<RLO>", "\u{202e}");
-    let http = MockHttp::new().on(Match::primary_contains("/assets/tokens/by-address"), response);
+    let http = MockHttp::new().on(
+        Match::primary_contains("/assets/tokens/by-address"),
+        response,
+    );
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
 
     let reading = AlchemyWallet::new("test-key")
@@ -65,7 +68,11 @@ async fn reads_clean_tokens_and_drops_bad_leaves() {
         .into_inner();
 
     assert_eq!(reading.protocol, Protocol::Wallet);
-    assert_eq!(reading.positions.len(), 1, "only the clean USDC leaf survives");
+    assert_eq!(
+        reading.positions.len(),
+        1,
+        "only the clean USDC leaf survives"
+    );
     let Position::Wallet(b) = &reading.positions[0] else {
         panic!("expected a wallet balance");
     };
