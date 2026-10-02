@@ -144,7 +144,7 @@ impl ProtocolAdapter for KaminoApi {
 
     async fn read_history(
         &self,
-        _owner: &Wallet,
+        owner: &Wallet,
         chain: Chain,
         position: Option<&str>,
         since: Option<Timestamp>,
@@ -155,15 +155,20 @@ impl ProtocolAdapter for KaminoApi {
                 message: format!("Kamino is Solana-only; got {chain:?}"),
             });
         }
-        // A Kamino position is identified by its obligation + market, not the wallet.
+        // A Kamino position is identified by its obligation + market. The market may be supplied
+        // (`"obligation|market"`) or resolved from the owner's obligations (`"obligation"` alone).
         let selector = position.ok_or_else(|| Error::Permanent {
-            message: "Kamino history needs a position selector \"obligation|market\"".into(),
+            message: "Kamino history needs a position selector (\"obligation\" or \"obligation|market\")".into(),
         })?;
-        let (obligation, market) = selector.split_once('|').ok_or_else(|| Error::Permanent {
-            message: format!(
-                "Kamino position selector must be \"obligation|market\", got {selector:?}"
-            ),
-        })?;
+        let (obligation, market) = match selector.split_once('|') {
+            Some((o, m)) if !o.is_empty() && !m.is_empty() => (o.to_string(), m.to_string()),
+            _ => {
+                let wallet = owner.solana()?;
+                let market = resolve_market(self.base(), wallet, selector, cx).await?;
+                (selector.to_string(), market)
+            }
+        };
+        let (obligation, market) = (obligation.as_str(), market.as_str());
         let rpc = cx.rpc()?.as_ref();
         let since_ts = since.map(|t| t.0).unwrap_or(0);
 
@@ -226,6 +231,41 @@ impl ProtocolAdapter for KaminoApi {
         );
         Ok(Complete::new(history))
     }
+}
+
+/// Find which Kamino market holds `obligation` for `wallet` by scanning the known markets' obligation
+/// lists. Used when the history selector carries no explicit market. A transport failure propagates
+/// (fail-closed); a not-found obligation is a permanent error.
+async fn resolve_market(
+    base: &str,
+    wallet: &str,
+    obligation: &str,
+    cx: &Ctx,
+) -> Result<String, Error> {
+    for market in MARKETS {
+        let url = format!("{base}/kamino-market/{market}/users/{wallet}/obligations");
+        let raw = cx.http.get(&url, &[]).await?;
+        let obligations: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+                message: format!("Kamino obligations not JSON: {e}"),
+            })?;
+        let items = obligations.as_array().ok_or_else(|| Error::Integrity {
+            message: format!("Kamino market {market} returned a non-array obligations response"),
+        })?;
+        for ob in items {
+            let matches = ob
+                .get("obligationAddress")
+                .and_then(|v| v.as_str())
+                .map(|a| a.eq_ignore_ascii_case(obligation))
+                .unwrap_or(false);
+            if matches {
+                return Ok((*market).to_string());
+            }
+        }
+    }
+    Err(Error::Permanent {
+        message: format!("Kamino obligation {obligation} not found in any market for the owner"),
+    })
 }
 
 /// Epoch seconds from a snapshot's RFC3339 `timestamp` (0 if missing/unparseable).

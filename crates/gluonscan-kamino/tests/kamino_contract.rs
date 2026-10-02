@@ -260,6 +260,38 @@ async fn history_requires_a_position_selector() {
     let err = KaminoApi::new()
         .read_history(&Wallet::Solana(WALLET.to_string()), Chain::Solana, None, None, &cx)
         .await
-        .expect_err("Kamino history needs obligation|market");
+        .expect_err("Kamino history needs a selector");
     assert!(!err.is_retryable());
+}
+
+// A selector with no explicit market ("obl1" alone) resolves the market from the owner's obligation
+// lists, then reads history exactly as the "obl1|market" form would.
+#[tokio::test]
+async fn resolves_market_from_owner_obligations_when_selector_omits_it() {
+    let http = MockHttp::new()
+        .on(
+            Match::primary_contains(&format!("{MAIN_MARKET}/users")),
+            r#"[{"obligationAddress":"obl1"}]"#,
+        )
+        .on(Match::primary_contains("/users/"), "[]") // the other markets hold nothing
+        .on(Match::primary_contains("/reserves/metrics"), RESERVES)
+        .on(Match::primary_contains("/metrics/history"), HISTORY);
+    let rpc = MockChainProvider::new()
+        .on(Match::body_contains("MINT_SOL"), mint_account(9))
+        .on(Match::body_contains("MINT_USDC"), mint_account(6));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let history = KaminoApi::new()
+        .read_history(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Some("obl1"),
+            None,
+            &cx,
+        )
+        .await
+        .expect("read_history with market resolution")
+        .into_inner();
+
+    assert_eq!(history.events.len(), 2, "same deltas as the explicit-market form");
 }
