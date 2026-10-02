@@ -19,7 +19,7 @@ workspace = true
 gluonscan-core = { workspace = true }
 serde_json = { workspace = true }
 bs58 = "0.5"
-sha2 = "0.10"
+sha2 = "0.11"
 curve25519-dalek = "4"
 base64 = "0.22"
 
