@@ -7,6 +7,8 @@
 use alloy_primitives::{hex, Address, U256};
 use gluonscan_core::{Chain, ChainProvider, Error};
 
+pub mod transfers;
+
 /// Perform an `eth_call` to `to` with calldata `data` at the latest block, returning the raw
 /// returned bytes.
 pub async fn eth_call(

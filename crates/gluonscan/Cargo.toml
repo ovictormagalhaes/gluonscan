@@ -23,6 +23,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 gluonscan-core = { workspace = true }
 gluonscan-math = { workspace = true }
+gluonscan-evm = { workspace = true }
 gluonscan-aave = { workspace = true, optional = true }
 gluonscan-uniswap = { workspace = true, optional = true }
 gluonscan-pendle = { workspace = true, optional = true }

@@ -26,6 +26,10 @@ pub use gluonscan_core::*;
 /// reach it through the one facade, without a second version pin.
 pub use gluonscan_math as math;
 
+/// Cost-basis chain reads (ERC-20 transfer history + receipt logs + latest block). The consumer owns
+/// the cost-basis math; the chain reads live here.
+pub use gluonscan_evm::transfers;
+
 // Protocol adapters are re-exported only when their feature is enabled, so a consumer that opts out
 // of an ecosystem never compiles its dependency stack.
 #[cfg(feature = "aave")]
@@ -360,5 +364,34 @@ impl Gluonscan {
             message: "no price source configured".into(),
         })?;
         Ok(source.prices_usd(chain, assets).await)
+    }
+
+    /// Inbound ERC-20 transfers of `token` to `wallet` at/after `from_block` — the purchase legs a
+    /// consumer needs to build a cost basis. A separate chain read (like [`price`](Gluonscan::price)),
+    /// over the engine's injected RPC.
+    pub async fn asset_transfers_in(
+        &self,
+        chain: Chain,
+        wallet: &str,
+        token: &str,
+        from_block: Option<u64>,
+    ) -> Result<Vec<transfers::AssetTransfer>, Error> {
+        transfers::asset_transfers_in(self.cx.rpc()?.as_ref(), chain, wallet, token, from_block)
+            .await
+    }
+
+    /// The ERC-20 `Transfer` logs of transaction `tx` — e.g. to find what a wallet paid in the same
+    /// transaction that delivered a position token.
+    pub async fn receipt_transfers(
+        &self,
+        chain: Chain,
+        tx: &str,
+    ) -> Result<Vec<transfers::ReceiptTransfer>, Error> {
+        transfers::receipt_transfers(self.cx.rpc()?.as_ref(), chain, tx).await
+    }
+
+    /// The latest block number on `chain`.
+    pub async fn latest_block(&self, chain: Chain) -> Result<u64, Error> {
+        transfers::latest_block(self.cx.rpc()?.as_ref(), chain).await
     }
 }

@@ -19,6 +19,7 @@ workspace = true
 gluonscan-core = { workspace = true }
 alloy-primitives = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
