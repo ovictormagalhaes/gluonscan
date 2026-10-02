@@ -57,6 +57,7 @@ const POOL_MINT0: usize = 73;
 const POOL_MINT1: usize = 105;
 const POOL_DEC0: usize = 233;
 const POOL_DEC1: usize = 234;
+const POOL_TICK_SPACING: usize = 235;
 const POOL_SQRT_X64: usize = 253;
 const POOL_TICK: usize = 269;
 
@@ -310,6 +311,12 @@ async fn parse_position(
         )
         .with_id(Some(nft_mint.to_string()))
         .with_pool(Some(pubkey_str(&pool_id)))
+        .with_sqrt_price(Some(sqrt_price.to_string()))
+        .with_tick_spacing(
+            pool.get(POOL_TICK_SPACING..POOL_TICK_SPACING + 2)
+                .and_then(|s| s.try_into().ok())
+                .map(|b| u16::from_le_bytes(b) as i32),
+        )
         .with_assets(assets)
         .with_uncollected_fees(uncollected_fees)
         .with_status(status),

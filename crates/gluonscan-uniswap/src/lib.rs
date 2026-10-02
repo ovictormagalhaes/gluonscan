@@ -378,6 +378,11 @@ impl UniswapV3 {
             .pointer("/pool/id")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let sqrt_price = str_at(item, "/pool/sqrtPrice").ok();
+        let created_at = item
+            .pointer("/transaction/timestamp")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<i64>().ok());
         Ok(Position::Liquidity(
             LiquidityPosition::new(
                 token0,
@@ -390,6 +395,9 @@ impl UniswapV3 {
             .with_id(Some(id))
             .with_pool(pool_id)
             .with_fee_tier_bps(fee_tier_bps)
+            .with_sqrt_price(sqrt_price)
+            .with_tick_spacing(tick_spacing_for_fee(fee_tier_bps))
+            .with_created_at(created_at)
             .with_assets(assets)
             .with_uncollected_fees(uncollected_fees)
             .with_deposited(deposited)
@@ -400,8 +408,19 @@ impl UniswapV3 {
     }
 }
 
+/// Uniswap V3 tick spacing for a fee tier (hundredths of a bp). The canonical factory mapping.
+fn tick_spacing_for_fee(fee_tier_bps: Option<u32>) -> Option<i32> {
+    match fee_tier_bps? {
+        100 => Some(1),
+        500 => Some(10),
+        3000 => Some(60),
+        10000 => Some(200),
+        _ => None,
+    }
+}
+
 fn query_body(owner: &str) -> String {
-    let query = r#"query($owner:String!){positions(where:{owner:$owner}){id liquidity depositedToken0 depositedToken1 withdrawnToken0 withdrawnToken1 collectedFeesToken0 collectedFeesToken1 tickLower{tickIdx} tickUpper{tickIdx} pool{id tick sqrtPrice feeTier token0{id symbol name decimals} token1{id symbol name decimals}}}}"#;
+    let query = r#"query($owner:String!){positions(where:{owner:$owner}){id liquidity depositedToken0 depositedToken1 withdrawnToken0 withdrawnToken1 collectedFeesToken0 collectedFeesToken1 tickLower{tickIdx} tickUpper{tickIdx} transaction{timestamp} pool{id tick sqrtPrice feeTier token0{id symbol name decimals} token1{id symbol name decimals}}}}"#;
     serde_json::json!({ "query": query, "variables": { "owner": owner } }).to_string()
 }
 

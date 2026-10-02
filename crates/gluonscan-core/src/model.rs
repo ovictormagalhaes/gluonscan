@@ -481,6 +481,13 @@ pub struct LiquidityPosition {
     pub token1: Token,
     /// Fee tier in hundredths of a basis point (e.g. 3000 = 0.30%), when known.
     pub fee_tier_bps: Option<u32>,
+    /// The pool's current sqrt price as a string (Q64.96 for Uniswap V3; the source's native scale),
+    /// when exposed. For the consumer's own price-range rendering.
+    pub sqrt_price: Option<String>,
+    /// The pool's tick spacing, when known.
+    pub tick_spacing: Option<i32>,
+    /// Unix timestamp (seconds) the position was opened, when the source exposes it.
+    pub created_at: Option<i64>,
     /// Lower tick bound of the range.
     pub tick_lower: i32,
     /// Upper tick bound of the range.
@@ -523,6 +530,9 @@ impl LiquidityPosition {
             token0,
             token1,
             fee_tier_bps: None,
+            sqrt_price: None,
+            tick_spacing: None,
+            created_at: None,
             tick_lower,
             tick_upper,
             tick_current,
@@ -555,6 +565,27 @@ impl LiquidityPosition {
     #[must_use]
     pub fn with_fee_tier_bps(mut self, fee_tier_bps: Option<u32>) -> Self {
         self.fee_tier_bps = fee_tier_bps;
+        self
+    }
+
+    /// Set the pool's current sqrt price (builder-style).
+    #[must_use]
+    pub fn with_sqrt_price(mut self, sqrt_price: Option<String>) -> Self {
+        self.sqrt_price = sqrt_price;
+        self
+    }
+
+    /// Set the pool's tick spacing (builder-style).
+    #[must_use]
+    pub fn with_tick_spacing(mut self, tick_spacing: Option<i32>) -> Self {
+        self.tick_spacing = tick_spacing;
+        self
+    }
+
+    /// Set the position's creation timestamp (unix seconds, builder-style).
+    #[must_use]
+    pub fn with_created_at(mut self, created_at: Option<i64>) -> Self {
+        self.created_at = created_at;
         self
     }
 
