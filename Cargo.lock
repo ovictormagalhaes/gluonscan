@@ -1189,7 +1189,7 @@ version = "0.0.1-beta.15"
 dependencies = [
  "alloy-primitives",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "gluonscan-core",
  "gluonscan-solana",
@@ -1229,7 +1229,7 @@ version = "0.0.1-beta.15"
 dependencies = [
  "alloy-primitives",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
  "gluonscan-core",
  "gluonscan-math",
@@ -1245,7 +1245,7 @@ dependencies = [
 name = "gluonscan-solana"
 version = "0.0.1-beta.15"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
  "curve25519-dalek",
  "gluonscan-core",
@@ -1299,7 +1299,7 @@ version = "0.0.1-beta.15"
 dependencies = [
  "alloy-primitives",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "gluonscan-core",
  "gluonscan-evm",
  "gluonscan-solana",
