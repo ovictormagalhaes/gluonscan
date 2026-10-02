@@ -13,3 +13,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Pinned on purpose: this is the toolchain the MSRV job tests against, not a
+      # dependency to track latest. Bump it only when the workspace MSRV changes.
+      - dependency-name: dtolnay/rust-toolchain

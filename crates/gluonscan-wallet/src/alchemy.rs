@@ -139,7 +139,12 @@ fn entry_errored(entry: &serde_json::Value) -> bool {
 
 /// Apply the value/plausibility/dust gates to a priced amount and build the wallet position, or
 /// `None` if a gate drops it. `price` must be `> 0`.
-fn priced_position(token: Token, raw: U256, amount_human: Decimal, price: Decimal) -> Option<Position> {
+fn priced_position(
+    token: Token,
+    raw: U256,
+    amount_human: Decimal,
+    price: Decimal,
+) -> Option<Position> {
     if price <= Decimal::ZERO {
         return None;
     }
@@ -150,7 +155,9 @@ fn priced_position(token: Token, raw: U256, amount_human: Decimal, price: Decima
     {
         return None;
     }
-    let amount = Amount::from_raw(token, raw).ok()?.with_usd(Some(Money::usd(value)));
+    let amount = Amount::from_raw(token, raw)
+        .ok()?
+        .with_usd(Some(Money::usd(value)));
     Some(Position::Wallet(
         WalletBalance::new(amount).with_verified_contract(Some(false)),
     ))
@@ -231,7 +238,8 @@ fn evm_entry_to_position(entry: &serde_json::Value) -> Result<Option<Position>, 
         return Ok(None);
     };
     // Alchemy carries no verified flag, so every token is treated as unverified: it must be priced.
-    let Some(price) = usd_price(entry.get("tokenPrices").unwrap_or(&serde_json::Value::Null)) else {
+    let Some(price) = usd_price(entry.get("tokenPrices").unwrap_or(&serde_json::Value::Null))
+    else {
         return Ok(None);
     };
     Ok(priced_position(token, raw, amount.amount, price))
@@ -389,7 +397,10 @@ impl ProtocolAdapter for AlchemySolanaWallet {
             let is_native = addr.is_none();
             let mint = addr.unwrap_or(SOL_MINT).to_string();
             let meta = entry.get("tokenMetadata");
-            let decimals = match meta.and_then(|m| m.get("decimals")).and_then(|d| d.as_u64()) {
+            let decimals = match meta
+                .and_then(|m| m.get("decimals"))
+                .and_then(|d| d.as_u64())
+            {
                 Some(d) => d as u8,
                 None if is_native => 9,
                 None => {
@@ -420,12 +431,8 @@ impl ProtocolAdapter for AlchemySolanaWallet {
             if is_spoofed_token(raw_name, raw_symbol) {
                 continue;
             }
-            let token = Token::solana(
-                sanitize_display(raw_symbol),
-                Some(mint.clone()),
-                decimals,
-            )
-            .with_name(Some(sanitize_display(raw_name)));
+            let token = Token::solana(sanitize_display(raw_symbol), Some(mint.clone()), decimals)
+                .with_name(Some(sanitize_display(raw_name)));
             let Ok(amount) = Amount::from_raw(token.clone(), raw) else {
                 continue; // astronomical (scam) balance beyond Decimal range: drop leaf
             };

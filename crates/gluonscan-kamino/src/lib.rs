@@ -158,7 +158,9 @@ impl ProtocolAdapter for KaminoApi {
         // A Kamino position is identified by its obligation + market. The market may be supplied
         // (`"obligation|market"`) or resolved from the owner's obligations (`"obligation"` alone).
         let selector = position.ok_or_else(|| Error::Permanent {
-            message: "Kamino history needs a position selector (\"obligation\" or \"obligation|market\")".into(),
+            message:
+                "Kamino history needs a position selector (\"obligation\" or \"obligation|market\")"
+                    .into(),
         })?;
         let (obligation, market) = match selector.split_once('|') {
             Some((o, m)) if !o.is_empty() && !m.is_empty() => (o.to_string(), m.to_string()),
@@ -210,13 +212,31 @@ impl ProtocolAdapter for KaminoApi {
             let (prev, curr) = (window[0], window[1]);
             let ts = snapshot_ts(curr);
             diff_side(
-                prev, curr, "deposits", EventKind::Deposit, EventKind::Withdraw, obligation, ts,
-                &mint_symbol, rpc, &mut decimals_cache, &mut events,
+                prev,
+                curr,
+                "deposits",
+                EventKind::Deposit,
+                EventKind::Withdraw,
+                obligation,
+                ts,
+                &mint_symbol,
+                rpc,
+                &mut decimals_cache,
+                &mut events,
             )
             .await?;
             diff_side(
-                prev, curr, "borrows", EventKind::Borrow, EventKind::Repay, obligation, ts,
-                &mint_symbol, rpc, &mut decimals_cache, &mut events,
+                prev,
+                curr,
+                "borrows",
+                EventKind::Borrow,
+                EventKind::Repay,
+                obligation,
+                ts,
+                &mint_symbol,
+                rpc,
+                &mut decimals_cache,
+                &mut events,
             )
             .await?;
         }
@@ -280,7 +300,12 @@ fn snapshot_ts(snap: &serde_json::Value) -> i64 {
 /// Sum raw base-unit amounts per mint from a snapshot side (`"deposits"` | `"borrows"`).
 fn side_amounts(snap: &serde_json::Value, side: &str) -> HashMap<String, i128> {
     let mut out: HashMap<String, i128> = HashMap::new();
-    for e in snap.get(side).and_then(|v| v.as_array()).into_iter().flatten() {
+    for e in snap
+        .get(side)
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
         let Some(mint) = e.get("mintAddress").and_then(|v| v.as_str()) else {
             continue;
         };
@@ -317,8 +342,7 @@ async fn diff_side(
     mints.sort();
     mints.dedup();
     for mint in mints {
-        let delta =
-            curr_m.get(mint).copied().unwrap_or(0) - prev_m.get(mint).copied().unwrap_or(0);
+        let delta = curr_m.get(mint).copied().unwrap_or(0) - prev_m.get(mint).copied().unwrap_or(0);
         if delta == 0 {
             continue;
         }

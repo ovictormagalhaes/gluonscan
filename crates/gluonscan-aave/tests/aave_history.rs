@@ -27,7 +27,13 @@ async fn reads_lending_events_from_subgraph() {
 
     let history = AaveApi::new()
         .with_subgraphs(subs)
-        .read_history(&Wallet::Evm(Address::ZERO), Chain::Ethereum, None, None, &cx)
+        .read_history(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            None,
+            None,
+            &cx,
+        )
         .await
         .expect("history")
         .into_inner();
@@ -58,7 +64,13 @@ async fn reads_lending_events_from_subgraph() {
 async fn no_subgraph_configured_returns_empty_history() {
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)));
     let history = AaveApi::new()
-        .read_history(&Wallet::Evm(Address::ZERO), Chain::Ethereum, None, None, &cx)
+        .read_history(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            None,
+            None,
+            &cx,
+        )
         .await
         .expect("empty history")
         .into_inner();

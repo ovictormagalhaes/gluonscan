@@ -234,7 +234,11 @@ async fn reads_obligation_history_as_snapshot_deltas() {
         .into_inner();
 
     assert_eq!(history.protocol, Protocol::Kamino);
-    assert_eq!(history.events.len(), 2, "one SOL deposit delta + one USDC borrow delta");
+    assert_eq!(
+        history.events.len(),
+        2,
+        "one SOL deposit delta + one USDC borrow delta"
+    );
 
     let sol = history
         .events
@@ -258,7 +262,13 @@ async fn history_requires_a_position_selector() {
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)))
         .with_rpc(Arc::new(MockChainProvider::new()));
     let err = KaminoApi::new()
-        .read_history(&Wallet::Solana(WALLET.to_string()), Chain::Solana, None, None, &cx)
+        .read_history(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            None,
+            None,
+            &cx,
+        )
         .await
         .expect_err("Kamino history needs a selector");
     assert!(!err.is_retryable());
@@ -270,7 +280,7 @@ async fn history_requires_a_position_selector() {
 async fn resolves_market_from_owner_obligations_when_selector_omits_it() {
     let http = MockHttp::new()
         .on(
-            Match::primary_contains(&format!("{MAIN_MARKET}/users")),
+            Match::primary_contains(format!("{MAIN_MARKET}/users")),
             r#"[{"obligationAddress":"obl1"}]"#,
         )
         .on(Match::primary_contains("/users/"), "[]") // the other markets hold nothing
@@ -293,5 +303,9 @@ async fn resolves_market_from_owner_obligations_when_selector_omits_it() {
         .expect("read_history with market resolution")
         .into_inner();
 
-    assert_eq!(history.events.len(), 2, "same deltas as the explicit-market form");
+    assert_eq!(
+        history.events.len(),
+        2,
+        "same deltas as the explicit-market form"
+    );
 }
