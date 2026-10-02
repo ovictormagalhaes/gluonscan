@@ -21,8 +21,7 @@ use gluonscan_math::{
 };
 use rust_decimal::Decimal;
 
-const CAPABILITIES: &[Capability] =
-    &[Capability::Positions, Capability::Fees, Capability::History];
+const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees, Capability::History];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum, Chain::Base, Chain::Arbitrum];
 
 /// Uniswap V3 adapter (subgraph discovery + on-chain fees). One instance serves every chain it has
@@ -375,6 +374,10 @@ impl UniswapV3 {
         } else {
             PositionStatus::Active
         };
+        let pool_id = item
+            .pointer("/pool/id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         Ok(Position::Liquidity(
             LiquidityPosition::new(
                 token0,
@@ -384,6 +387,8 @@ impl UniswapV3 {
                 current,
                 is_in_range(current, lower, upper),
             )
+            .with_id(Some(id))
+            .with_pool(pool_id)
             .with_fee_tier_bps(fee_tier_bps)
             .with_assets(assets)
             .with_uncollected_fees(uncollected_fees)
@@ -396,7 +401,7 @@ impl UniswapV3 {
 }
 
 fn query_body(owner: &str) -> String {
-    let query = r#"query($owner:String!){positions(where:{owner:$owner}){id liquidity depositedToken0 depositedToken1 withdrawnToken0 withdrawnToken1 collectedFeesToken0 collectedFeesToken1 tickLower{tickIdx} tickUpper{tickIdx} pool{tick sqrtPrice feeTier token0{id symbol name decimals} token1{id symbol name decimals}}}}"#;
+    let query = r#"query($owner:String!){positions(where:{owner:$owner}){id liquidity depositedToken0 depositedToken1 withdrawnToken0 withdrawnToken1 collectedFeesToken0 collectedFeesToken1 tickLower{tickIdx} tickUpper{tickIdx} pool{id tick sqrtPrice feeTier token0{id symbol name decimals} token1{id symbol name decimals}}}}"#;
     serde_json::json!({ "query": query, "variables": { "owner": owner } }).to_string()
 }
 

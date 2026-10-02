@@ -15,7 +15,7 @@ const SUBGRAPH: &str = r#"{"data":{"positions":[{
   "withdrawnToken0":"0.0","withdrawnToken1":"0.0",
   "collectedFeesToken0":"0.01","collectedFeesToken1":"25.0",
   "tickLower":{"tickIdx":"-60"},"tickUpper":{"tickIdx":"60"},
-  "pool":{"tick":"0","sqrtPrice":"79228162514264337593543950336","feeTier":"3000",
+  "pool":{"id":"0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","tick":"0","sqrtPrice":"79228162514264337593543950336","feeTier":"3000",
     "token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},
     "token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}}]}}"#;
 
@@ -44,6 +44,13 @@ async fn full_returns_the_complete_position() {
     let Position::Liquidity(p) = &reading.positions[0] else {
         panic!("expected a liquidity position");
     };
+
+    // identity — distinguishes two positions in the same pool (consumer dedup / detail lookup)
+    assert_eq!(p.id.as_deref(), Some("12345"));
+    assert_eq!(
+        p.pool.as_deref(),
+        Some("0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640")
+    );
 
     // range + metadata
     assert_eq!(p.token0.symbol, "WETH");
@@ -142,7 +149,10 @@ async fn with_subgraphs_routes_per_chain() {
     use std::collections::HashMap;
     let mut subs = HashMap::new();
     subs.insert(Chain::Base, "https://subgraph.test/base".to_string());
-    subs.insert(Chain::Arbitrum, "https://subgraph.test/arbitrum".to_string());
+    subs.insert(
+        Chain::Arbitrum,
+        "https://subgraph.test/arbitrum".to_string(),
+    );
     let adapter = UniswapV3::new().with_subgraphs(subs);
 
     for chain in [Chain::Base, Chain::Arbitrum] {
@@ -242,7 +252,13 @@ mod history {
     async fn history_requires_a_position_selector() {
         let err = UniswapV3::new()
             .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
-            .read_history(&Wallet::Evm(Address::ZERO), Chain::Ethereum, None, None, &ctx(SNAPSHOTS))
+            .read_history(
+                &Wallet::Evm(Address::ZERO),
+                Chain::Ethereum,
+                None,
+                None,
+                &ctx(SNAPSHOTS),
+            )
             .await
             .expect_err("history needs a position id");
         assert!(!err.is_retryable());

@@ -25,8 +25,7 @@ use gluonscan_solana::{
 };
 use rust_decimal::Decimal;
 
-const CAPABILITIES: &[Capability] =
-    &[Capability::Positions, Capability::Fees, Capability::History];
+const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees, Capability::History];
 
 /// Wrapped SOL mint — when a pool leg is WSOL and the SPL delta is zero, the real movement is the
 /// wallet's native SOL balance delta (wrap/unwrap happens in the same tx).
@@ -117,7 +116,7 @@ impl ProtocolAdapter for RaydiumClmm {
             if data.len() < POS_MIN_LEN {
                 continue;
             }
-            positions.push(parse_position(rpc, &data).await?);
+            positions.push(parse_position(rpc, &data, &mint).await?);
         }
 
         let reading = Reading::new(
@@ -181,8 +180,16 @@ impl ProtocolAdapter for RaydiumClmm {
         let scan_address = position_pda(nft_mint).unwrap_or_else(|| nft_mint.to_string());
 
         // Mint decimals once so each paired event's raw base-unit is exact.
-        let token_a = Token::solana("", Some(mint_a.to_string()), get_mint_decimals(rpc, mint_a).await?);
-        let token_b = Token::solana("", Some(mint_b.to_string()), get_mint_decimals(rpc, mint_b).await?);
+        let token_a = Token::solana(
+            "",
+            Some(mint_a.to_string()),
+            get_mint_decimals(rpc, mint_a).await?,
+        );
+        let token_b = Token::solana(
+            "",
+            Some(mint_b.to_string()),
+            get_mint_decimals(rpc, mint_b).await?,
+        );
 
         let signatures = fetch_signatures(rpc, &scan_address, since_ts).await?;
 
@@ -190,15 +197,17 @@ impl ProtocolAdapter for RaydiumClmm {
         for sig in &signatures {
             let tx = fetch_transaction(rpc, sig).await?;
             // Skip transactions that failed on-chain — they moved nothing.
-            if tx.pointer("/meta/err").map(|e| !e.is_null()).unwrap_or(false) {
+            if tx
+                .pointer("/meta/err")
+                .map(|e| !e.is_null())
+                .unwrap_or(false)
+            {
                 continue;
             }
             let at = tx.get("blockTime").and_then(|v| v.as_i64()).unwrap_or(0);
             // Discriminator classification wins; otherwise fall back to the positive-delta fee-collect
             // heuristic (so a decrease_liquidity(0) and a plain collect are both captured, once).
-            if let Some((kind, a0, a1)) =
-                classify_discriminator(&tx, wallet, mint_a, mint_b)
-            {
+            if let Some((kind, a0, a1)) = classify_discriminator(&tx, wallet, mint_a, mint_b) {
                 push_pair(&mut events, kind, &token_a, &token_b, a0, a1, sig, at)?;
             } else if let Some((a0, a1)) = classify_collect_heuristic(&tx, wallet, mint_a, mint_b) {
                 push_pair(
@@ -235,6 +244,7 @@ impl ProtocolAdapter for RaydiumClmm {
 async fn parse_position(
     rpc: &dyn gluonscan_core::ChainProvider,
     data: &[u8],
+    nft_mint: &str,
 ) -> Result<Position, Error> {
     let pool_id = pubkey_at(data, POS_POOL)?;
     let tick_lower = i32_at(data, POS_TICK_LOWER)?;
@@ -298,6 +308,8 @@ async fn parse_position(
             tick_current,
             is_in_range(tick_current, tick_lower, tick_upper),
         )
+        .with_id(Some(nft_mint.to_string()))
+        .with_pool(Some(pubkey_str(&pool_id)))
         .with_assets(assets)
         .with_uncollected_fees(uncollected_fees)
         .with_status(status),
@@ -468,9 +480,7 @@ fn signed_token_deltas(
 
 /// Signed native-SOL delta for `wallet` (post + fee - pre), in SOL.
 fn native_sol_delta(tx: &serde_json::Value, wallet: &str) -> Option<Decimal> {
-    let keys = tx
-        .pointer("/transaction/message/accountKeys")?
-        .as_array()?;
+    let keys = tx.pointer("/transaction/message/accountKeys")?.as_array()?;
     let meta = tx.get("meta")?;
     let pre = meta.get("preBalances")?.as_array()?;
     let post = meta.get("postBalances")?.as_array()?;
@@ -706,7 +716,12 @@ mod history_tests {
                 .iter()
                 .find(|e| {
                     e.kind == kind
-                        && e.amount.token.address.as_ref().map(|a| a.to_string()).as_deref()
+                        && e.amount
+                            .token
+                            .address
+                            .as_ref()
+                            .map(|a| a.to_string())
+                            .as_deref()
                             == Some(mint)
                 })
                 .unwrap_or_else(|| panic!("missing {kind:?} {mint}"))
@@ -723,7 +738,10 @@ mod history_tests {
             Decimal::from_str_exact("500").unwrap()
         );
         let collect = find(EventKind::CollectFees, MINT_A);
-        assert_eq!(collect.amount.amount, Decimal::from_str_exact("0.5").unwrap());
+        assert_eq!(
+            collect.amount.amount,
+            Decimal::from_str_exact("0.5").unwrap()
+        );
         assert_eq!(collect.tx, "sigCol");
         assert_eq!(collect.at, Timestamp(3000));
         // sorted oldest-first: the 2000 deposit legs precede the 3000 collect.

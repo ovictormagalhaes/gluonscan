@@ -469,6 +469,12 @@ impl LendingPosition {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiquidityPosition {
+    /// Protocol-specific position identifier (Uniswap V3 NFT token id, Raydium position NFT mint),
+    /// when the source exposes one. Lets a consumer tell two positions in the same pool apart and
+    /// address a single position (e.g. for history / detail).
+    pub id: Option<String>,
+    /// The pool (pair) address or id, when the source exposes one.
+    pub pool: Option<String>,
     /// The pool's first token.
     pub token0: Token,
     /// The pool's second token.
@@ -512,6 +518,8 @@ impl LiquidityPosition {
         in_range: bool,
     ) -> Self {
         LiquidityPosition {
+            id: None,
+            pool: None,
             token0,
             token1,
             fee_tier_bps: None,
@@ -527,6 +535,20 @@ impl LiquidityPosition {
             apr: None,
             status: PositionStatus::Active,
         }
+    }
+
+    /// Set the position identifier (builder-style).
+    #[must_use]
+    pub fn with_id(mut self, id: Option<String>) -> Self {
+        self.id = id;
+        self
+    }
+
+    /// Set the pool (pair) address/id (builder-style).
+    #[must_use]
+    pub fn with_pool(mut self, pool: Option<String>) -> Self {
+        self.pool = pool;
+        self
     }
 
     /// Set the fee tier in hundredths of a basis point (builder-style).

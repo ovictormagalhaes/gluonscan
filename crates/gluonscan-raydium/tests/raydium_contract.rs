@@ -140,6 +140,9 @@ async fn reads_a_clmm_position_from_chain() {
     let Position::Liquidity(p) = &reading.positions[0] else {
         panic!("expected a liquidity position");
     };
+    // identity — the NFT mint is the position id; the pool pubkey comes from the position account
+    assert_eq!(p.id.as_deref(), Some(NFT_MINT));
+    assert_eq!(p.pool.as_deref(), Some(pool_str.as_str()));
     assert_eq!((p.tick_lower, p.tick_upper, p.tick_current), (-60, 60, 0));
     assert!(p.in_range);
     assert_eq!(p.token0.decimals, 9);
@@ -286,6 +289,9 @@ async fn discovers_position_under_token_2022() {
     let Position::Liquidity(p) = &reading.positions[0] else {
         panic!("expected a liquidity position");
     };
+    // identity — the NFT mint is the position id; the pool pubkey comes from the position account
+    assert_eq!(p.id.as_deref(), Some(NFT_MINT));
+    assert_eq!(p.pool.as_deref(), Some(pool_str.as_str()));
     assert_eq!((p.tick_lower, p.tick_upper, p.tick_current), (-60, 60, 0));
     assert!(p.in_range);
     assert_eq!(p.token0.decimals, 9);
