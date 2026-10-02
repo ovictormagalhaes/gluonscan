@@ -142,7 +142,10 @@ async fn with_subgraphs_routes_per_chain() {
     use std::collections::HashMap;
     let mut subs = HashMap::new();
     subs.insert(Chain::Base, "https://subgraph.test/base".to_string());
-    subs.insert(Chain::Arbitrum, "https://subgraph.test/arbitrum".to_string());
+    subs.insert(
+        Chain::Arbitrum,
+        "https://subgraph.test/arbitrum".to_string(),
+    );
     let adapter = UniswapV3::new().with_subgraphs(subs);
 
     for chain in [Chain::Base, Chain::Arbitrum] {
@@ -242,7 +245,13 @@ mod history {
     async fn history_requires_a_position_selector() {
         let err = UniswapV3::new()
             .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
-            .read_history(&Wallet::Evm(Address::ZERO), Chain::Ethereum, None, None, &ctx(SNAPSHOTS))
+            .read_history(
+                &Wallet::Evm(Address::ZERO),
+                Chain::Ethereum,
+                None,
+                None,
+                &ctx(SNAPSHOTS),
+            )
             .await
             .expect_err("history needs a position id");
         assert!(!err.is_retryable());

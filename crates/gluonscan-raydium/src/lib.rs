@@ -25,8 +25,7 @@ use gluonscan_solana::{
 };
 use rust_decimal::Decimal;
 
-const CAPABILITIES: &[Capability] =
-    &[Capability::Positions, Capability::Fees, Capability::History];
+const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees, Capability::History];
 
 /// Wrapped SOL mint — when a pool leg is WSOL and the SPL delta is zero, the real movement is the
 /// wallet's native SOL balance delta (wrap/unwrap happens in the same tx).
@@ -181,8 +180,16 @@ impl ProtocolAdapter for RaydiumClmm {
         let scan_address = position_pda(nft_mint).unwrap_or_else(|| nft_mint.to_string());
 
         // Mint decimals once so each paired event's raw base-unit is exact.
-        let token_a = Token::solana("", Some(mint_a.to_string()), get_mint_decimals(rpc, mint_a).await?);
-        let token_b = Token::solana("", Some(mint_b.to_string()), get_mint_decimals(rpc, mint_b).await?);
+        let token_a = Token::solana(
+            "",
+            Some(mint_a.to_string()),
+            get_mint_decimals(rpc, mint_a).await?,
+        );
+        let token_b = Token::solana(
+            "",
+            Some(mint_b.to_string()),
+            get_mint_decimals(rpc, mint_b).await?,
+        );
 
         let signatures = fetch_signatures(rpc, &scan_address, since_ts).await?;
 
@@ -190,15 +197,17 @@ impl ProtocolAdapter for RaydiumClmm {
         for sig in &signatures {
             let tx = fetch_transaction(rpc, sig).await?;
             // Skip transactions that failed on-chain — they moved nothing.
-            if tx.pointer("/meta/err").map(|e| !e.is_null()).unwrap_or(false) {
+            if tx
+                .pointer("/meta/err")
+                .map(|e| !e.is_null())
+                .unwrap_or(false)
+            {
                 continue;
             }
             let at = tx.get("blockTime").and_then(|v| v.as_i64()).unwrap_or(0);
             // Discriminator classification wins; otherwise fall back to the positive-delta fee-collect
             // heuristic (so a decrease_liquidity(0) and a plain collect are both captured, once).
-            if let Some((kind, a0, a1)) =
-                classify_discriminator(&tx, wallet, mint_a, mint_b)
-            {
+            if let Some((kind, a0, a1)) = classify_discriminator(&tx, wallet, mint_a, mint_b) {
                 push_pair(&mut events, kind, &token_a, &token_b, a0, a1, sig, at)?;
             } else if let Some((a0, a1)) = classify_collect_heuristic(&tx, wallet, mint_a, mint_b) {
                 push_pair(
@@ -468,9 +477,7 @@ fn signed_token_deltas(
 
 /// Signed native-SOL delta for `wallet` (post + fee - pre), in SOL.
 fn native_sol_delta(tx: &serde_json::Value, wallet: &str) -> Option<Decimal> {
-    let keys = tx
-        .pointer("/transaction/message/accountKeys")?
-        .as_array()?;
+    let keys = tx.pointer("/transaction/message/accountKeys")?.as_array()?;
     let meta = tx.get("meta")?;
     let pre = meta.get("preBalances")?.as_array()?;
     let post = meta.get("postBalances")?.as_array()?;
@@ -603,6 +610,83 @@ fn anchor_discriminator(method: &str) -> [u8; 8] {
     out
 }
 
+/// Inspect a parsed transaction's instructions (top-level + inner) for a Raydium CLMM
+/// liquidity-changing call. `open_position*`/`increase_liquidity*` → Deposit, `decrease_liquidity*` →
+/// Withdraw, and a `decrease_liquidity` whose `liquidity_amount == 0` → Collect (the UI's "Claim
+/// Fees" flushes fees via decrease_liquidity(0)).
+fn detect_clmm_event_kind(tx: &serde_json::Value) -> Option<ClmmEventKind> {
+    let deposit_discs: [[u8; 8]; 6] = [
+        anchor_discriminator("open_position"),
+        anchor_discriminator("open_position_v2"),
+        anchor_discriminator("open_position_with_metadata"),
+        anchor_discriminator("open_position_with_token22_nft"),
+        anchor_discriminator("increase_liquidity"),
+        anchor_discriminator("increase_liquidity_v2"),
+    ];
+    let withdraw_discs: [[u8; 8]; 2] = [
+        anchor_discriminator("decrease_liquidity"),
+        anchor_discriminator("decrease_liquidity_v2"),
+    ];
+
+    let check = |data_b58: &str| -> Option<ClmmEventKind> {
+        let bytes = bs58::decode(data_b58).into_vec().ok()?;
+        if bytes.len() < 8 {
+            return None;
+        }
+        let disc = &bytes[..8];
+        if deposit_discs.iter().any(|d| disc == d) {
+            return Some(ClmmEventKind::Deposit);
+        }
+        if withdraw_discs.iter().any(|d| disc == d) {
+            // decrease_liquidity data after the discriminator: liquidity_amount u128 (16 bytes LE).
+            // A zero liquidity_amount is a fee flush, not a withdraw.
+            if bytes.len() >= 24 {
+                let mut lq = [0u8; 16];
+                lq.copy_from_slice(&bytes[8..24]);
+                if u128::from_le_bytes(lq) == 0 {
+                    return Some(ClmmEventKind::Collect);
+                }
+            }
+            return Some(ClmmEventKind::Withdraw);
+        }
+        None
+    };
+
+    let scan = |arr: &[serde_json::Value]| -> Option<ClmmEventKind> {
+        for ix in arr {
+            if ix.get("programId").and_then(|p| p.as_str()) != Some(CLMM_PROGRAM_ID) {
+                continue;
+            }
+            if let Some(kind) = ix.get("data").and_then(|d| d.as_str()).and_then(check) {
+                return Some(kind);
+            }
+        }
+        None
+    };
+
+    if let Some(arr) = tx
+        .pointer("/transaction/message/instructions")
+        .and_then(|i| i.as_array())
+    {
+        if let Some(kind) = scan(arr) {
+            return Some(kind);
+        }
+    }
+    if let Some(inner) = tx
+        .pointer("/meta/innerInstructions")
+        .and_then(|i| i.as_array())
+    {
+        for entry in inner {
+            if let Some(arr) = entry.get("instructions").and_then(|i| i.as_array()) {
+                if let Some(kind) = scan(arr) {
+                    return Some(kind);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod history_tests {
     use super::*;
@@ -706,7 +790,12 @@ mod history_tests {
                 .iter()
                 .find(|e| {
                     e.kind == kind
-                        && e.amount.token.address.as_ref().map(|a| a.to_string()).as_deref()
+                        && e.amount
+                            .token
+                            .address
+                            .as_ref()
+                            .map(|a| a.to_string())
+                            .as_deref()
                             == Some(mint)
                 })
                 .unwrap_or_else(|| panic!("missing {kind:?} {mint}"))
@@ -723,7 +812,10 @@ mod history_tests {
             Decimal::from_str_exact("500").unwrap()
         );
         let collect = find(EventKind::CollectFees, MINT_A);
-        assert_eq!(collect.amount.amount, Decimal::from_str_exact("0.5").unwrap());
+        assert_eq!(
+            collect.amount.amount,
+            Decimal::from_str_exact("0.5").unwrap()
+        );
         assert_eq!(collect.tx, "sigCol");
         assert_eq!(collect.at, Timestamp(3000));
         // sorted oldest-first: the 2000 deposit legs precede the 3000 collect.
@@ -752,81 +844,4 @@ mod history_tests {
             .expect_err("needs nftMint|mintA|mintB");
         assert!(!err.is_retryable());
     }
-}
-
-/// Inspect a parsed transaction's instructions (top-level + inner) for a Raydium CLMM
-/// liquidity-changing call. `open_position*`/`increase_liquidity*` → Deposit, `decrease_liquidity*` →
-/// Withdraw, and a `decrease_liquidity` whose `liquidity_amount == 0` → Collect (the UI's "Claim
-/// Fees" flushes fees via decrease_liquidity(0)).
-fn detect_clmm_event_kind(tx: &serde_json::Value) -> Option<ClmmEventKind> {
-    let deposit_discs: [[u8; 8]; 6] = [
-        anchor_discriminator("open_position"),
-        anchor_discriminator("open_position_v2"),
-        anchor_discriminator("open_position_with_metadata"),
-        anchor_discriminator("open_position_with_token22_nft"),
-        anchor_discriminator("increase_liquidity"),
-        anchor_discriminator("increase_liquidity_v2"),
-    ];
-    let withdraw_discs: [[u8; 8]; 2] = [
-        anchor_discriminator("decrease_liquidity"),
-        anchor_discriminator("decrease_liquidity_v2"),
-    ];
-
-    let check = |data_b58: &str| -> Option<ClmmEventKind> {
-        let bytes = bs58::decode(data_b58).into_vec().ok()?;
-        if bytes.len() < 8 {
-            return None;
-        }
-        let disc = &bytes[..8];
-        if deposit_discs.iter().any(|d| disc == d) {
-            return Some(ClmmEventKind::Deposit);
-        }
-        if withdraw_discs.iter().any(|d| disc == d) {
-            // decrease_liquidity data after the discriminator: liquidity_amount u128 (16 bytes LE).
-            // A zero liquidity_amount is a fee flush, not a withdraw.
-            if bytes.len() >= 24 {
-                let mut lq = [0u8; 16];
-                lq.copy_from_slice(&bytes[8..24]);
-                if u128::from_le_bytes(lq) == 0 {
-                    return Some(ClmmEventKind::Collect);
-                }
-            }
-            return Some(ClmmEventKind::Withdraw);
-        }
-        None
-    };
-
-    let scan = |arr: &[serde_json::Value]| -> Option<ClmmEventKind> {
-        for ix in arr {
-            if ix.get("programId").and_then(|p| p.as_str()) != Some(CLMM_PROGRAM_ID) {
-                continue;
-            }
-            if let Some(kind) = ix.get("data").and_then(|d| d.as_str()).and_then(check) {
-                return Some(kind);
-            }
-        }
-        None
-    };
-
-    if let Some(arr) = tx
-        .pointer("/transaction/message/instructions")
-        .and_then(|i| i.as_array())
-    {
-        if let Some(kind) = scan(arr) {
-            return Some(kind);
-        }
-    }
-    if let Some(inner) = tx
-        .pointer("/meta/innerInstructions")
-        .and_then(|i| i.as_array())
-    {
-        for entry in inner {
-            if let Some(arr) = entry.get("instructions").and_then(|i| i.as_array()) {
-                if let Some(kind) = scan(arr) {
-                    return Some(kind);
-                }
-            }
-        }
-    }
-    None
 }

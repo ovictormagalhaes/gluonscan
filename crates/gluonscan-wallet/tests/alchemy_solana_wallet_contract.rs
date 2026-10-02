@@ -30,7 +30,12 @@ async fn keeps_sol_and_usdc_prices_scam_via_lookup_and_drops_it() {
 
     let reading = AlchemySolanaWallet::new("key")
         .with_base("https://alchemy.test")
-        .read(&Wallet::Solana(WALLET.to_string()), Chain::Solana, Detail::Full, &cx)
+        .read(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Detail::Full,
+            &cx,
+        )
         .await
         .expect("read")
         .into_inner();
@@ -42,7 +47,9 @@ async fn keeps_sol_and_usdc_prices_scam_via_lookup_and_drops_it() {
         .positions
         .iter()
         .map(|p| {
-            let Position::Wallet(b) = p else { panic!("wallet") };
+            let Position::Wallet(b) = p else {
+                panic!("wallet")
+            };
             b.amount.token.symbol.as_str()
         })
         .collect();
@@ -50,11 +57,16 @@ async fn keeps_sol_and_usdc_prices_scam_via_lookup_and_drops_it() {
     assert!(symbols.contains(&"USDC"));
 
     for p in &reading.positions {
-        let Position::Wallet(b) = p else { panic!("wallet") };
+        let Position::Wallet(b) = p else {
+            panic!("wallet")
+        };
         if b.amount.token.symbol == "SOL" {
             // 0x77359400 = 2_000_000_000 lamports / 1e9 = 2 SOL.
             assert_eq!(b.amount.amount, Decimal::from_str_exact("2").unwrap());
-            assert_eq!(b.amount.usd.as_ref().unwrap().amount, Decimal::from_str_exact("400").unwrap());
+            assert_eq!(
+                b.amount.usd.as_ref().unwrap().amount,
+                Decimal::from_str_exact("400").unwrap()
+            );
         }
     }
 }
@@ -64,7 +76,12 @@ async fn rejects_non_solana_wallet() {
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0)));
     let err = AlchemySolanaWallet::new("k")
         .with_base("https://alchemy.test")
-        .read(&Wallet::Solana(WALLET.to_string()), Chain::Base, Detail::Full, &cx)
+        .read(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Base,
+            Detail::Full,
+            &cx,
+        )
         .await
         .expect_err("solana only");
     assert!(!err.is_retryable());

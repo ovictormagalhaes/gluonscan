@@ -21,8 +21,7 @@ use gluonscan_math::{
 };
 use rust_decimal::Decimal;
 
-const CAPABILITIES: &[Capability] =
-    &[Capability::Positions, Capability::Fees, Capability::History];
+const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees, Capability::History];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum, Chain::Base, Chain::Arbitrum];
 
 /// Uniswap V3 adapter (subgraph discovery + on-chain fees). One instance serves every chain it has
