@@ -561,7 +561,10 @@ impl SnapshotTotals {
 
 /// Emit a two-token delta as paired single-token events: one per non-zero side, sharing `kind`, `tx`
 /// and `ts`. The consumer re-pairs by token address.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal helper appending a token-pair event to the output sink; a mix of event data and the accumulator, not a cohesive struct"
+)]
 fn push_pair(
     events: &mut Vec<HistoryEvent>,
     kind: EventKind,
