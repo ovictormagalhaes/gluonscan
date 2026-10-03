@@ -48,4 +48,9 @@ surfaced at read time, never a silent empty result.
 
 `WalletBalance` (idle tokens not in any protocol), `LendingPosition` (supplies/borrows/health
 factor), `LiquidityPosition` (principal, uncollected/deposited/withdrawn/collected fees, tick range,
-in-range), `LockPosition`, `YieldPosition` (PT/YT with maturity), `NftPosition`.
+in-range), `LockPosition`, `StakePosition`, `YieldPosition` (PT/YT with maturity), `PerpPosition`
+(side, size, entry/mark/liquidation price, PnL, funding), `NftPosition`.
+
+`LendingPosition`, `LiquidityPosition` and `StakePosition` also carry claimable `rewards`
+(emission/incentive tokens, distinct from LP trading fees) when a source exposes them — surfaced by
+the `Rewards` capability.
