@@ -10,9 +10,8 @@ lockstep: one version, one tag, all crates.
 
 ## [0.1.0] - 2026-10-03
 
-First stable (non-beta) release. Functionally the same engine as `0.0.1-beta.15`, now in
-production use via Uniqueledger; promotes the beta line to a stable `0.x` version. Next
-development continues on the `0.2.0-beta` line.
+First stable (non-beta) release. Promotes the beta line to a stable `0.x` version now that the
+engine is in production use via Uniqueledger. Next development continues on the `0.2.0-beta` line.
 
 ### Added
 
@@ -22,8 +21,46 @@ development continues on the `0.2.0-beta` line.
 
 ### Changed
 
+- Minimum supported Rust version raised to 1.90.
+- Dependencies refreshed via Dependabot, including `alloy-primitives` 0.8 → 1.
 - Workspace clippy lints now require a `reason=` on every `#[allow(...)]`
-  (`allow_attributes_without_reason`); the pre-existing suppressions are now documented.
+  (`allow_attributes_without_reason`); the pre-existing suppressions (including `large_enum_variant`
+  on `Position`) are now documented with a reason.
+
+## [0.0.1-beta.15] - 2026-10-02
+
+### Added
+
+- Cost-basis chain reads (`transfers`): ERC-20 transfer history, receipt-log transfers, and
+  latest-block lookups, so a consumer can derive cost basis from on-chain movements.
+
+## [0.0.1-beta.14] - 2026-10-02
+
+### Added
+
+- `LiquidityPosition` now exposes `sqrt_price`, `tick_spacing`, and `created_at` (Uniswap V3 +
+  Raydium), so a consumer can render the price band and position age without re-deriving them.
+
+## [0.0.1-beta.13] - 2026-10-02
+
+### Added
+
+- `LiquidityPosition` now exposes the position `id` and `pool` address (Uniswap V3 + Raydium), so
+  two positions in the same pool can be told apart and addressed individually.
+
+## [0.0.1-beta.12] - 2026-10-01
+
+### Added
+
+- Position-scoped `read_history` on the `ProtocolAdapter` contract, with implementations for
+  Uniswap V3 and Raydium (snapshot-/on-chain-delta reconstruction into paired single-token events)
+  and Kamino (obligation snapshot deltas).
+- Lending health-factor + liquidation-price math kernel (`gluonscan-math`).
+- Kamino resolves the market from the owner's obligations when the selector omits it.
+
+### Changed
+
+- **Breaking:** `read_history` is now position-scoped (foundation for LP / Kamino history).
 
 ## [0.0.1-beta.11] - 2026-10-01
 
