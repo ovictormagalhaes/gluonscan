@@ -31,7 +31,9 @@ missing_docs = "deny"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-all = "warn"
+all = { level = "warn", priority = -1 }
+# Every #[allow(...)] must carry a reason=, so a suppression is always documented.
+allow_attributes_without_reason = "warn"
 
 [workspace.dependencies]
 thiserror = "2"
