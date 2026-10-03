@@ -87,6 +87,90 @@ async fn full_returns_the_complete_position() {
     );
 }
 
+// Completeness guard: a produced LiquidityPosition must carry BOTH token identities (address +
+// symbol + decimals) and a two-element `assets` vector aligned to [token0, token1]. `parse_token`
+// tolerates a missing `id` (address → None) and a missing `symbol` (→ ""), so an incomplete
+// position is constructible; a downstream consumer broke when the token addresses were absent
+// (it could no longer resolve per-token prices). This pins the addresses as non-empty.
+#[tokio::test]
+async fn position_carries_token_addresses_and_aligned_assets() {
+    let http = MockHttp::new().on(Match::body_contains("positions"), SUBGRAPH);
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))); // Summary needs no RPC
+
+    let reading = UniswapV3::new()
+        .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Summary,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+
+    let Position::Liquidity(p) = &reading.positions[0] else {
+        panic!("expected a liquidity position");
+    };
+
+    for t in [&p.token0, &p.token1] {
+        assert!(!t.symbol.is_empty(), "token symbol must not be empty");
+        let addr = t
+            .address
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or_default();
+        assert!(
+            !addr.is_empty(),
+            "token must carry an on-chain address, got {:?}",
+            t.address
+        );
+        assert!(t.decimals > 0, "token decimals must be populated");
+    }
+    assert_eq!(
+        p.token0
+            .address
+            .as_ref()
+            .map(|a| a.to_string().to_lowercase()),
+        Some("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string()),
+    );
+
+    // assets must hold both legs, aligned by identity to token0/token1.
+    assert_eq!(p.assets.len(), 2, "assets must hold both legs");
+    assert_eq!(p.assets[0].token, p.token0);
+    assert_eq!(p.assets[1].token, p.token1);
+}
+
+// Status must reflect on-chain liquidity: a zero-liquidity (dormant) position reports `Inactive`
+// and carries no uncollected fees. A consumer keys its open/closed state off this.
+#[tokio::test]
+async fn zero_liquidity_position_is_inactive_with_no_uncollected_fees() {
+    let zero = SUBGRAPH.replace(r#""liquidity":"1000000000""#, r#""liquidity":"0""#);
+    let http = MockHttp::new().on(Match::body_contains("positions"), zero);
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
+
+    let reading = UniswapV3::new()
+        .with_subgraph(Chain::Ethereum, "https://subgraph.test/uniswap-v3")
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+
+    let Position::Liquidity(p) = &reading.positions[0] else {
+        panic!("expected a liquidity position");
+    };
+    assert_eq!(p.status, gluonscan_core::PositionStatus::Inactive);
+    assert!(
+        p.uncollected_fees.is_empty(),
+        "a zero-liquidity position has no claimable fees and must not hit the chain"
+    );
+}
+
 #[tokio::test]
 async fn summary_has_principal_but_no_uncollected_fees_and_needs_no_rpc() {
     let http = MockHttp::new().on(Match::body_contains("positions"), SUBGRAPH);

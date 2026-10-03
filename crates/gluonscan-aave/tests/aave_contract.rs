@@ -56,6 +56,76 @@ async fn aave_ethereum_reads_from_contract() {
     assert_eq!(pos.health_factor, Some(Decimal::from_str("2.35").unwrap()));
 }
 
+// Completeness guard (mirror of the Uniswap one): every supplied/borrowed leg must carry a token
+// ADDRESS (not just a symbol), Full detail must populate the risk params the consumer's HF /
+// liquidation math reads, and a position carrying debt must expose a health factor. A consumer
+// resolves per-token prices by address, so an address-less leg silently breaks downstream.
+#[tokio::test]
+async fn lending_legs_carry_addresses_risk_params_and_health_factor() {
+    let reading = AaveApi::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &ctx(),
+        )
+        .await
+        .expect("read")
+        .into_inner();
+
+    let Position::Lending(pos) = &reading.positions[0] else {
+        panic!("expected a lending position");
+    };
+
+    assert!(!pos.supplied.is_empty(), "fixture has a supplied leg");
+    for s in &pos.supplied {
+        assert!(
+            !s.amount.token.symbol.is_empty(),
+            "supplied symbol required"
+        );
+        let addr = s
+            .amount
+            .token
+            .address
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or_default();
+        assert!(
+            !addr.is_empty(),
+            "supplied leg must carry a token address, got {:?}",
+            s.amount.token.address
+        );
+        assert!(
+            s.liquidation_threshold.is_some(),
+            "Full detail must populate liquidation_threshold"
+        );
+        assert!(s.max_ltv.is_some(), "Full detail must populate max_ltv");
+        assert!(s.apy.is_some(), "supplied apy required");
+    }
+    for b in &pos.borrowed {
+        let addr = b
+            .amount
+            .token
+            .address
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or_default();
+        assert!(!addr.is_empty(), "borrowed leg must carry a token address");
+        assert_eq!(
+            b.borrow_factor,
+            Some(Decimal::from_str("1").unwrap()),
+            "Aave V3 pins borrow_factor to 1.0"
+        );
+        assert!(b.apy.is_some(), "borrowed apy required");
+    }
+    if !pos.borrowed.is_empty() {
+        assert!(
+            pos.health_factor.is_some(),
+            "a position with debt must expose a health factor"
+        );
+    }
+}
+
 #[tokio::test]
 async fn reads_on_every_supported_chain() {
     let adapter = AaveApi::new();
