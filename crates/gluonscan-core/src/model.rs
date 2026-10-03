@@ -444,6 +444,8 @@ pub struct LendingPosition {
     pub borrowed: Vec<BorrowedAsset>,
     /// Account health factor, when the account carries debt.
     pub health_factor: Option<Decimal>,
+    /// Claimable protocol rewards / incentives, when the source exposes them.
+    pub rewards: Vec<Amount>,
 }
 
 impl LendingPosition {
@@ -453,6 +455,7 @@ impl LendingPosition {
             supplied,
             borrowed,
             health_factor: None,
+            rewards: Vec::new(),
         }
     }
 
@@ -460,6 +463,13 @@ impl LendingPosition {
     #[must_use]
     pub fn with_health_factor(mut self, health_factor: Option<Decimal>) -> Self {
         self.health_factor = health_factor;
+        self
+    }
+
+    /// Set the claimable rewards / incentives (builder-style).
+    #[must_use]
+    pub fn with_rewards(mut self, rewards: Vec<Amount>) -> Self {
+        self.rewards = rewards;
         self
     }
 }
@@ -506,6 +516,9 @@ pub struct LiquidityPosition {
     pub withdrawn: Vec<Amount>,
     /// Lifetime collected fees, `[token0, token1]`.
     pub collected_fees: Vec<Amount>,
+    /// Claimable protocol rewards / incentives (emission tokens), distinct from trading fees —
+    /// present only when the source exposes them.
+    pub rewards: Vec<Amount>,
     /// Annualized rate (APR) as a fraction (e.g. `0.14` = 14%), when a source provides it.
     pub apr: Option<Decimal>,
     /// Whether the position still holds liquidity, or is dormant (closed but not burned). A dormant
@@ -542,6 +555,7 @@ impl LiquidityPosition {
             deposited: Vec::new(),
             withdrawn: Vec::new(),
             collected_fees: Vec::new(),
+            rewards: Vec::new(),
             apr: None,
             status: PositionStatus::Active,
         }
@@ -621,6 +635,13 @@ impl LiquidityPosition {
     #[must_use]
     pub fn with_collected_fees(mut self, collected_fees: Vec<Amount>) -> Self {
         self.collected_fees = collected_fees;
+        self
+    }
+
+    /// Set the claimable rewards / incentives (emission tokens, builder-style).
+    #[must_use]
+    pub fn with_rewards(mut self, rewards: Vec<Amount>) -> Self {
+        self.rewards = rewards;
         self
     }
 
@@ -785,12 +806,128 @@ impl LockPosition {
 pub struct StakePosition {
     /// The staked assets.
     pub staked: Vec<Amount>,
+    /// Claimable staking rewards, when the source exposes them.
+    pub rewards: Vec<Amount>,
 }
 
 impl StakePosition {
-    /// A stake over `staked` assets.
+    /// A stake over `staked` assets (no rewards yet).
     pub fn new(staked: Vec<Amount>) -> Self {
-        StakePosition { staked }
+        StakePosition {
+            staked,
+            rewards: Vec::new(),
+        }
+    }
+
+    /// Set the claimable staking rewards (builder-style).
+    #[must_use]
+    pub fn with_rewards(mut self, rewards: Vec<Amount>) -> Self {
+        self.rewards = rewards;
+        self
+    }
+}
+
+/// Which direction a perpetual position is held.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PerpSide {
+    /// Long — profits when the mark price rises above entry.
+    Long,
+    /// Short — profits when the mark price falls below entry.
+    Short,
+}
+
+/// A perpetual / derivative position: the margin backing it plus the open contract's size, prices
+/// and risk. Amounts the source does not expose stay `None` rather than being fabricated.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerpPosition {
+    /// The market identifier, e.g. `"ETH-USD"`.
+    pub market: String,
+    /// Long or short.
+    pub side: PerpSide,
+    /// Collateral (margin) backing the position.
+    pub collateral: Vec<Amount>,
+    /// Position size in the base asset (absolute magnitude; direction is `side`).
+    pub size: Decimal,
+    /// Average entry price, when known.
+    pub entry_price: Option<Decimal>,
+    /// Current mark price, when known.
+    pub mark_price: Option<Decimal>,
+    /// Leverage multiple (e.g. `5` = 5x), when known.
+    pub leverage: Option<Decimal>,
+    /// Unrealized PnL, when known.
+    pub unrealized_pnl: Option<Money>,
+    /// Accrued funding (negative = paid by this position), when known.
+    pub funding: Option<Money>,
+    /// Liquidation price, when known.
+    pub liquidation_price: Option<Decimal>,
+}
+
+impl PerpPosition {
+    /// A perpetual position in `market`, held `side`, of absolute `size` (no prices/risk yet).
+    pub fn new(market: impl Into<String>, side: PerpSide, size: Decimal) -> Self {
+        PerpPosition {
+            market: market.into(),
+            side,
+            collateral: Vec::new(),
+            size,
+            entry_price: None,
+            mark_price: None,
+            leverage: None,
+            unrealized_pnl: None,
+            funding: None,
+            liquidation_price: None,
+        }
+    }
+
+    /// Set the collateral / margin (builder-style).
+    #[must_use]
+    pub fn with_collateral(mut self, collateral: Vec<Amount>) -> Self {
+        self.collateral = collateral;
+        self
+    }
+
+    /// Set the average entry price (builder-style).
+    #[must_use]
+    pub fn with_entry_price(mut self, entry_price: Option<Decimal>) -> Self {
+        self.entry_price = entry_price;
+        self
+    }
+
+    /// Set the current mark price (builder-style).
+    #[must_use]
+    pub fn with_mark_price(mut self, mark_price: Option<Decimal>) -> Self {
+        self.mark_price = mark_price;
+        self
+    }
+
+    /// Set the leverage multiple (builder-style).
+    #[must_use]
+    pub fn with_leverage(mut self, leverage: Option<Decimal>) -> Self {
+        self.leverage = leverage;
+        self
+    }
+
+    /// Set the unrealized PnL (builder-style).
+    #[must_use]
+    pub fn with_unrealized_pnl(mut self, unrealized_pnl: Option<Money>) -> Self {
+        self.unrealized_pnl = unrealized_pnl;
+        self
+    }
+
+    /// Set the accrued funding (builder-style).
+    #[must_use]
+    pub fn with_funding(mut self, funding: Option<Money>) -> Self {
+        self.funding = funding;
+        self
+    }
+
+    /// Set the liquidation price (builder-style).
+    #[must_use]
+    pub fn with_liquidation_price(mut self, liquidation_price: Option<Decimal>) -> Self {
+        self.liquidation_price = liquidation_price;
+        self
     }
 }
 
@@ -814,6 +951,8 @@ pub enum Position {
     Stake(StakePosition),
     /// A yield-bearing token position.
     Yield(YieldPosition),
+    /// A perpetual / derivative position.
+    Perp(PerpPosition),
     /// An NFT holding.
     Nft(NftPosition),
 }
@@ -877,6 +1016,52 @@ mod tests {
         let dec = scaled(raw, 6).unwrap();
         assert_eq!(dec, Decimal::from_str_exact("1.5").unwrap());
         assert_eq!(to_raw(dec, 6).unwrap(), raw);
+    }
+
+    #[test]
+    fn rewards_default_empty_and_set_via_builder() {
+        let token = Token::new("AERO", None, 18);
+        let reward = Amount::from_decimal(token, Decimal::from_str_exact("12.5").unwrap()).unwrap();
+
+        assert!(StakePosition::new(vec![]).rewards.is_empty());
+        assert_eq!(
+            StakePosition::new(vec![])
+                .with_rewards(vec![reward.clone()])
+                .rewards
+                .len(),
+            1
+        );
+        assert_eq!(
+            LendingPosition::new(vec![], vec![])
+                .with_rewards(vec![reward])
+                .rewards
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn perp_position_builder_keeps_unset_fields_none() {
+        let perp = PerpPosition::new(
+            "ETH-USD",
+            PerpSide::Long,
+            Decimal::from_str_exact("2").unwrap(),
+        )
+        .with_entry_price(Some(Decimal::from_str_exact("3000").unwrap()))
+        .with_liquidation_price(Some(Decimal::from_str_exact("2400").unwrap()));
+
+        assert_eq!(perp.market, "ETH-USD");
+        assert_eq!(perp.side, PerpSide::Long);
+        assert_eq!(perp.size, Decimal::from_str_exact("2").unwrap());
+        assert_eq!(
+            perp.entry_price,
+            Some(Decimal::from_str_exact("3000").unwrap())
+        );
+        // A field the source never provided stays None — never fabricated.
+        assert!(perp.mark_price.is_none());
+        assert!(perp.collateral.is_empty());
+
+        assert!(matches!(Position::Perp(perp), Position::Perp(_)));
     }
 
     #[test]
