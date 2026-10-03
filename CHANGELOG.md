@@ -8,6 +8,14 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+### Added
+
+- `Position::Perp` + `PerpPosition` / `PerpSide`: a perpetual/derivative position kind (side, size,
+  entry/mark/liquidation price, leverage, unrealized PnL, funding). Unset fields stay `None`.
+- Claimable `rewards: Vec<Amount>` on `LendingPosition`, `LiquidityPosition` and `StakePosition`
+  (emission/incentive tokens, distinct from LP trading fees), with `with_rewards` builders, surfaced
+  by the new `Capability::Rewards`.
+
 ## [0.1.0] - 2026-10-03
 
 First stable (non-beta) release. Promotes the beta line to a stable `0.x` version now that the

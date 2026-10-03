@@ -28,9 +28,9 @@ pub use error::Error;
 pub use history::{EventKind, History, HistoryEvent};
 pub use model::{
     scaled, to_raw, Amount, BorrowedAsset, Complete, Currency, LendingPosition, LiquidityPosition,
-    LockPosition, Money, NftPosition, Position, PositionStatus, Provenance, Reading, StakePosition,
-    Staleness, SuppliedAsset, Timestamp, Token, TokenAddress, WalletBalance, YieldKind,
-    YieldPosition,
+    LockPosition, Money, NftPosition, PerpPosition, PerpSide, Position, PositionStatus, Provenance,
+    Reading, StakePosition, Staleness, SuppliedAsset, Timestamp, Token, TokenAddress,
+    WalletBalance, YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 
@@ -159,6 +159,8 @@ pub enum Capability {
     HealthFactor,
     /// Per-asset risk parameters (LTV, liquidation threshold).
     RiskConfig,
+    /// Claimable protocol rewards / incentives (emission tokens), distinct from LP trading fees.
+    Rewards,
 }
 
 /// The **minimum** detail a caller requests, which is also the cost ceiling it accepts. An adapter
