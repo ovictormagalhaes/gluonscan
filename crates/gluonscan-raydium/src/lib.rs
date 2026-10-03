@@ -571,7 +571,10 @@ fn classify_collect_heuristic(
 
 /// Emit a two-token movement as paired single-token events (one per non-zero leg), sharing kind, tx
 /// and timestamp. The consumer re-pairs by token mint address.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal helper appending a token-pair event to the output sink; a mix of event data and the accumulator, not a cohesive struct"
+)]
 fn push_pair(
     events: &mut Vec<HistoryEvent>,
     kind: EventKind,

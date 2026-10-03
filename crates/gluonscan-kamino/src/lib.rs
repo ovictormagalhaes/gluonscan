@@ -322,7 +322,10 @@ fn side_amounts(snap: &serde_json::Value, side: &str) -> HashMap<String, i128> {
 /// Diff one snapshot side between two consecutive snapshots, pushing an event per mint whose balance
 /// changed: a positive delta is `inc_kind` (deposit/borrow), a negative delta is `dec_kind`
 /// (withdraw/repay). Sub-dust deltas are skipped.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal side-diff helper threading prev/curr state, injected rpc + decimals cache, and an output event sink — not a data cluster"
+)]
 async fn diff_side(
     prev: &serde_json::Value,
     curr: &serde_json::Value,
