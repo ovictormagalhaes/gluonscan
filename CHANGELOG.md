@@ -8,6 +8,23 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-03
+
+First stable (non-beta) release. Functionally the same engine as `0.0.1-beta.15`, now in
+production use via Uniqueledger; promotes the beta line to a stable `0.x` version. Next
+development continues on the `0.2.0-beta` line.
+
+### Added
+
+- Adapter-completeness regression tests (Uniswap V3 + Aave V3): a produced position must carry
+  both token addresses, a two-element `assets` vector, and a status consistent with on-chain
+  liquidity; lending legs must carry addresses + risk params + a health factor when in debt.
+
+### Changed
+
+- Workspace clippy lints now require a `reason=` on every `#[allow(...)]`
+  (`allow_attributes_without_reason`); the pre-existing suppressions are now documented.
+
 ## [0.0.1-beta.11] - 2026-10-01
 
 ### Added
