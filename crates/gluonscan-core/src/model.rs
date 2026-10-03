@@ -795,9 +795,10 @@ impl StakePosition {
 }
 
 /// A single normalized position within a protocol.
-// Variants are kept inline rather than boxed: this is the public domain type matched
-// everywhere downstream, and the size spread does not justify an API-breaking indirection.
-#[allow(clippy::large_enum_variant)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "variants kept inline rather than boxed: this is the public domain type matched everywhere downstream, and the size spread does not justify an API-breaking indirection"
+)]
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Position {
