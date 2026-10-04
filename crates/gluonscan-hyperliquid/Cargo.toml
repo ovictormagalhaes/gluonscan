@@ -1,0 +1,26 @@
+[package]
+name = "gluonscan-hyperliquid"
+description = "Hyperliquid perpetuals adapter for gluonscan (clearinghouseState info API)."
+keywords = ["defi", "hyperliquid", "perpetuals", "perps", "derivatives"]
+categories = ["finance", "cryptography::cryptocurrencies"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+gluonscan-testing = { workspace = true }
