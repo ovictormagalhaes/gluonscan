@@ -1,0 +1,26 @@
+[package]
+name = "gluonscan-etherfi"
+description = "ether.fi liquid-restaking adapter for gluonscan (weETH / eETH on-chain balances)."
+keywords = ["defi", "etherfi", "restaking", "ethereum", "weeth"]
+categories = ["finance", "cryptography::cryptocurrencies"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+gluonscan-evm = { workspace = true }
+async-trait = { workspace = true }
+alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+gluonscan-testing = { workspace = true }

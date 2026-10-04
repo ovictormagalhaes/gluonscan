@@ -10,6 +10,11 @@ lockstep: one version, one tag, all crates.
 
 ### Added
 
+- `EtherFi` adapter (Ethereum): reads weETH + eETH liquid-restaking balances via on-chain
+  `balanceOf` and returns a `StakePosition`, with both tokens as receipt tokens so a consumer's
+  idle-wallet list does not double-count the stake. Restaking yield accrues inside the balance/rate
+  and ETHFI/EIGEN rewards are off-chain Merkle claims, so `rewards` stays empty; valuation is left to
+  the pricing layer. Feature `etherfi`; adds `Protocol::EtherFi`.
 - `Morpho` adapter (Ethereum, Base): reads Morpho Blue positions from the official GraphQL API and
   normalizes each isolated market into a `LendingPosition` (collateral + debt + per-market health
   factor; single LLTV as both max LTV and liquidation threshold; debt at 100%). Historical/dust
