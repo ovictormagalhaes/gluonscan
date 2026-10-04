@@ -75,6 +75,8 @@ async fn maps_the_live_borrow_and_drops_the_zeroed_market() {
     assert!(collateral.is_collateral);
     assert_eq!(collateral.liquidation_threshold, Some(dec("0.86")));
     assert_eq!(collateral.max_ltv, Some(dec("0.86")));
+    // Morpho Blue collateral earns no yield — an accurate zero, not a fabricated one.
+    assert_eq!(collateral.apy, Some(Decimal::ZERO));
 
     // Borrow leg: USDC (address + 6-decimal amount pinned), borrow factor 1 (Morpho Blue has none),
     // APY carried through as a fraction (~4.9%, not 490%).
@@ -101,10 +103,11 @@ async fn maps_the_live_borrow_and_drops_the_zeroed_market() {
 
 #[tokio::test]
 async fn large_18_decimal_amount_stays_lossless() {
-    // 1e26 wei = 100,000,000 of an 18-decimal token — far above u64, so default serde_json would
-    // truncate it through f64. arbitrary_precision must keep every digit.
+    // Morpho serializes any BigInt above 2^53 as a JSON STRING (verified against the live API), so
+    // a 1e26-wei (100M of an 18-decimal token) amount arrives quoted and is parsed verbatim — no
+    // f64 anywhere. Also asserts the supply leg carries the market's supplyApy (0.03 fraction).
     let response = r#"{"data":{"userByAddress":{"marketPositions":[
-      {"healthFactor":null,"state":{"supplyAssets":100000000000000000000000000,"borrowAssets":0,"collateral":0},
+      {"healthFactor":null,"state":{"supplyAssets":"100000000000000000000000000","borrowAssets":0,"collateral":0},
        "market":{"marketId":"0xabc","lltv":"860000000000000000",
          "loanAsset":{"symbol":"DAI","address":"0x6B175474E89094C44Da98b954EedeAC495271d0F","decimals":18},
          "collateralAsset":null,
@@ -114,12 +117,18 @@ async fn large_18_decimal_amount_stays_lossless() {
     let Position::Lending(p) = &reading.positions[0] else {
         panic!("expected a lending position");
     };
+    // Supply-only: one loan-supply leg, no collateral flag, HF stays None (no debt).
+    assert_eq!(p.supplied.len(), 1);
+    let supply = &p.supplied[0];
+    assert!(!supply.is_collateral);
     assert_eq!(
-        p.supplied[0].amount.raw,
+        supply.amount.raw,
         U256::from_str_radix("100000000000000000000000000", 10).unwrap(),
         "big-int amount must not be truncated to f64"
     );
-    assert!(!p.supplied[0].is_collateral);
+    assert_eq!(supply.apy, Some(dec("0.03")));
+    assert!(p.borrowed.is_empty());
+    assert!(p.health_factor.is_none());
 }
 
 #[tokio::test]
@@ -153,6 +162,59 @@ async fn collateral_without_its_asset_fails_closed() {
     assert!(
         !err.is_retryable(),
         "a missing collateral asset is not a transient error"
+    );
+}
+
+#[tokio::test]
+async fn debt_without_health_factor_fails_closed() {
+    // A borrow with no health factor would hide liquidation risk — the read must fail closed. This
+    // is the guard that no other test exercised; without it a deleted check would pass silently.
+    let response = r#"{"data":{"userByAddress":{"marketPositions":[
+      {"healthFactor":null,"state":{"supplyAssets":0,"borrowAssets":5149558401067,"collateral":11775745194},
+       "market":{"marketId":"0xabc","lltv":"860000000000000000",
+         "loanAsset":{"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","decimals":6},
+         "collateralAsset":{"symbol":"cbBTC","address":"0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf","decimals":8},
+         "state":{"supplyApy":0.044,"borrowApy":0.049}}}
+    ]}}}"#;
+    let err = read(response)
+        .await
+        .expect_err("debt without a health factor must fail closed");
+    assert!(
+        !err.is_retryable(),
+        "a missing health factor on a debt position is not transient"
+    );
+}
+
+#[tokio::test]
+async fn malformed_token_address_fails_closed() {
+    // A garbage loan-asset address can't be priced — fail closed, never an address-less token.
+    let response = r#"{"data":{"userByAddress":{"marketPositions":[
+      {"healthFactor":null,"state":{"supplyAssets":1000000,"borrowAssets":0,"collateral":0},
+       "market":{"marketId":"0xabc","lltv":"860000000000000000",
+         "loanAsset":{"symbol":"USDC","address":"not-an-address","decimals":6},
+         "collateralAsset":null,
+         "state":{"supplyApy":0.03,"borrowApy":0.05}}}
+    ]}}}"#;
+    let err = read(response)
+        .await
+        .expect_err("a malformed token address must fail closed");
+    assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn transient_http_failure_is_retryable() {
+    // The other half of the fail-closed contract: a transport-level failure (timeout/5xx) must
+    // surface as retryable so the caller retries next cycle, not skip permanently.
+    let http = MockHttp::new().on_transient(Match::body_contains("userByAddress"));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
+    let err = Morpho::new()
+        .with_endpoint("https://morpho.test/graphql")
+        .read(&Wallet::Evm(Address::ZERO), Chain::Base, Detail::Full, &cx)
+        .await
+        .expect_err("a transient HTTP failure must surface");
+    assert!(
+        err.is_retryable(),
+        "a transport failure must stay retryable"
     );
 }
 

@@ -104,13 +104,20 @@ impl ProtocolAdapter for Morpho {
         })?;
         check_graphql_errors(&json)?;
 
-        // A never-seen wallet can come back as `userByAddress: null`; that is "nothing here", not an
-        // error. Only a missing `data` (with errors) is a failure, handled above.
+        // A never-seen wallet comes back as `userByAddress: null` — "nothing here", not an error.
+        // But a non-null user with no `marketPositions` array is a malformed payload: fail closed
+        // rather than silently read it as empty.
         let empty = Vec::new();
-        let market_positions = json
-            .pointer("/data/userByAddress/marketPositions")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty);
+        let market_positions = match json.pointer("/data/userByAddress") {
+            Some(user) if !user.is_null() => user
+                .get("marketPositions")
+                .and_then(Value::as_array)
+                .ok_or_else(|| Error::Integrity {
+                    message: "Morpho userByAddress present but marketPositions is not an array"
+                        .into(),
+                })?,
+            _ => &empty,
+        };
 
         let mut positions = Vec::new();
         for mp in market_positions {
@@ -218,30 +225,40 @@ fn token_of(node: Option<&Value>, field: &str) -> Result<Token, Error> {
         .ok_or_else(|| Error::Integrity {
             message: format!("Morpho `{field}` missing decimals"),
         })? as u8;
+    // A lending leg must be priceable by address, so a missing/malformed address fails closed
+    // rather than emitting an address-less token the pricing layer can't resolve.
     let address = node
         .get("address")
         .and_then(Value::as_str)
-        .and_then(|s| Address::from_str(s).ok());
-    Ok(Token::evm(symbol, address, decimals))
+        .and_then(|s| Address::from_str(s).ok())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("Morpho `{field}` missing or malformed address"),
+        })?;
+    Ok(Token::evm(symbol, Some(address), decimals))
 }
 
-/// Exact non-negative integer from a JSON string or number. `arbitrary_precision` keeps big-int
-/// amounts lossless; `to_string()` yields the raw digits for a number.
+/// Exact non-negative integer from Morpho's `BigInt`. The API serializes a `BigInt` as a JSON
+/// string once it exceeds 2^53 and as a bare number below that, so a string is parsed verbatim and a
+/// bare number always fits `u64` (hence exact). An explicit JSON null means zero (no supply/borrow).
+/// Any other shape — including a bare number too large for `u64`, which the API never emits — fails
+/// closed rather than risk an f64 round-trip that would silently corrupt the amount.
 fn big_uint(v: Option<&Value>, field: &str) -> Result<U256, Error> {
     let v = v.ok_or_else(|| Error::Integrity {
         message: format!("Morpho field `{field}` missing"),
     })?;
-    let s = if let Some(s) = v.as_str() {
-        s.to_string()
-    } else if v.is_number() {
-        v.to_string()
-    } else {
-        return Err(Error::Integrity {
-            message: format!("Morpho field `{field}` not an integer"),
+    if v.is_null() {
+        return Ok(U256::ZERO);
+    }
+    if let Some(s) = v.as_str() {
+        return U256::from_str(s.trim()).map_err(|e| Error::Integrity {
+            message: format!("Morpho field `{field}` not a base-10 integer: {e}"),
         });
-    };
-    U256::from_str(s.trim()).map_err(|e| Error::Integrity {
-        message: format!("Morpho field `{field}` not a base-10 integer: {e}"),
+    }
+    if let Some(n) = v.as_u64() {
+        return Ok(U256::from(n));
+    }
+    Err(Error::Integrity {
+        message: format!("Morpho field `{field}` is not a representable integer"),
     })
 }
 
@@ -281,9 +298,9 @@ fn check_graphql_errors(json: &Value) -> Result<(), Error> {
                 .filter_map(|e| e.get("message").and_then(Value::as_str))
                 .map(String::from)
                 .collect();
-            return Err(Error::Provider(
-                format!("Morpho GraphQL error: {}", msg.join("; ")).into(),
-            ));
+            return Err(Error::Integrity {
+                message: format!("Morpho GraphQL error: {}", msg.join("; ")),
+            });
         }
     }
     if json.get("data").map(Value::is_null).unwrap_or(true) {

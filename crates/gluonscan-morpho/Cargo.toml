@@ -18,10 +18,7 @@ workspace = true
 [dependencies]
 gluonscan-core = { workspace = true }
 async-trait = { workspace = true }
-# arbitrary_precision: Morpho serializes base-unit amounts as JSON numbers, not strings. Default
-# serde_json truncates integers above u64 to f64, which would silently corrupt large 18-decimal
-# positions. This preserves the exact digits so amounts stay lossless.
-serde_json = { workspace = true, features = ["arbitrary_precision"] }
+serde_json = { workspace = true }
 rust_decimal = { workspace = true }
 alloy-primitives = { workspace = true }
 
