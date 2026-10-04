@@ -128,6 +128,8 @@ pub enum Protocol {
     EtherFi,
     /// Ethena staked USDe (sUSDe).
     Ethena,
+    /// Hyperliquid perpetuals.
+    Hyperliquid,
     /// Idle wallet token balances (not a protocol; a capability).
     Wallet,
     /// The chain's native coin balance (ETH, BNB, SOL, BTC, ...). Separate from [`Protocol::Wallet`]

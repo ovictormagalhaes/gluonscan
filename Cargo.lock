@@ -1217,6 +1217,7 @@ dependencies = [
  "gluonscan-ethena",
  "gluonscan-etherfi",
  "gluonscan-evm",
+ "gluonscan-hyperliquid",
  "gluonscan-kamino",
  "gluonscan-lido",
  "gluonscan-math",
@@ -1290,6 +1291,18 @@ dependencies = [
  "chrono",
  "gluonscan-core",
  "gluonscan-testing",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "gluonscan-hyperliquid"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-testing",
+ "rust_decimal",
  "serde_json",
  "tokio",
 ]
