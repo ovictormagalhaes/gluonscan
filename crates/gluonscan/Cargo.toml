@@ -27,6 +27,7 @@ gluonscan-evm = { workspace = true }
 gluonscan-aave = { workspace = true, optional = true }
 gluonscan-uniswap = { workspace = true, optional = true }
 gluonscan-lido = { workspace = true, optional = true }
+gluonscan-morpho = { workspace = true, optional = true }
 gluonscan-pendle = { workspace = true, optional = true }
 gluonscan-kamino = { workspace = true, optional = true }
 gluonscan-raydium = { workspace = true, optional = true }
@@ -45,13 +46,14 @@ default = ["full"]
 aave = ["dep:gluonscan-aave"]
 uniswap = ["dep:gluonscan-uniswap"]
 lido = ["dep:gluonscan-lido"]
+morpho = ["dep:gluonscan-morpho"]
 pendle = ["dep:gluonscan-pendle"]
 kamino = ["dep:gluonscan-kamino"]
 raydium = ["dep:gluonscan-raydium"]
 prices = ["dep:gluonscan-sources"]
 wallet = ["dep:gluonscan-wallet"]
 # Ecosystem umbrellas.
-evm = ["aave", "uniswap", "lido", "pendle"]
+evm = ["aave", "uniswap", "lido", "morpho", "pendle"]
 solana = ["kamino", "raydium"]
 full = ["evm", "solana", "prices", "wallet"]
 
