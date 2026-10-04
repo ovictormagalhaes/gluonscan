@@ -1,0 +1,27 @@
+[package]
+name = "gluonscan-morpho"
+description = "Morpho Blue lending adapter for gluonscan (GraphQL API; isolated markets, per-market health factor)."
+keywords = ["defi", "morpho", "lending", "ethereum", "base"]
+categories = ["finance", "cryptography::cryptocurrencies"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+gluonscan-testing = { workspace = true }
