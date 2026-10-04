@@ -1216,6 +1216,7 @@ dependencies = [
  "gluonscan-core",
  "gluonscan-evm",
  "gluonscan-kamino",
+ "gluonscan-lido",
  "gluonscan-math",
  "gluonscan-pendle",
  "gluonscan-raydium",
@@ -1279,6 +1280,18 @@ dependencies = [
  "gluonscan-testing",
  "rust_decimal",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "gluonscan-lido"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-evm",
+ "gluonscan-testing",
  "tokio",
 ]
 

@@ -36,6 +36,8 @@ pub use gluonscan_evm::transfers;
 pub use gluonscan_aave::AaveApi;
 #[cfg(feature = "kamino")]
 pub use gluonscan_kamino::KaminoApi;
+#[cfg(feature = "lido")]
+pub use gluonscan_lido::Lido;
 #[cfg(feature = "pendle")]
 pub use gluonscan_pendle::PendleApi;
 #[cfg(feature = "raydium")]

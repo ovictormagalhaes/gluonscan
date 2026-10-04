@@ -10,6 +10,10 @@ lockstep: one version, one tag, all crates.
 
 ### Added
 
+- `Lido` adapter (Ethereum): reads stETH + wstETH balances via on-chain `balanceOf` and returns a
+  `StakePosition`, with both tokens reported as receipt tokens so a consumer's idle-wallet list does
+  not double-count the stake. Rewards auto-compound into the balance, so `rewards` stays empty;
+  valuation is left to the pricing layer. Feature `lido`; adds `Protocol::Lido`.
 - `Position::Perp` + `PerpPosition` / `PerpSide`: a perpetual/derivative position kind (side, size,
   entry/mark/liquidation price, leverage, unrealized PnL, funding). Unset fields stay `None`.
 - Claimable `rewards: Vec<Amount>` on `LendingPosition`, `LiquidityPosition` and `StakePosition`
