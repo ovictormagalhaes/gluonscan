@@ -56,8 +56,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
-      - name: check each feature combination
-        run: cargo hack check --workspace --feature-powerset --no-dev-deps
+      # On PRs run `--each-feature` (linear in the number of features) so adding a protocol adds one
+      # check, not doubling a `--feature-powerset` run. The full powerset (every subset) is
+      # exponential and would grow unbounded with each adapter feature. Each-feature guarantees every
+      # feature compiles on its own; the all-features-together case (where a feature-unification bug
+      # would surface) is already covered by the `test`/`msrv` jobs, which build the default `full`
+      # set. The exhaustive powerset still runs on pushes to `main`, where it never blocks a PR.
+      - name: check feature combinations
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            cargo hack check --workspace --each-feature --no-dev-deps
+          else
+            cargo hack check --workspace --feature-powerset --no-dev-deps
+          fi
 
   deny:
     name: cargo-deny (licenses · advisories · bans)
