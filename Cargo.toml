@@ -10,6 +10,7 @@ members = [
     "crates/gluonscan-morpho",
     "crates/gluonscan-etherfi",
     "crates/gluonscan-ethena",
+    "crates/gluonscan-hyperliquid",
     "crates/gluonscan-pendle",
     "crates/gluonscan-kamino",
     "crates/gluonscan-solana",
@@ -60,6 +61,7 @@ gluonscan-lido = { path = "crates/gluonscan-lido", version = "0.1.0" }
 gluonscan-morpho = { path = "crates/gluonscan-morpho", version = "0.1.0" }
 gluonscan-etherfi = { path = "crates/gluonscan-etherfi", version = "0.1.0" }
 gluonscan-ethena = { path = "crates/gluonscan-ethena", version = "0.1.0" }
+gluonscan-hyperliquid = { path = "crates/gluonscan-hyperliquid", version = "0.1.0" }
 gluonscan-pendle = { path = "crates/gluonscan-pendle", version = "0.1.0" }
 gluonscan-kamino = { path = "crates/gluonscan-kamino", version = "0.1.0" }
 gluonscan-solana = { path = "crates/gluonscan-solana", version = "0.1.0" }

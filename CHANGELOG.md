@@ -10,6 +10,12 @@ lockstep: one version, one tag, all crates.
 
 ### Added
 
+- `Hyperliquid` adapter: reads a wallet's open perpetuals from the public `clearinghouseState` info
+  API and normalizes each into a `PerpPosition` (side from the sign of size; mark derived from the
+  returned notional; entry/liquidation price, leverage, USD PnL, funding, and USDC collateral). All
+  numeric fields are parsed straight to `Decimal` (never `f64`); a null liquidation price or absent
+  funding stays `None`; a malformed payload or unparseable required field fails closed. First user of
+  `Position::Perp`. Feature `hyperliquid`; adds `Protocol::Hyperliquid`.
 - `Ethena` adapter (Ethereum): reads the sUSDe (staked-USDe ERC-4626 share) balance via on-chain
   `balanceOf` and returns a `StakePosition`, with sUSDe as a receipt token so a consumer's
   idle-wallet list does not double-count the stake. Yield accrues in the share price (not a separate
