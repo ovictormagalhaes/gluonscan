@@ -14,6 +14,7 @@ injected [`ChainProvider`](concepts/providers.md) · `key` a provider API key.
 | `AaveApi` | Aave V3 | EVM | Ethereum, Base, Arbitrum, Optimism, Polygon, BNB | 🌐 | `HTTP` | Positions, Health factor |
 | `Lido` | Lido | EVM | Ethereum | ⛓️ | `RPC` | Positions |
 | `EtherFi` | ether.fi | EVM | Ethereum | ⛓️ | `RPC` | Positions |
+| `Ethena` | Ethena | EVM | Ethereum | ⛓️ | `RPC` | Positions |
 | `Morpho` | Morpho Blue | EVM | Ethereum, Base | 🌐 | `HTTP` | Positions, Health factor, Risk config |
 | `UniswapV3` | Uniswap V3 | EVM | Ethereum, Base, Arbitrum | 📈 + ⛓️ | `HTTP` (+ `RPC` for `Full` fees) | Positions, Fees |
 | `PendleApi` | Pendle | EVM | Ethereum, Arbitrum, Base | 🌐 + ⛓️ | `HTTP` + `RPC` | Positions |

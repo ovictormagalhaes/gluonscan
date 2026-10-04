@@ -10,6 +10,11 @@ lockstep: one version, one tag, all crates.
 
 ### Added
 
+- `Ethena` adapter (Ethereum): reads the sUSDe (staked-USDe ERC-4626 share) balance via on-chain
+  `balanceOf` and returns a `StakePosition`, with sUSDe as a receipt token so a consumer's
+  idle-wallet list does not double-count the stake. Yield accrues in the share price (not a separate
+  claimable), so `rewards` stays empty; valuation is left to the pricing layer. Feature `ethena`;
+  adds `Protocol::Ethena`.
 - `EtherFi` adapter (Ethereum): reads weETH + eETH liquid-restaking balances via on-chain
   `balanceOf` and returns a `StakePosition`, with both tokens as receipt tokens so a consumer's
   idle-wallet list does not double-count the stake. Restaking yield accrues inside the balance/rate

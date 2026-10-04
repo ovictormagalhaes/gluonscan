@@ -126,6 +126,8 @@ pub enum Protocol {
     Morpho,
     /// ether.fi liquid restaking (weETH / eETH).
     EtherFi,
+    /// Ethena staked USDe (sUSDe).
+    Ethena,
     /// Idle wallet token balances (not a protocol; a capability).
     Wallet,
     /// The chain's native coin balance (ETH, BNB, SOL, BTC, ...). Separate from [`Protocol::Wallet`]
