@@ -124,6 +124,8 @@ pub enum Protocol {
     Lido,
     /// Morpho Blue lending.
     Morpho,
+    /// ether.fi liquid restaking (weETH / eETH).
+    EtherFi,
     /// Idle wallet token balances (not a protocol; a capability).
     Wallet,
     /// The chain's native coin balance (ETH, BNB, SOL, BTC, ...). Separate from [`Protocol::Wallet`]
