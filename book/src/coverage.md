@@ -12,6 +12,7 @@ injected [`ChainProvider`](concepts/providers.md) · `key` a provider API key.
 | Backend | Protocol | Ecosystem | Chains | Source | Transport | Capabilities |
 |---|---|---|---|---|---|---|
 | `AaveApi` | Aave V3 | EVM | Ethereum, Base, Arbitrum, Optimism, Polygon, BNB | 🌐 | `HTTP` | Positions, Health factor |
+| `Lido` | Lido | EVM | Ethereum | ⛓️ | `RPC` | Positions |
 | `UniswapV3` | Uniswap V3 | EVM | Ethereum, Base, Arbitrum | 📈 + ⛓️ | `HTTP` (+ `RPC` for `Full` fees) | Positions, Fees |
 | `PendleApi` | Pendle | EVM | Ethereum, Arbitrum, Base | 🌐 + ⛓️ | `HTTP` + `RPC` | Positions |
 | `KaminoApi` | Kamino | Solana | Solana | 🌐 | `HTTP` | Positions, Health factor |
