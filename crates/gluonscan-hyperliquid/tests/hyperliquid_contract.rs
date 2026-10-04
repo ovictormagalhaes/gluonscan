@@ -75,6 +75,7 @@ async fn maps_the_live_short_position() {
     assert_eq!(pnl.currency, Currency::Usd);
     assert_eq!(pnl.amount, dec("-2666521.2567420001"));
     let funding = p.funding.as_ref().expect("funding");
+    assert_eq!(funding.currency, Currency::Usd);
     assert_eq!(funding.amount, dec("-570146.735832"));
 
     // Collateral is the USDC margin with its USD value attached.
@@ -118,6 +119,44 @@ async fn missing_required_field_fails_closed() {
     let err = read(response)
         .await
         .expect_err("a position missing positionValue must fail closed");
+    assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn funding_present_but_malformed_fails_closed() {
+    // cumFunding.sinceOpen is present but not a parseable decimal string — a real USD figure in an
+    // unexpected shape must fail closed, not be silently dropped to "no funding".
+    let response = r#"{"assetPositions":[{"type":"oneWay","position":{
+      "coin":"ETH","szi":"1.0","leverage":{"type":"cross","value":5},"entryPx":"3000",
+      "positionValue":"3100","unrealizedPnl":"100","marginUsed":"600","liquidationPx":"2000",
+      "cumFunding":{"sinceOpen":"not-a-number"}}}],"time":1}"#;
+    let err = read(response)
+        .await
+        .expect_err("a present-but-malformed funding value must fail closed");
+    assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn zero_size_fails_closed() {
+    // A zero size would make the mark division degenerate; the guard must fail closed.
+    let response = r#"{"assetPositions":[{"type":"oneWay","position":{
+      "coin":"ETH","szi":"0","leverage":{"type":"cross","value":5},"entryPx":"3000",
+      "positionValue":"0","unrealizedPnl":"0","marginUsed":"0"}}],"time":1}"#;
+    let err = read(response)
+        .await
+        .expect_err("a zero-size position must fail closed");
+    assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn unparseable_liquidation_price_fails_closed() {
+    // A present-but-garbage liquidationPx fails closed (vs a null one, which is a legitimate None).
+    let response = r#"{"assetPositions":[{"type":"oneWay","position":{
+      "coin":"ETH","szi":"1.0","leverage":{"type":"cross","value":5},"entryPx":"3000",
+      "positionValue":"3100","unrealizedPnl":"100","marginUsed":"600","liquidationPx":"soon"}}],"time":1}"#;
+    let err = read(response)
+        .await
+        .expect_err("a present-but-unparseable liquidation price must fail closed");
     assert!(!err.is_retryable());
 }
 

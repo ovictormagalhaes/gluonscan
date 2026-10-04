@@ -146,11 +146,14 @@ fn parse_perp(pos: &Value) -> Result<PerpPosition, Error> {
     let pnl = dec(pos, "unrealizedPnl")?;
     let margin = dec(pos, "marginUsed")?;
 
-    let leverage = pos
-        .get("leverage")
-        .and_then(|l| l.get("value"))
-        .and_then(Value::as_i64)
-        .map(Decimal::from);
+    // Absent leverage → None; present but not an integer → fail closed (never silently drop a
+    // present-but-malformed value).
+    let leverage = match pos.get("leverage").and_then(|l| l.get("value")) {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(Decimal::from(
+            v.as_i64().ok_or_else(|| integrity("leverage.value"))?,
+        )),
+    };
 
     let liquidation_price = match pos.get("liquidationPx") {
         None | Some(Value::Null) => None,
@@ -161,12 +164,17 @@ fn parse_perp(pos: &Value) -> Result<PerpPosition, Error> {
         ),
     };
 
-    let funding = pos
-        .get("cumFunding")
-        .and_then(|c| c.get("sinceOpen"))
-        .and_then(Value::as_str)
-        .and_then(|s| Decimal::from_str(s).ok())
-        .map(Money::usd);
+    // Absent cumFunding → None (legitimately unknown); present but unparseable → fail closed, same
+    // as liquidationPx. Negative means funding paid by this position (matches both the model's
+    // convention and Hyperliquid's own sign convention), so the value maps through verbatim.
+    let funding = match pos.get("cumFunding").and_then(|c| c.get("sinceOpen")) {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(Money::usd(
+            v.as_str()
+                .and_then(|s| Decimal::from_str(s).ok())
+                .ok_or_else(|| integrity("cumFunding.sinceOpen"))?,
+        )),
+    };
 
     // Collateral is the USDC margin. Hyperliquid is USD-margined and its USDC == USD with no contract
     // to price it by, so the USD value is the API's own authoritative figure, not a fabricated price.
