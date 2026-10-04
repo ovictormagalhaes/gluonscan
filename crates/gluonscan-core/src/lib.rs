@@ -120,6 +120,8 @@ pub enum Protocol {
     Raydium,
     /// Kamino lending/liquidity (Solana).
     Kamino,
+    /// Lido liquid staking (stETH / wstETH).
+    Lido,
     /// Idle wallet token balances (not a protocol; a capability).
     Wallet,
     /// The chain's native coin balance (ETH, BNB, SOL, BTC, ...). Separate from [`Protocol::Wallet`]

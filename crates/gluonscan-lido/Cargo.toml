@@ -1,0 +1,26 @@
+[package]
+name = "gluonscan-lido"
+description = "Lido liquid-staking adapter for gluonscan (stETH / wstETH on-chain balances)."
+keywords = ["defi", "lido", "staking", "ethereum", "steth"]
+categories = ["finance", "cryptography::cryptocurrencies"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gluonscan-core = { workspace = true }
+gluonscan-evm = { workspace = true }
+async-trait = { workspace = true }
+alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+gluonscan-testing = { workspace = true }
