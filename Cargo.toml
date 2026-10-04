@@ -7,6 +7,7 @@ members = [
     "crates/gluonscan-aave",
     "crates/gluonscan-uniswap",
     "crates/gluonscan-lido",
+    "crates/gluonscan-morpho",
     "crates/gluonscan-pendle",
     "crates/gluonscan-kamino",
     "crates/gluonscan-solana",
@@ -54,6 +55,7 @@ gluonscan-math = { path = "crates/gluonscan-math", version = "0.1.0" }
 gluonscan-aave = { path = "crates/gluonscan-aave", version = "0.1.0" }
 gluonscan-uniswap = { path = "crates/gluonscan-uniswap", version = "0.1.0" }
 gluonscan-lido = { path = "crates/gluonscan-lido", version = "0.1.0" }
+gluonscan-morpho = { path = "crates/gluonscan-morpho", version = "0.1.0" }
 gluonscan-pendle = { path = "crates/gluonscan-pendle", version = "0.1.0" }
 gluonscan-kamino = { path = "crates/gluonscan-kamino", version = "0.1.0" }
 gluonscan-solana = { path = "crates/gluonscan-solana", version = "0.1.0" }
