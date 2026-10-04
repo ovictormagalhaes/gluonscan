@@ -10,6 +10,11 @@ lockstep: one version, one tag, all crates.
 
 ### Added
 
+- `Morpho` adapter (Ethereum, Base): reads Morpho Blue positions from the official GraphQL API and
+  normalizes each isolated market into a `LendingPosition` (collateral + debt + per-market health
+  factor; single LLTV as both max LTV and liquidation threshold; debt at 100%). Historical/dust
+  markets are dropped; a debt position without a health factor fails closed. Base-unit amounts are
+  kept lossless via `serde_json`'s `arbitrary_precision`. Feature `morpho`; adds `Protocol::Morpho`.
 - `Lido` adapter (Ethereum): reads stETH + wstETH balances via on-chain `balanceOf` and returns a
   `StakePosition`, with both tokens reported as receipt tokens so a consumer's idle-wallet list does
   not double-count the stake. Rewards auto-compound into the balance, so `rewards` stays empty;

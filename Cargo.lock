@@ -1218,6 +1218,7 @@ dependencies = [
  "gluonscan-kamino",
  "gluonscan-lido",
  "gluonscan-math",
+ "gluonscan-morpho",
  "gluonscan-pendle",
  "gluonscan-raydium",
  "gluonscan-sources",
@@ -1303,6 +1304,19 @@ dependencies = [
  "proptest",
  "rust_decimal",
  "rust_decimal_macros",
+]
+
+[[package]]
+name = "gluonscan-morpho"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-testing",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

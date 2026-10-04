@@ -38,6 +38,8 @@ pub use gluonscan_aave::AaveApi;
 pub use gluonscan_kamino::KaminoApi;
 #[cfg(feature = "lido")]
 pub use gluonscan_lido::Lido;
+#[cfg(feature = "morpho")]
+pub use gluonscan_morpho::Morpho;
 #[cfg(feature = "pendle")]
 pub use gluonscan_pendle::PendleApi;
 #[cfg(feature = "raydium")]

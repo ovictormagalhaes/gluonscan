@@ -122,6 +122,8 @@ pub enum Protocol {
     Kamino,
     /// Lido liquid staking (stETH / wstETH).
     Lido,
+    /// Morpho Blue lending.
+    Morpho,
     /// Idle wallet token balances (not a protocol; a capability).
     Wallet,
     /// The chain's native coin balance (ETH, BNB, SOL, BTC, ...). Separate from [`Protocol::Wallet`]
