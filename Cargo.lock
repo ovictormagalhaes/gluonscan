@@ -1214,6 +1214,7 @@ dependencies = [
  "async-trait",
  "gluonscan-aave",
  "gluonscan-core",
+ "gluonscan-etherfi",
  "gluonscan-evm",
  "gluonscan-kamino",
  "gluonscan-lido",
@@ -1254,6 +1255,18 @@ dependencies = [
  "rust_decimal",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "gluonscan-etherfi"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "gluonscan-core",
+ "gluonscan-evm",
+ "gluonscan-testing",
+ "tokio",
 ]
 
 [[package]]

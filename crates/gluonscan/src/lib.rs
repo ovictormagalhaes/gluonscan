@@ -34,6 +34,8 @@ pub use gluonscan_evm::transfers;
 // of an ecosystem never compiles its dependency stack.
 #[cfg(feature = "aave")]
 pub use gluonscan_aave::AaveApi;
+#[cfg(feature = "etherfi")]
+pub use gluonscan_etherfi::EtherFi;
 #[cfg(feature = "kamino")]
 pub use gluonscan_kamino::KaminoApi;
 #[cfg(feature = "lido")]
