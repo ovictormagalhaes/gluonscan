@@ -8,40 +8,55 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.0-beta.1] - 2026-10-04
+
+The first release on the `0.2.0-beta` line. It adds a new position kind and a rewards dimension to
+the core contract, then **five new protocol adapters** that nearly double the engine's coverage —
+from Aave V3, Uniswap V3, Pendle, Kamino and Raydium to also include **Lido, ether.fi, Ethena,
+Morpho and Hyperliquid**, spanning liquid staking/restaking, isolated-market lending and perpetuals
+across Ethereum, Base and Hyperliquid.
+
+Every new adapter reads on-chain or from a first-party API, normalizes to the domain contract, and
+**fails closed** — a partial, degraded or fabricated value is always an error, never a silent `0`.
+No money ever routes through `f64`: amounts are exact `U256`/`Decimal`. Valuation stays a separate
+operation, so adapters report token amounts (and, for USD-margined perps, the venue's own
+authoritative USD figures) and leave pricing to the pricing layer.
+
 ### Added
 
-- `Hyperliquid` adapter: reads a wallet's open perpetuals from the public `clearinghouseState` info
-  API and normalizes each into a `PerpPosition` (side from the sign of size; mark derived from the
-  returned notional; entry/liquidation price, leverage, USD PnL, funding, and USDC collateral). All
-  numeric fields are parsed straight to `Decimal` (never `f64`); a null liquidation price or absent
-  funding stays `None`; a malformed payload or unparseable required field fails closed. First user of
-  `Position::Perp`. Feature `hyperliquid`; adds `Protocol::Hyperliquid`.
-- `Ethena` adapter (Ethereum): reads the sUSDe (staked-USDe ERC-4626 share) balance via on-chain
-  `balanceOf` and returns a `StakePosition`, with sUSDe as a receipt token so a consumer's
-  idle-wallet list does not double-count the stake. Yield accrues in the share price (not a separate
-  claimable), so `rewards` stays empty; valuation is left to the pricing layer. Feature `ethena`;
-  adds `Protocol::Ethena`.
-- `EtherFi` adapter (Ethereum): reads weETH + eETH liquid-restaking balances via on-chain
-  `balanceOf` and returns a `StakePosition`, with both tokens as receipt tokens so a consumer's
-  idle-wallet list does not double-count the stake. Restaking yield accrues inside the balance/rate
-  and ETHFI/EIGEN rewards are off-chain Merkle claims, so `rewards` stays empty; valuation is left to
-  the pricing layer. Feature `etherfi`; adds `Protocol::EtherFi`.
-- `Morpho` adapter (Ethereum, Base): reads Morpho Blue positions from the official GraphQL API and
-  normalizes each isolated market into a `LendingPosition` (collateral + debt + per-market health
-  factor; single LLTV as both max LTV and liquidation threshold; debt at 100%). Historical/dust
-  markets are dropped; a debt position without a health factor, or collateral without its asset
-  metadata, fails closed. Base-unit amounts stay exact: Morpho serializes a `BigInt` as a string
-  above 2^53 (parsed verbatim) and as a bare number below (fits `u64`). Feature `morpho`; adds
-  `Protocol::Morpho`.
-- `Lido` adapter (Ethereum): reads stETH + wstETH balances via on-chain `balanceOf` and returns a
-  `StakePosition`, with both tokens reported as receipt tokens so a consumer's idle-wallet list does
-  not double-count the stake. Rewards auto-compound into the balance, so `rewards` stays empty;
-  valuation is left to the pricing layer. Feature `lido`; adds `Protocol::Lido`.
+#### Core
+
 - `Position::Perp` + `PerpPosition` / `PerpSide`: a perpetual/derivative position kind (side, size,
   entry/mark/liquidation price, leverage, unrealized PnL, funding). Unset fields stay `None`.
 - Claimable `rewards: Vec<Amount>` on `LendingPosition`, `LiquidityPosition` and `StakePosition`
   (emission/incentive tokens, distinct from LP trading fees), with `with_rewards` builders, surfaced
   by the new `Capability::Rewards`.
+
+#### Adapters
+
+- `Lido` (Ethereum): reads stETH + wstETH balances via on-chain `balanceOf` and returns a
+  `StakePosition`, with both tokens reported as receipt tokens so a consumer's idle-wallet list does
+  not double-count the stake. Rewards auto-compound into the balance, so `rewards` stays empty;
+  valuation is left to the pricing layer. Feature `lido`; adds `Protocol::Lido`.
+- `EtherFi` (Ethereum): reads weETH + eETH liquid-restaking balances via on-chain `balanceOf` and
+  returns a `StakePosition`, with both tokens as receipt tokens. Restaking yield accrues inside the
+  balance/rate and ETHFI/EIGEN rewards are off-chain Merkle claims, so `rewards` stays empty.
+  Feature `etherfi`; adds `Protocol::EtherFi`.
+- `Ethena` (Ethereum): reads the sUSDe (staked-USDe ERC-4626 share) balance via on-chain `balanceOf`
+  and returns a `StakePosition`, with sUSDe as a receipt token. Yield accrues in the share price (not
+  a separate claimable), so `rewards` stays empty. Feature `ethena`; adds `Protocol::Ethena`.
+- `Morpho` (Ethereum, Base): reads Morpho Blue positions from the official GraphQL API and normalizes
+  each isolated market into a `LendingPosition` (collateral + debt + per-market health factor; single
+  LLTV as both max LTV and liquidation threshold; debt at 100%). Historical/dust markets are dropped;
+  a debt position without a health factor, or collateral without its asset metadata, fails closed.
+  Base-unit amounts stay exact: Morpho serializes a `BigInt` as a string above 2^53 (parsed verbatim)
+  and as a bare number below (fits `u64`). Feature `morpho`; adds `Protocol::Morpho`.
+- `Hyperliquid`: reads a wallet's open perpetuals from the public `clearinghouseState` info API and
+  normalizes each into a `PerpPosition` (side from the sign of size; mark derived from the returned
+  notional; entry/liquidation price, leverage, USD PnL, funding, and USDC collateral). A null
+  liquidation price or absent funding stays `None`; a malformed payload or any present-but-unparseable
+  field fails closed. First user of `Position::Perp`. Feature `hyperliquid`; adds
+  `Protocol::Hyperliquid`.
 
 ## [0.1.0] - 2026-10-03
 
@@ -220,7 +235,9 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.4...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.1...HEAD
+[0.2.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.1.0...v0.2.0-beta.1
+[0.1.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.15...v0.1.0
 [0.0.1-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.3...v0.0.1-beta.4
 [0.0.1-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.2...v0.0.1-beta.3
 [0.0.1-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.1...v0.0.1-beta.2
