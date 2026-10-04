@@ -38,6 +38,8 @@ pub use gluonscan_aave::AaveApi;
 pub use gluonscan_ethena::Ethena;
 #[cfg(feature = "etherfi")]
 pub use gluonscan_etherfi::EtherFi;
+#[cfg(feature = "hyperliquid")]
+pub use gluonscan_hyperliquid::Hyperliquid;
 #[cfg(feature = "kamino")]
 pub use gluonscan_kamino::KaminoApi;
 #[cfg(feature = "lido")]
