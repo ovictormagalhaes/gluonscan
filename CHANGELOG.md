@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.0-beta.3] - 2026-10-05
+
+### Fixed
+
+- **Morpho: never surface a health factor without debt.** Morpho's API can return a stale/inconsistent
+  `healthFactor` for a market whose borrow is currently zero (eventual consistency between the HF
+  field and the position state). A health factor only exists against debt, so a collateral-only
+  position now carries `None` — the exact dual of the existing debt-without-HF guard. Prevents an
+  orphaned health factor rendering on a collateral-only card downstream.
+
 ## [0.2.0-beta.2] - 2026-10-05
 
 ### Added
@@ -246,7 +256,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.2...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.3...HEAD
+[0.2.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.2...v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.1...v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.1.0...v0.2.0-beta.1
 [0.1.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.15...v0.1.0

@@ -205,7 +205,16 @@ fn parse_market_position(mp: &Value) -> Result<Option<LendingPosition>, Error> {
         );
     }
 
-    let health_factor = mp.get("healthFactor").and_then(Value::as_f64).and_then(dec);
+    // A health factor only exists against debt. Morpho's API can return a stale/inconsistent HF for
+    // a market whose borrow is currently zero (eventual consistency between the HF field and the
+    // position state). Never surface a health factor without debt: downstream it reads as liquidation
+    // risk that does not exist (an orphaned HF on a collateral-only card). HF is Some iff there is a
+    // borrow leg — the exact dual of the debt-without-HF guard below.
+    let health_factor = if borrowed.is_empty() {
+        None
+    } else {
+        mp.get("healthFactor").and_then(Value::as_f64).and_then(dec)
+    };
     if !borrowed.is_empty() && health_factor.is_none() {
         // Never hide liquidation risk: debt without a health factor is incomplete.
         return Err(Error::Integrity {
