@@ -49,11 +49,17 @@ async fn maps_the_live_short_position() {
     let reading = read(RESPONSE).await.expect("read");
 
     assert_eq!(reading.protocol, Protocol::Hyperliquid);
-    assert_eq!(reading.positions.len(), 1);
+    // One open perp, plus the account's margin equity emitted once as a USDC wallet balance.
+    assert_eq!(reading.positions.len(), 2);
 
-    let Position::Perp(p) = &reading.positions[0] else {
-        panic!("expected a perp position");
-    };
+    let p = reading
+        .positions
+        .iter()
+        .find_map(|pos| match pos {
+            Position::Perp(p) => Some(p),
+            _ => None,
+        })
+        .expect("expected a perp position");
 
     assert_eq!(p.market, "HYPE");
     assert_eq!(p.side, PerpSide::Short); // szi is negative
@@ -87,6 +93,51 @@ async fn maps_the_live_short_position() {
         col.usd.as_ref().map(|m| m.amount),
         Some(dec("3146871.9509899998"))
     );
+
+    // The account's margin equity (marginSummary.accountValue) is emitted once as a USDC balance —
+    // the portfolio figure, independent of the margin backing any single position.
+    let equity = reading
+        .positions
+        .iter()
+        .find_map(|pos| match pos {
+            Position::Wallet(w) => Some(&w.amount),
+            _ => None,
+        })
+        .expect("expected the account equity balance");
+    assert_eq!(equity.token.symbol, "USDC");
+    assert_eq!(equity.amount, dec("3161724.061735"));
+    assert_eq!(
+        equity.usd.as_ref().map(|m| m.amount),
+        Some(dec("3161724.061735"))
+    );
+}
+
+#[tokio::test]
+async fn cash_only_account_reports_equity_with_no_perp() {
+    // A deposited account with no open positions still has portfolio value: the equity balance must
+    // be emitted even though there is no perp, or the account would read as $0.
+    let response = r#"{"marginSummary":{"accountValue":"1250.5"},"assetPositions":[],"time":1}"#;
+    let reading = read(response).await.expect("read");
+    assert_eq!(reading.positions.len(), 1);
+    let Position::Wallet(w) = &reading.positions[0] else {
+        panic!("expected the account equity balance");
+    };
+    assert_eq!(w.amount.token.symbol, "USDC");
+    assert_eq!(w.amount.amount, dec("1250.5"));
+    assert_eq!(w.amount.usd.as_ref().map(|m| m.amount), Some(dec("1250.5")));
+}
+
+#[tokio::test]
+async fn missing_account_value_fails_closed() {
+    // An open position with no marginSummary.accountValue would undercount net worth (equity lost);
+    // the net-worth-bearing figure must fail closed, not be silently dropped.
+    let response = r#"{"assetPositions":[{"type":"oneWay","position":{
+      "coin":"ETH","szi":"1.0","leverage":{"type":"cross","value":5},"entryPx":"3000",
+      "positionValue":"3100","unrealizedPnl":"100","marginUsed":"600","liquidationPx":"2000"}}],"time":1}"#;
+    let err = read(response)
+        .await
+        .expect_err("a response missing marginSummary.accountValue must fail closed");
+    assert!(!err.is_retryable());
 }
 
 #[tokio::test]

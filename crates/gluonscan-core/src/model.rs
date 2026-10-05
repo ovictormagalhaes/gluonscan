@@ -967,7 +967,9 @@ impl PerpPosition {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Position {
-    /// A token held idle in the wallet (not in any protocol).
+    /// A plain token balance held by the owner: a token idle in an on-chain wallet, or the
+    /// cash/equity balance of a protocol account (e.g. the USD-margin equity of a perps account).
+    /// Carries a value but no protocol-specific position mechanics.
     Wallet(WalletBalance),
     /// A lending position.
     Lending(LendingPosition),
