@@ -10,6 +10,7 @@ use gluonscan_core::{
 };
 use gluonscan_ethena::Ethena;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
+use rust_decimal::Decimal;
 
 const SUSDE_ADDR: &str = "0x9d39a5de30e57443bff2a8307a4256c8797a3497";
 
@@ -35,6 +36,37 @@ async fn read_reply(body: String) -> Result<gluonscan_core::Reading, Error> {
         )
         .await
         .map(|c| c.into_inner())
+}
+
+#[tokio::test]
+async fn attaches_the_ethena_yield_as_a_fraction() {
+    let rpc = MockChainProvider::new().on(Match::method("eth_call"), reply(SUSDE_BAL));
+    // The Ethena API returns a percentage under avg30dSusdeYield.value; carried as a fraction.
+    let http = MockHttp::new().on(
+        Match::primary_contains("ethena.fi"),
+        r#"{"avg30dSusdeYield":{"lastUpdated":"30 Sep 26","value":4.8492}}"#,
+    );
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let reading = Ethena::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    let apy = p.apy.expect("yield attached");
+    // 4.8492% -> ~0.048492 fraction.
+    assert!(
+        apy > Decimal::from_str_exact("0.048").unwrap()
+            && apy < Decimal::from_str_exact("0.049").unwrap(),
+        "got {apy}"
+    );
 }
 
 #[tokio::test]

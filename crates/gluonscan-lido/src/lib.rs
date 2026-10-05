@@ -19,9 +19,21 @@ use gluonscan_core::{
     Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
 };
 use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
+use rust_decimal::Decimal;
 
 const STETH: Address = address!("ae7ab96520DE3A18E5e111B5EaAb095312D7fE84");
 const WSTETH: Address = address!("7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0");
+
+/// Current stETH staking APR, as a fraction (`0.0222` = 2.22%), from the Lido API. Best-effort: any
+/// failure (network, schema, parse) yields `None` — the APY is informational and must never fail the
+/// balance read closed. The API returns a percentage (`2.216` = 2.216%), normalized here.
+async fn fetch_apr(cx: &Ctx) -> Option<Decimal> {
+    const APR_URL: &str = "https://eth-api.lido.fi/v1/protocol/steth/apr/last";
+    let raw = cx.http.get(APR_URL, &[]).await.ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let apr = json.get("data")?.get("apr")?.as_f64()?;
+    Decimal::try_from(apr / 100.0).ok()
+}
 
 const CAPABILITIES: &[Capability] = &[Capability::Positions];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum];
@@ -98,7 +110,8 @@ impl ProtocolAdapter for Lido {
         let positions = if staked.is_empty() {
             Vec::new()
         } else {
-            vec![Position::Stake(StakePosition::new(staked))]
+            let apy = fetch_apr(cx).await;
+            vec![Position::Stake(StakePosition::new(staked).with_apy(apy))]
         };
 
         let reading = Reading::new(

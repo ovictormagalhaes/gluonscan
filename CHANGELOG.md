@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.0-beta.4] - 2026-10-05
+
+### Added
+
+- **Staking APY on `StakePosition`.** New `StakePosition.apy: Option<Decimal>` (fraction, `0.03` = 3%)
+  with a `with_apy` builder — the protocol-wide staking yield. The Lido, ether.fi and Ethena adapters
+  now fetch it from each protocol's official endpoint and normalize to a fraction. It is **best-effort
+  and informational**: a failed fetch leaves `apy = None` and never fails the balance read closed
+  (the yield never affects a position's value). `None` for sources that don't expose a rate.
+
 ## [0.2.0-beta.3] - 2026-10-05
 
 ### Fixed
@@ -256,7 +266,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.3...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.4...HEAD
+[0.2.0-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.3...v0.2.0-beta.4
 [0.2.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.2...v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.1...v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.1.0...v0.2.0-beta.1

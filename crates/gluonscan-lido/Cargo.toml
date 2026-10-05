@@ -20,6 +20,8 @@ gluonscan-core = { workspace = true }
 gluonscan-evm = { workspace = true }
 async-trait = { workspace = true }
 alloy-primitives = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
