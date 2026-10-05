@@ -446,6 +446,13 @@ pub struct LendingPosition {
     pub health_factor: Option<Decimal>,
     /// Claimable protocol rewards / incentives, when the source exposes them.
     pub rewards: Vec<Amount>,
+    /// Source identity of the isolated market this position belongs to, when the protocol is
+    /// per-market isolated (e.g. Morpho Blue's market `uniqueKey`). `None` for cross-collateralized
+    /// protocols (Aave, Kamino), where one position already represents the whole account. Consumers
+    /// that dedup or group positions MUST include this: two isolated markets can share a loan or
+    /// collateral token (and even the same LLTV, differing only by oracle/IRM), so without the
+    /// source id they collapse and a position is lost.
+    pub market_id: Option<String>,
 }
 
 impl LendingPosition {
@@ -456,7 +463,15 @@ impl LendingPosition {
             borrowed,
             health_factor: None,
             rewards: Vec::new(),
+            market_id: None,
         }
+    }
+
+    /// Attach the isolated-market source id (builder-style). See [`LendingPosition::market_id`].
+    #[must_use]
+    pub fn with_market_id(mut self, market_id: Option<String>) -> Self {
+        self.market_id = market_id;
+        self
     }
 
     /// Attach the account health factor (builder-style).
