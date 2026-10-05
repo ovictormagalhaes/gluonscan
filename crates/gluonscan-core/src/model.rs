@@ -293,14 +293,17 @@ impl Amount {
     }
 }
 
-/// A token held idle in the wallet — not deployed in any protocol.
+/// A plain token balance held by the owner: a token idle in an on-chain wallet, or the cash/equity
+/// balance of a protocol account (e.g. the USD-margin equity of a perps account). It carries value
+/// but no protocol-specific position mechanics.
 ///
-/// The `possible_spam` / `verified_contract` flags are passed through from the indexer, not acted
-/// on: gluonscan returns every balance it sees and lets the consumer decide what to hide.
+/// When present, the `possible_spam` / `verified_contract` flags are passed through from the source
+/// indexer, not acted on: gluonscan returns every balance it sees and lets the consumer decide what
+/// to hide. A balance from a non-indexer source (e.g. an account-equity figure) leaves them `None`.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletBalance {
-    /// The idle token amount.
+    /// The token amount held.
     pub amount: Amount,
     /// The indexer flagged this token as likely spam, when it says so.
     pub possible_spam: Option<bool>,
@@ -967,7 +970,9 @@ impl PerpPosition {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Position {
-    /// A token held idle in the wallet (not in any protocol).
+    /// A plain token balance held by the owner: a token idle in an on-chain wallet, or the
+    /// cash/equity balance of a protocol account (e.g. the USD-margin equity of a perps account).
+    /// Carries a value but no protocol-specific position mechanics.
     Wallet(WalletBalance),
     /// A lending position.
     Lending(LendingPosition),
