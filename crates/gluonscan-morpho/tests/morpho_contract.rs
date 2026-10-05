@@ -99,6 +99,34 @@ async fn maps_the_live_borrow_and_drops_the_zeroed_market() {
         hf > dec("1.66") && hf < dec("1.67"),
         "health factor ~1.667, got {hf}"
     );
+
+    // The market's unique on-chain id is carried through: it is the only stable identity that keeps
+    // two isolated markets sharing the same (collateral, loan, LLTV) from colliding downstream.
+    assert_eq!(
+        p.market_id.as_deref(),
+        Some("0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836")
+    );
+}
+
+// A real (non-empty) market with no `marketId` must FAIL CLOSED, not silently drop the id: a `None`
+// would reintroduce the dedup collision the id exists to prevent (ADR-016 — degraded is worse than
+// an error). Every other field a live market needs already fails closed; the id must too.
+#[tokio::test]
+async fn non_empty_market_missing_market_id_fails_closed() {
+    const NO_ID: &str = r#"{"data":{"userByAddress":{"marketPositions":[
+      {"healthFactor":1.6665932441569424,"state":{"supplyAssets":0,"borrowAssets":5149558401067,"collateral":11775745194},
+       "market":{"lltv":"860000000000000000",
+         "loanAsset":{"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","decimals":6},
+         "collateralAsset":{"symbol":"cbBTC","address":"0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf","decimals":8},
+         "state":{"supplyApy":0.04403805578960049,"borrowApy":0.049024557476286146}}}
+    ]}}}"#;
+    let err = read(NO_ID)
+        .await
+        .expect_err("a non-empty market with no marketId must fail closed");
+    assert!(
+        matches!(err, gluonscan_core::Error::Integrity { .. }),
+        "expected Error::Integrity, got {err:?}"
+    );
 }
 
 #[tokio::test]
