@@ -41,10 +41,11 @@ async fn read_reply(body: String) -> Result<gluonscan_core::Reading, Error> {
 #[tokio::test]
 async fn attaches_the_ethena_yield_as_a_fraction() {
     let rpc = MockChainProvider::new().on(Match::method("eth_call"), reply(SUSDE_BAL));
-    // The Ethena API returns a percentage under avg30dSusdeYield.value; carried as a fraction.
+    // DeFiLlama's chart endpoint returns a percentage under the last data point's `apy`; carried as
+    // a fraction. (Ethena's own app API is unreachable from a datacenter, hence DeFiLlama.)
     let http = MockHttp::new().on(
-        Match::primary_contains("ethena.fi"),
-        r#"{"avg30dSusdeYield":{"lastUpdated":"30 Sep 26","value":4.8492}}"#,
+        Match::primary_contains("llama.fi"),
+        r#"{"status":"success","data":[{"timestamp":"2026-10-04T00:00:00.000Z","apy":5.1,"apyBase":5.1},{"timestamp":"2026-10-05T00:00:00.000Z","apy":4.8492,"apyBase":4.8492}]}"#,
     );
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
     let reading = Ethena::new()
