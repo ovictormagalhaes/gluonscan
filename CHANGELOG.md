@@ -8,6 +8,15 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.0-beta.5] - 2026-10-05
+
+### Changed
+
+- **Ethena staking APY now sourced from DeFiLlama.** Ethena's own app API (`app.ethena.fi`) is not
+  reachable from datacenter IPs, so the sUSDe yield silently returned `None` in production. Switched
+  to DeFiLlama's CDN-backed, server-reachable yields chart for the stable sUSDe pool; the latest
+  point is the current yield. Still best-effort (`None` on any failure).
+
 ## [0.2.0-beta.4] - 2026-10-05
 
 ### Added
@@ -266,7 +275,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.4...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.5...HEAD
+[0.2.0-beta.5]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.4...v0.2.0-beta.5
 [0.2.0-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.3...v0.2.0-beta.4
 [0.2.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.2...v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.1...v0.2.0-beta.2
