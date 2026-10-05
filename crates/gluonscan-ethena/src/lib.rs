@@ -22,14 +22,18 @@ use rust_decimal::Decimal;
 
 const SUSDE: Address = address!("9D39A5DE30e57443BfF2A8307A4256c8797A3497");
 
-/// Current sUSDe staking yield, as a fraction (`0.0485` = 4.85%), from the Ethena API. Best-effort:
-/// any failure yields `None` (the APY is informational and must never fail the balance read closed).
-/// The API returns a percentage under `avg30dSusdeYield.value` (`4.85` = 4.85%), normalized here.
+/// Current sUSDe staking yield, as a fraction (`0.0496` = 4.96%), from DeFiLlama. Best-effort: any
+/// failure yields `None` (the APY is informational and must never fail the balance read closed).
+///
+/// DeFiLlama (a CDN-backed, server-reachable yields source) is used rather than Ethena's own app API
+/// (`app.ethena.fi`), which is unreachable from datacenter IPs. The sUSDe pool id is stable; the
+/// chart's last point is the current yield as a percentage.
 async fn fetch_apr(cx: &Ctx) -> Option<Decimal> {
-    const YIELD_URL: &str = "https://app.ethena.fi/api/yields/protocol-and-staking-yield";
-    let raw = cx.http.get(YIELD_URL, &[]).await.ok()?;
+    const SUSDE_POOL: &str = "66985a81-9c51-46ca-9977-42b4fe7bc6df";
+    let url = format!("https://yields.llama.fi/chart/{SUSDE_POOL}");
+    let raw = cx.http.get(&url, &[]).await.ok()?;
     let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let pct = json.get("avg30dSusdeYield")?.get("value")?.as_f64()?;
+    let pct = json.get("data")?.as_array()?.last()?.get("apy")?.as_f64()?;
     Decimal::try_from(pct / 100.0).ok()
 }
 
