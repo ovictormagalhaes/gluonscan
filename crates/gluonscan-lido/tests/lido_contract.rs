@@ -11,6 +11,7 @@ use gluonscan_core::{
 };
 use gluonscan_lido::Lido;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
+use rust_decimal::Decimal;
 
 const STETH_ADDR: &str = "0xae7ab96520de3a18e5e111b5eaab095312d7fe84";
 const WSTETH_ADDR: &str = "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0";
@@ -52,6 +53,50 @@ async fn read_replies(steth: String, wsteth: String) -> Result<gluonscan_core::R
 
 async fn read_with(steth: &str, wsteth: &str) -> Result<gluonscan_core::Reading, Error> {
     read_replies(ok(steth), ok(wsteth)).await
+}
+
+#[tokio::test]
+async fn attaches_the_lido_apr_as_a_fraction() {
+    let rpc = MockChainProvider::new()
+        .on(eth_call_to("ae7ab96520de3a18"), ok(STETH_BAL))
+        .on(eth_call_to("7f39c581f595b53c"), ok(WSTETH_BAL));
+    // The Lido API returns a percentage; the position carries it as a fraction.
+    let http = MockHttp::new().on(
+        Match::primary_contains("eth-api.lido.fi"),
+        r#"{"data":{"timeUnix":1,"apr":2.216},"meta":{}}"#,
+    );
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let reading = Lido::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    let apy = p.apy.expect("apr attached");
+    assert!(
+        apy > Decimal::from_str_exact("0.0221").unwrap()
+            && apy < Decimal::from_str_exact("0.0222").unwrap(),
+        "2.216% -> ~0.02216 fraction, got {apy}"
+    );
+}
+
+#[tokio::test]
+async fn apr_fetch_failure_leaves_apy_none_but_keeps_the_position() {
+    // Best-effort: the APY is informational, so an API outage (here: unmocked GET) must never fail
+    // the balance read — the position is still complete, just without an APY.
+    let reading = read_with(STETH_BAL, WSTETH_BAL).await.expect("read");
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    assert!(p.apy.is_none());
+    assert_eq!(p.staked.len(), 2);
 }
 
 #[tokio::test]

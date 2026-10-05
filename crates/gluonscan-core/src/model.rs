@@ -823,6 +823,11 @@ pub struct StakePosition {
     pub staked: Vec<Amount>,
     /// Claimable staking rewards, when the source exposes them.
     pub rewards: Vec<Amount>,
+    /// Current staking yield as a FRACTION (`0.03` = 3%), when the source exposes it. This is the
+    /// protocol-wide rate (the same for every staker), informational only — it never affects a
+    /// position's value, so a source that can't supply it leaves this `None` rather than failing the
+    /// read.
+    pub apy: Option<Decimal>,
 }
 
 impl StakePosition {
@@ -831,6 +836,7 @@ impl StakePosition {
         StakePosition {
             staked,
             rewards: Vec::new(),
+            apy: None,
         }
     }
 
@@ -838,6 +844,13 @@ impl StakePosition {
     #[must_use]
     pub fn with_rewards(mut self, rewards: Vec<Amount>) -> Self {
         self.rewards = rewards;
+        self
+    }
+
+    /// Set the current staking yield as a fraction (builder-style). See [`StakePosition::apy`].
+    #[must_use]
+    pub fn with_apy(mut self, apy: Option<Decimal>) -> Self {
+        self.apy = apy;
         self
     }
 }
@@ -1052,6 +1065,18 @@ mod tests {
                 .rewards
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn stake_apy_defaults_none_and_set_via_builder() {
+        // A source that can't supply the yield leaves it unset; never fabricated.
+        assert!(StakePosition::new(vec![]).apy.is_none());
+        assert_eq!(
+            StakePosition::new(vec![])
+                .with_apy(Some(Decimal::from_str_exact("0.0485").unwrap()))
+                .apy,
+            Some(Decimal::from_str_exact("0.0485").unwrap())
         );
     }
 

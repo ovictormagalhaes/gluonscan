@@ -11,6 +11,7 @@ use gluonscan_core::{
 };
 use gluonscan_etherfi::EtherFi;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
+use rust_decimal::Decimal;
 
 const WEETH_ADDR: &str = "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee";
 const EETH_ADDR: &str = "0x35fa164735182de50811e8e2e824cfb9b6118ac2";
@@ -52,6 +53,39 @@ async fn read_replies(weeth: String, eeth: String) -> Result<gluonscan_core::Rea
 
 async fn read_with(weeth: &str, eeth: &str) -> Result<gluonscan_core::Reading, Error> {
     read_replies(ok(weeth), ok(eeth)).await
+}
+
+#[tokio::test]
+async fn attaches_the_etherfi_apr_as_a_fraction() {
+    let rpc = MockChainProvider::new()
+        .on(eth_call_to("cd5fe23c85820f7b"), ok(WEETH_BAL))
+        .on(eth_call_to("35fa164735182de5"), ok(EETH_BAL));
+    // The ether.fi API returns recent APRs in basis points as strings; the latest is normalized.
+    let http = MockHttp::new().on(
+        Match::primary_contains("etherfi.bid"),
+        r#"{"sucess":true,"latest_aprs":["224","225","230"]}"#,
+    );
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let reading = EtherFi::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    let apy = p.apy.expect("apr attached");
+    // latest "230" bps -> 2.30% -> ~0.0230 fraction.
+    assert!(
+        apy > Decimal::from_str_exact("0.0229").unwrap()
+            && apy < Decimal::from_str_exact("0.0231").unwrap(),
+        "got {apy}"
+    );
 }
 
 #[tokio::test]
