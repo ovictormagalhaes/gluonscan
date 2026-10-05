@@ -8,7 +8,7 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
-## [0.2.0-beta.6] - 2026-10-05
+## [0.2.0-beta.7] - 2026-10-05
 
 ### Added
 
