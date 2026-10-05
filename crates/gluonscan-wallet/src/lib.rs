@@ -346,6 +346,7 @@ impl ProtocolAdapter for BitcoinWallet {
                     name: Some("Bitcoin".to_string()),
                     address: None,
                     decimals: 8,
+                    logo: None,
                 },
                 U256::from(sats),
             )?)));

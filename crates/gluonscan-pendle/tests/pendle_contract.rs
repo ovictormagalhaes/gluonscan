@@ -14,7 +14,7 @@ const CATALOG: &str = r#"{"total":1,"limit":100,"skip":0,"results":[{
   "isActive":true,
   "expiry":"2026-01-01T00:00:00.000Z",
   "impliedApy":0.072,
-  "pt":{"address":"0x1111111111111111111111111111111111111111","symbol":"PT-stETH-DEC25","decimals":18,"price":{"usd":0.98}},
+  "pt":{"address":"0x1111111111111111111111111111111111111111","symbol":"PT-stETH-DEC25","decimals":18,"price":{"usd":0.98},"simpleIcon":"https://cdn.pendle/pt.svg"},
   "yt":{"address":"0x2222222222222222222222222222222222222222","symbol":"YT-stETH-DEC25","decimals":18,"price":{"usd":0.05}}
 }]}"#;
 
@@ -77,6 +77,11 @@ async fn reads_held_pt_prices_it_and_skips_zero_yt() {
     };
     assert_eq!(y.kind, YieldKind::PrincipalToken);
     assert_eq!(y.amount.token.symbol, "PT-stETH-DEC25");
+    // The per-token icon from the catalog rides along on the token identity.
+    assert_eq!(
+        y.amount.token.logo.as_deref(),
+        Some("https://cdn.pendle/pt.svg")
+    );
     assert_eq!(
         y.amount.amount,
         Decimal::from_i128_with_scale(1_000_000_000_000_000_000, 18)
