@@ -8,6 +8,17 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.0-beta.2] - 2026-10-05
+
+### Added
+
+- **`LendingPosition::market_id`** — the source identity of the isolated market a lending position
+  belongs to, with a `with_market_id` builder. The Morpho adapter populates it with the market's
+  on-chain `marketId`. It is the only stable identity that distinguishes two isolated Morpho Blue
+  markets that share the same collateral, loan asset and LLTV and differ only by oracle/IRM — so a
+  consumer that dedups or groups positions can keep them from colliding (a lost position otherwise).
+  `None` for cross-collateralized protocols (Aave, Kamino), where one position is the whole account.
+
 ## [0.2.0-beta.1] - 2026-10-04
 
 The first release on the `0.2.0-beta` line. It adds a new position kind and a rewards dimension to
@@ -235,7 +246,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.1...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.2...HEAD
+[0.2.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.1...v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.1.0...v0.2.0-beta.1
 [0.1.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.15...v0.1.0
 [0.0.1-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.0.1-beta.3...v0.0.1-beta.4

@@ -153,6 +153,18 @@ fn parse_market_position(mp: &Value) -> Result<Option<LendingPosition>, Error> {
     let market = mp.get("market").ok_or_else(|| Error::Integrity {
         message: "Morpho marketPosition missing `market`".into(),
     })?;
+    // The market's unique on-chain id. Morpho Blue markets are isolated and a wallet can hold
+    // several that share the same (collateral, loan, LLTV) and differ only by oracle/IRM — so this
+    // is the ONLY stable identity that keeps them from colliding in a downstream dedup. We are past
+    // the zero-market early return, so this is a real market: fail closed if its id is absent rather
+    // than emit `None`, which would silently reintroduce the very collision this id prevents.
+    let market_id = market
+        .get("marketId")
+        .and_then(Value::as_str)
+        .map(String::from)
+        .ok_or_else(|| Error::Integrity {
+            message: "Morpho non-empty market missing `marketId`".into(),
+        })?;
     let loan_token = token_of(market.get("loanAsset"), "loanAsset")?;
     let lltv = wad_ratio(market.get("lltv"))?;
     let (supply_apy, borrow_apy) = market_apys(market.get("state"));
@@ -202,7 +214,9 @@ fn parse_market_position(mp: &Value) -> Result<Option<LendingPosition>, Error> {
     }
 
     Ok(Some(
-        LendingPosition::new(supplied, borrowed).with_health_factor(health_factor),
+        LendingPosition::new(supplied, borrowed)
+            .with_health_factor(health_factor)
+            .with_market_id(Some(market_id)),
     ))
 }
 
