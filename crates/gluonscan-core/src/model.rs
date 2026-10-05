@@ -190,6 +190,8 @@ pub struct Token {
     pub address: Option<TokenAddress>,
     /// Decimal precision.
     pub decimals: u8,
+    /// Icon URL, when the source serves one for this exact token.
+    pub logo: Option<String>,
 }
 
 impl Token {
@@ -200,6 +202,7 @@ impl Token {
             name: None,
             address,
             decimals,
+            logo: None,
         }
     }
 
@@ -217,6 +220,13 @@ impl Token {
     #[must_use]
     pub fn with_name(mut self, name: Option<String>) -> Self {
         self.name = name;
+        self
+    }
+
+    /// Attach an icon URL (builder-style).
+    #[must_use]
+    pub fn with_logo(mut self, logo: Option<String>) -> Self {
+        self.logo = logo;
         self
     }
 }

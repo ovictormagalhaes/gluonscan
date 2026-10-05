@@ -259,7 +259,18 @@ fn parse_token(v: &serde_json::Value) -> Result<Token, Error> {
         .and_then(|s| s.as_str())
         .and_then(|s| Address::from_str(s).ok());
     let name = v.get("name").and_then(|s| s.as_str()).map(str::to_string);
-    Ok(Token::evm(symbol, address, decimals).with_name(name))
+    // Pendle serves a per-token icon; `simpleIcon` is the plain UI glyph, `proIcon` the
+    // pro-chart variant. Take whichever is present so PT/YT tokens carry their own logo
+    // instead of relying on a downstream address lookup that doesn't catalog them.
+    let logo = v
+        .get("simpleIcon")
+        .or_else(|| v.get("proIcon"))
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    Ok(Token::evm(symbol, address, decimals)
+        .with_name(name)
+        .with_logo(logo))
 }
 
 fn priced_amount(token: Token, raw: U256, price_usd: Option<Decimal>) -> Result<Amount, Error> {

@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.0-beta.6] - 2026-10-05
+
+### Added
+
+- **Token icons on `Token`.** New `Token.logo: Option<String>` with a `with_logo` builder, carrying
+  an icon URL when the source serves one for that exact token. The Pendle adapter now reads each PT/YT
+  token's `simpleIcon` (falling back to `proIcon`) from the market catalog, so synthetic Pendle tokens
+  surface their own icon instead of relying on a downstream address lookup that does not catalog them.
+  `None` for sources that don't expose an icon.
+
 ## [0.2.0-beta.5] - 2026-10-05
 
 ### Changed
