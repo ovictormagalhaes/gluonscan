@@ -99,6 +99,13 @@ async fn maps_the_live_borrow_and_drops_the_zeroed_market() {
         hf > dec("1.66") && hf < dec("1.67"),
         "health factor ~1.667, got {hf}"
     );
+
+    // The market's unique on-chain id is carried through: it is the only stable identity that keeps
+    // two isolated markets sharing the same (collateral, loan, LLTV) from colliding downstream.
+    assert_eq!(
+        p.market_id.as_deref(),
+        Some("0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836")
+    );
 }
 
 #[tokio::test]
