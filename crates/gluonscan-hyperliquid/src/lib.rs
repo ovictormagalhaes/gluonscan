@@ -119,7 +119,9 @@ impl ProtocolAdapter for Hyperliquid {
         // Per-position `collateral` (marginUsed) is a margin *requirement*, not owned capital, so it is
         // not summable to equity; the equity is carried once, here, as the account's USDC balance. It
         // is net-worth-bearing, so a present response that omits it fails closed rather than silently
-        // undercounting. A zero (or wiped) account contributes nothing.
+        // undercounting. A zero (or wiped) account contributes nothing; a *negative* equity is a
+        // present net-worth figure that cannot be a balance, so it fails closed rather than being
+        // silently dropped (which would overcount the account back up to its collateral legs).
         let account_value = json
             .get("marginSummary")
             .and_then(|m| m.get("accountValue"))
@@ -128,7 +130,12 @@ impl ProtocolAdapter for Hyperliquid {
             .ok_or_else(|| Error::Integrity {
                 message: "Hyperliquid response missing/invalid `marginSummary.accountValue`".into(),
             })?;
-        if account_value.is_sign_positive() && !account_value.is_zero() {
+        if account_value.is_sign_negative() {
+            return Err(Error::Integrity {
+                message: "Hyperliquid `marginSummary.accountValue` is negative".into(),
+            });
+        }
+        if !account_value.is_zero() {
             let equity = Amount::from_decimal(Token::new("USDC", None, 6), account_value)?
                 .with_usd(Some(Money::usd(account_value)));
             positions.push(Position::Wallet(WalletBalance::new(equity)));
@@ -203,10 +210,12 @@ fn parse_perp(pos: &Value) -> Result<PerpPosition, Error> {
         )),
     };
 
-    // Collateral is the USDC margin. Hyperliquid is USD-margined and its USDC == USD with no contract
-    // to price it by, so the USD value is the API's own authoritative figure, not a fabricated price.
-    let collateral = vec![Amount::from_decimal(Token::new("USDC", None, 6), margin)?
-        .with_usd(Some(Money::usd(margin)))];
+    // Collateral is the USDC margin backing this position — a margin *requirement*, reported for
+    // detail. Its USD value is deliberately left unset: the margin is already encompassed by the
+    // account equity (emitted once as the account's USDC balance), so pricing it here would let a
+    // consumer that sums position values count the same capital twice. The amount (USDC units)
+    // carries the margin figure without presenting it as a separate priced holding.
+    let collateral = vec![Amount::from_decimal(Token::new("USDC", None, 6), margin)?];
 
     Ok(PerpPosition::new(market, side, size)
         .with_collateral(collateral)
