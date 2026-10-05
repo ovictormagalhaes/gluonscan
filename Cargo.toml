@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0-beta.2"
+version = "0.2.0-beta.3"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
@@ -53,22 +53,22 @@ bs58 = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
-gluonscan-core = { path = "crates/gluonscan-core", version = "0.2.0-beta.2" }
-gluonscan-math = { path = "crates/gluonscan-math", version = "0.2.0-beta.2" }
-gluonscan-aave = { path = "crates/gluonscan-aave", version = "0.2.0-beta.2" }
-gluonscan-uniswap = { path = "crates/gluonscan-uniswap", version = "0.2.0-beta.2" }
-gluonscan-lido = { path = "crates/gluonscan-lido", version = "0.2.0-beta.2" }
-gluonscan-morpho = { path = "crates/gluonscan-morpho", version = "0.2.0-beta.2" }
-gluonscan-etherfi = { path = "crates/gluonscan-etherfi", version = "0.2.0-beta.2" }
-gluonscan-ethena = { path = "crates/gluonscan-ethena", version = "0.2.0-beta.2" }
-gluonscan-hyperliquid = { path = "crates/gluonscan-hyperliquid", version = "0.2.0-beta.2" }
-gluonscan-pendle = { path = "crates/gluonscan-pendle", version = "0.2.0-beta.2" }
-gluonscan-kamino = { path = "crates/gluonscan-kamino", version = "0.2.0-beta.2" }
-gluonscan-solana = { path = "crates/gluonscan-solana", version = "0.2.0-beta.2" }
-gluonscan-raydium = { path = "crates/gluonscan-raydium", version = "0.2.0-beta.2" }
-gluonscan-sources = { path = "crates/gluonscan-sources", version = "0.2.0-beta.2" }
-gluonscan-wallet = { path = "crates/gluonscan-wallet", version = "0.2.0-beta.2" }
-gluonscan-evm = { path = "crates/gluonscan-evm", version = "0.2.0-beta.2" }
+gluonscan-core = { path = "crates/gluonscan-core", version = "0.2.0-beta.3" }
+gluonscan-math = { path = "crates/gluonscan-math", version = "0.2.0-beta.3" }
+gluonscan-aave = { path = "crates/gluonscan-aave", version = "0.2.0-beta.3" }
+gluonscan-uniswap = { path = "crates/gluonscan-uniswap", version = "0.2.0-beta.3" }
+gluonscan-lido = { path = "crates/gluonscan-lido", version = "0.2.0-beta.3" }
+gluonscan-morpho = { path = "crates/gluonscan-morpho", version = "0.2.0-beta.3" }
+gluonscan-etherfi = { path = "crates/gluonscan-etherfi", version = "0.2.0-beta.3" }
+gluonscan-ethena = { path = "crates/gluonscan-ethena", version = "0.2.0-beta.3" }
+gluonscan-hyperliquid = { path = "crates/gluonscan-hyperliquid", version = "0.2.0-beta.3" }
+gluonscan-pendle = { path = "crates/gluonscan-pendle", version = "0.2.0-beta.3" }
+gluonscan-kamino = { path = "crates/gluonscan-kamino", version = "0.2.0-beta.3" }
+gluonscan-solana = { path = "crates/gluonscan-solana", version = "0.2.0-beta.3" }
+gluonscan-raydium = { path = "crates/gluonscan-raydium", version = "0.2.0-beta.3" }
+gluonscan-sources = { path = "crates/gluonscan-sources", version = "0.2.0-beta.3" }
+gluonscan-wallet = { path = "crates/gluonscan-wallet", version = "0.2.0-beta.3" }
+gluonscan-evm = { path = "crates/gluonscan-evm", version = "0.2.0-beta.3" }
 # Dev-only helper: path-only (no version) so it is stripped from published manifests and never
 # forces a publish-order constraint on the crates that dev-depend on it.
 gluonscan-testing = { path = "crates/gluonscan-testing" }

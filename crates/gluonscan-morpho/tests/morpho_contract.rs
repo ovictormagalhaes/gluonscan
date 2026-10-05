@@ -129,6 +129,34 @@ async fn non_empty_market_missing_market_id_fails_closed() {
     );
 }
 
+// Morpho's API can return a non-null healthFactor for a market whose borrow is currently zero
+// (eventual consistency between the HF field and the position state). A health factor only exists
+// against debt, so a collateral-only position must carry NO HF — otherwise it renders as an orphaned
+// health factor on a card with no visible debt. HF is Some iff there is a borrow leg.
+#[tokio::test]
+async fn collateral_only_market_drops_a_stale_health_factor() {
+    const COLL_ONLY: &str = r#"{"data":{"userByAddress":{"marketPositions":[
+      {"healthFactor":2.79,"state":{"supplyAssets":0,"borrowAssets":0,"collateral":11775745194},
+       "market":{"marketId":"0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836","lltv":"860000000000000000",
+         "loanAsset":{"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","decimals":6},
+         "collateralAsset":{"symbol":"cbBTC","address":"0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf","decimals":8},
+         "state":{"supplyApy":0.04403805578960049,"borrowApy":0.049024557476286146}}}
+    ]}}}"#;
+    let reading = read(COLL_ONLY).await.expect("read");
+    assert_eq!(reading.positions.len(), 1);
+    let Position::Lending(p) = &reading.positions[0] else {
+        panic!("expected a lending position");
+    };
+    assert_eq!(p.supplied.len(), 1, "collateral leg present");
+    assert!(p.supplied[0].is_collateral);
+    assert!(p.borrowed.is_empty(), "no debt");
+    assert!(
+        p.health_factor.is_none(),
+        "a collateral-only market must carry no health factor, got {:?}",
+        p.health_factor
+    );
+}
+
 #[tokio::test]
 async fn large_18_decimal_amount_stays_lossless() {
     // Morpho serializes any BigInt above 2^53 as a JSON STRING (verified against the live API), so
