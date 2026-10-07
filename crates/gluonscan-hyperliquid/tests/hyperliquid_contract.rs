@@ -5,11 +5,64 @@
 use std::sync::Arc;
 
 use gluonscan_core::{
-    Address, Chain, Ctx, Currency, Detail, PerpSide, Position, Protocol, ProtocolAdapter, Wallet,
+    Address, Chain, Ctx, Currency, Detail, MarginMode, PerpSide, Position, Protocol,
+    ProtocolAdapter, Wallet,
 };
 use gluonscan_hyperliquid::Hyperliquid;
 use gluonscan_testing::{Match, MockClock, MockHttp};
 use rust_decimal::Decimal;
+
+// A live-shaped BTC long, 5x isolated, with a small positive PnL — the base for the TP/SL and
+// margin-mode tests. positionValue is self-consistent with size (0.0006 * 83943 ≈ 50.3658).
+const BTC_LONG_ISOLATED: &str = r#"{
+  "marginSummary":{"accountValue":"9.93"},
+  "assetPositions":[
+    {"type":"oneWay","position":{
+      "coin":"BTC","szi":"0.0006","leverage":{"type":"isolated","value":5},
+      "entryPx":"83852.0","positionValue":"50.3658","unrealizedPnl":"0.05",
+      "liquidationPx":"67966.51","marginUsed":"9.93"}}
+  ],"time":1}"#;
+
+// The position's own TP (Take Profit Market, 92500) and SL (Stop Market, 82000), exactly as
+// Hyperliquid's `frontendOpenOrders` returns them — both flagged `isPositionTpsl`.
+const BTC_TPSL_ORDERS: &str = r#"[
+  {"coin":"BTC","isPositionTpsl":true,"isTrigger":true,"triggerPx":"92500.0",
+   "orderType":"Take Profit Market","side":"A","reduceOnly":true,"sz":"0.0006"},
+  {"coin":"BTC","isPositionTpsl":true,"isTrigger":true,"triggerPx":"82000.0",
+   "orderType":"Stop Market","side":"A","reduceOnly":true,"sz":"0.0006"}
+]"#;
+
+async fn read_full(
+    clearinghouse: &str,
+    orders: Option<&str>,
+) -> Result<gluonscan_core::Reading, gluonscan_core::Error> {
+    let mut http = MockHttp::new().on(Match::body_contains("clearinghouseState"), clearinghouse);
+    if let Some(o) = orders {
+        http = http.on(Match::body_contains("frontendOpenOrders"), o);
+    }
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
+    Hyperliquid::new()
+        .with_endpoint("https://hl.test/info")
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Hyperliquid,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .map(|c| c.into_inner())
+}
+
+fn only_perp(reading: &gluonscan_core::Reading) -> &gluonscan_core::PerpPosition {
+    reading
+        .positions
+        .iter()
+        .find_map(|pos| match pos {
+            Position::Perp(p) => Some(p),
+            _ => None,
+        })
+        .expect("expected a perp position")
+}
 
 const RESPONSE: &str = r#"{
   "marginSummary":{"accountValue":"3161724.061735","totalNtlPos":"9440615.8529700004","totalRawUsd":"12602339.9147050008","totalMarginUsed":"3146871.9509899998"},
@@ -67,6 +120,8 @@ async fn maps_the_live_short_position() {
     assert_eq!(p.entry_price, Some(dec("64.7005")));
     assert_eq!(p.leverage, Some(dec("3")));
     assert_eq!(p.liquidation_price, Some(dec("120.0648965588")));
+    // leverage.type is "cross" in this fixture — the margin mode rides in verbatim.
+    assert_eq!(p.margin_mode, Some(MarginMode::Cross));
 
     // Mark derived as positionValue / |szi| ≈ 90.169 — pinned to a tight range so the derivation is
     // exercised without asserting every repeating digit of the division.
@@ -259,4 +314,126 @@ async fn unsupported_chain_fails_closed() {
         .await
         .expect_err("Hyperliquid is only on its own chain");
     assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn attaches_position_take_profit_and_stop_loss() {
+    // At Detail::Full the position's own TP/SL trigger prices are attached from frontendOpenOrders.
+    let reading = read_full(BTC_LONG_ISOLATED, Some(BTC_TPSL_ORDERS))
+        .await
+        .expect("read");
+    let p = only_perp(&reading);
+    assert_eq!(p.margin_mode, Some(MarginMode::Isolated));
+    assert_eq!(p.take_profit_price, Some(dec("92500.0")));
+    assert_eq!(p.stop_loss_price, Some(dec("82000.0")));
+}
+
+#[tokio::test]
+async fn standalone_trigger_orders_do_not_attach_as_position_tpsl() {
+    // A trigger order NOT flagged isPositionTpsl (a user's standalone stop) must never be read as
+    // the position's TP/SL — otherwise an unrelated order would paint a false exit line.
+    let orders = r#"[
+      {"coin":"BTC","isPositionTpsl":false,"isTrigger":true,"triggerPx":"99999.0",
+       "orderType":"Stop Market","side":"A","reduceOnly":false,"sz":"0.0006"}
+    ]"#;
+    let reading = read_full(BTC_LONG_ISOLATED, Some(orders))
+        .await
+        .expect("read");
+    let p = only_perp(&reading);
+    assert!(p.take_profit_price.is_none());
+    assert!(p.stop_loss_price.is_none());
+}
+
+#[tokio::test]
+async fn tpsl_fetch_failure_preserves_equity_and_leaves_levels_none() {
+    // frontendOpenOrders is down (transient), clearinghouseState is fine. TP/SL are advisory, not
+    // net-worth-bearing, so the read must still succeed with correct equity and the levels as None —
+    // failing the whole account over a secondary detail would be strictly worse.
+    let http = MockHttp::new()
+        .on(
+            Match::body_contains("clearinghouseState"),
+            BTC_LONG_ISOLATED,
+        )
+        .on_transient(Match::body_contains("frontendOpenOrders"));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
+    let reading = Hyperliquid::new()
+        .with_endpoint("https://hl.test/info")
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Hyperliquid,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("a TP/SL fetch failure must not fail the account read")
+        .into_inner();
+    let p = only_perp(&reading);
+    assert!(p.take_profit_price.is_none());
+    assert!(p.stop_loss_price.is_none());
+    // Equity is still emitted and correct.
+    let equity = reading
+        .positions
+        .iter()
+        .find_map(|pos| match pos {
+            Position::Wallet(w) => Some(&w.amount),
+            _ => None,
+        })
+        .expect("equity balance");
+    assert_eq!(equity.usd.as_ref().map(|m| m.amount), Some(dec("9.93")));
+}
+
+#[tokio::test]
+async fn malformed_trigger_price_is_skipped_not_fatal() {
+    // A position-TP/SL order with a present-but-unparseable triggerPx contributes nothing (the level
+    // stays None) rather than failing the read — an advisory line is never fabricated or fatal.
+    let orders = r#"[
+      {"coin":"BTC","isPositionTpsl":true,"isTrigger":true,"triggerPx":"soon",
+       "orderType":"Take Profit Market","side":"A","reduceOnly":true,"sz":"0.0006"}
+    ]"#;
+    let reading = read_full(BTC_LONG_ISOLATED, Some(orders))
+        .await
+        .expect("read");
+    let p = only_perp(&reading);
+    assert!(p.take_profit_price.is_none());
+    assert!(p.stop_loss_price.is_none());
+}
+
+#[tokio::test]
+async fn tpsl_is_not_fetched_below_full_detail() {
+    // At Summary the extra frontendOpenOrders call must not be made: TP/SL is Full-only detail.
+    let http = MockHttp::new().on(
+        Match::body_contains("clearinghouseState"),
+        BTC_LONG_ISOLATED,
+    );
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
+    let reading = Hyperliquid::new()
+        .with_endpoint("https://hl.test/info")
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Hyperliquid,
+            Detail::Summary,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+    let p = only_perp(&reading);
+    // Margin mode still rides in (same payload), but no trigger-order call was made.
+    assert_eq!(p.margin_mode, Some(MarginMode::Isolated));
+    assert!(p.take_profit_price.is_none());
+    assert!(p.stop_loss_price.is_none());
+}
+
+#[tokio::test]
+async fn unknown_margin_mode_maps_to_none() {
+    // A margin mode Hyperliquid may add later is advisory, not net-worth-bearing: map an unrecognized
+    // leverage.type to None rather than failing the equity read on a label.
+    let response = r#"{"marginSummary":{"accountValue":"100.0"},"assetPositions":[
+      {"type":"oneWay","position":{
+        "coin":"ETH","szi":"1.0","leverage":{"type":"portfolio","value":5},"entryPx":"3000",
+        "positionValue":"3100","unrealizedPnl":"100","marginUsed":"600","liquidationPx":"2000"}}
+    ],"time":1}"#;
+    let reading = read_full(response, None).await.expect("read");
+    let p = only_perp(&reading);
+    assert!(p.margin_mode.is_none());
 }
