@@ -14,14 +14,23 @@
 //! emitted once as a USDC [`Position::Wallet`]: that is the account's portfolio value (collateral
 //! plus unrealized PnL), whereas per-position `marginUsed` is a margin requirement, not owned
 //! capital. Keeping them separate lets a consumer total equity without double-counting margin.
+//!
+//! Each position's margin mode (isolated / cross) comes free in the same `clearinghouseState`
+//! payload (`leverage.type`). At [`Detail::Full`] the adapter additionally reads the account's
+//! resting trigger orders from `frontendOpenOrders` and attaches each position's take-profit and
+//! stop-loss levels. That enrichment is best-effort: TP/SL are advisory reference lines, not
+//! net-worth-bearing, so a failure there leaves them `None` and never fails the equity read — a
+//! correct account value with no TP/SL is strictly better than failing the whole account over a
+//! secondary detail.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Detail, Error, Money, PerpPosition, PerpSide,
-    Position, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet,
-    WalletBalance,
+    Amount, Capability, Chain, Complete, Ctx, Detail, Error, MarginMode, Money, PerpPosition,
+    PerpSide, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, Token,
+    Wallet, WalletBalance,
 };
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -76,7 +85,7 @@ impl ProtocolAdapter for Hyperliquid {
         &self,
         owner: &Wallet,
         chain: Chain,
-        _detail: Detail,
+        detail: Detail,
         cx: &Ctx,
     ) -> Result<Complete<Reading>, Error> {
         if chain != Chain::Hyperliquid {
@@ -85,10 +94,11 @@ impl ProtocolAdapter for Hyperliquid {
             });
         }
         let owner = owner.evm()?;
+        let user = format!("{owner:#x}");
 
         let body = serde_json::json!({
             "type": "clearinghouseState",
-            "user": format!("{owner:#x}"),
+            "user": user,
         })
         .to_string();
         let raw = cx.http.post(self.endpoint(), body, &[]).await?;
@@ -105,12 +115,27 @@ impl ProtocolAdapter for Hyperliquid {
                 message: "Hyperliquid response missing `assetPositions`".into(),
             })?;
 
+        // Resting take-profit / stop-loss levels are advisory detail, not net-worth-bearing, so they
+        // are only fetched at Full and never fail the read: a transport error or a malformed order
+        // leaves the affected levels `None`. Fetched once, keyed by market, before the position loop.
+        let tpsl = if detail == Detail::Full {
+            fetch_position_tpsl(self.endpoint(), &user, cx).await
+        } else {
+            HashMap::new()
+        };
+
         let mut positions = Vec::with_capacity(asset_positions.len() + 1);
         for ap in asset_positions {
             let pos = ap.get("position").ok_or_else(|| Error::Integrity {
                 message: "Hyperliquid assetPosition missing `position`".into(),
             })?;
-            positions.push(Position::Perp(parse_perp(pos)?));
+            let mut perp = parse_perp(pos)?;
+            if let Some(t) = tpsl.get(&perp.market) {
+                perp = perp
+                    .with_take_profit_price(t.take_profit)
+                    .with_stop_loss_price(t.stop_loss);
+            }
+            positions.push(Position::Perp(perp));
         }
 
         // The account's margin equity (`marginSummary.accountValue`) is the portfolio figure: it is
@@ -189,6 +214,19 @@ fn parse_perp(pos: &Value) -> Result<PerpPosition, Error> {
         )),
     };
 
+    // Margin mode rides in the same `leverage` object. It is advisory detail, not net-worth-bearing,
+    // and Hyperliquid may add modes over time, so an unrecognized or absent value maps to None rather
+    // than failing the read — the equity figure must not hinge on a label.
+    let margin_mode = match pos
+        .get("leverage")
+        .and_then(|l| l.get("type"))
+        .and_then(Value::as_str)
+    {
+        Some("isolated") => Some(MarginMode::Isolated),
+        Some("cross") => Some(MarginMode::Cross),
+        _ => None,
+    };
+
     let liquidation_price = match pos.get("liquidationPx") {
         None | Some(Value::Null) => None,
         Some(v) => Some(
@@ -224,7 +262,71 @@ fn parse_perp(pos: &Value) -> Result<PerpPosition, Error> {
         .with_leverage(leverage)
         .with_unrealized_pnl(Some(Money::usd(pnl)))
         .with_funding(funding)
-        .with_liquidation_price(liquidation_price))
+        .with_liquidation_price(liquidation_price)
+        .with_margin_mode(margin_mode))
+}
+
+/// A position's resting take-profit / stop-loss trigger prices, as read from `frontendOpenOrders`.
+#[derive(Default)]
+struct PositionTpsl {
+    take_profit: Option<Decimal>,
+    stop_loss: Option<Decimal>,
+}
+
+/// Read the account's position-attached TP/SL trigger prices, keyed by market (`coin`).
+///
+/// Best-effort by contract: TP/SL are advisory reference lines, not net-worth-bearing, so every
+/// failure mode degrades to "no levels" rather than failing the account read. A transport error or
+/// a non-array body yields an empty map; within a valid array, only orders Hyperliquid flags as the
+/// position's own TP/SL (`isPositionTpsl`) with a parseable `triggerPx` contribute — anything else
+/// (a standalone trigger order, a malformed price) is skipped, never fabricated. The first trigger
+/// of each kind per market wins (a position carries at most one take-profit and one stop-loss).
+async fn fetch_position_tpsl(
+    endpoint: &str,
+    user: &str,
+    cx: &Ctx,
+) -> HashMap<String, PositionTpsl> {
+    let body = serde_json::json!({ "type": "frontendOpenOrders", "user": user }).to_string();
+    let Ok(raw) = cx.http.post(endpoint, body, &[]).await else {
+        return HashMap::new();
+    };
+    let Ok(json) = serde_json::from_str::<Value>(&raw) else {
+        return HashMap::new();
+    };
+    let Some(orders) = json.as_array() else {
+        return HashMap::new();
+    };
+
+    let mut map: HashMap<String, PositionTpsl> = HashMap::new();
+    for order in orders {
+        if order.get("isPositionTpsl").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        let Some(coin) = order.get("coin").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(trigger) = order
+            .get("triggerPx")
+            .and_then(Value::as_str)
+            .and_then(|s| Decimal::from_str(s).ok())
+        else {
+            continue;
+        };
+        // Hyperliquid's `orderType` for a position trigger is one of "Take Profit Market/Limit" or
+        // "Stop Market/Limit"; the kind, not the execution style, is what classifies the level.
+        let order_type = order
+            .get("orderType")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let entry = map.entry(coin.to_string()).or_default();
+        if order_type.contains("take profit") {
+            entry.take_profit.get_or_insert(trigger);
+        } else if order_type.contains("stop") {
+            entry.stop_loss.get_or_insert(trigger);
+        }
+    }
+    map
 }
 
 /// Parse a required decimal-string field.

@@ -878,6 +878,17 @@ pub enum PerpSide {
     Short,
 }
 
+/// How a perpetual position's margin is scoped.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarginMode {
+    /// Isolated — only the margin assigned to this position is at risk; its loss cannot spill to
+    /// other positions.
+    Isolated,
+    /// Cross — the account's whole free balance backs this position (shared across positions).
+    Cross,
+}
+
 /// A perpetual / derivative position: the margin backing it plus the open contract's size, prices
 /// and risk. Amounts the source does not expose stay `None` rather than being fabricated.
 #[non_exhaustive]
@@ -903,6 +914,13 @@ pub struct PerpPosition {
     pub funding: Option<Money>,
     /// Liquidation price, when known.
     pub liquidation_price: Option<Decimal>,
+    /// Whether the margin is isolated or cross, when known.
+    pub margin_mode: Option<MarginMode>,
+    /// Resting take-profit trigger price attached to this position, when one is set. This is a
+    /// reduce-only order the source reports alongside the position, not a property of the fill.
+    pub take_profit_price: Option<Decimal>,
+    /// Resting stop-loss trigger price attached to this position, when one is set.
+    pub stop_loss_price: Option<Decimal>,
 }
 
 impl PerpPosition {
@@ -919,6 +937,9 @@ impl PerpPosition {
             unrealized_pnl: None,
             funding: None,
             liquidation_price: None,
+            margin_mode: None,
+            take_profit_price: None,
+            stop_loss_price: None,
         }
     }
 
@@ -968,6 +989,27 @@ impl PerpPosition {
     #[must_use]
     pub fn with_liquidation_price(mut self, liquidation_price: Option<Decimal>) -> Self {
         self.liquidation_price = liquidation_price;
+        self
+    }
+
+    /// Set the margin mode (builder-style).
+    #[must_use]
+    pub fn with_margin_mode(mut self, margin_mode: Option<MarginMode>) -> Self {
+        self.margin_mode = margin_mode;
+        self
+    }
+
+    /// Set the resting take-profit trigger price (builder-style).
+    #[must_use]
+    pub fn with_take_profit_price(mut self, take_profit_price: Option<Decimal>) -> Self {
+        self.take_profit_price = take_profit_price;
+        self
+    }
+
+    /// Set the resting stop-loss trigger price (builder-style).
+    #[must_use]
+    pub fn with_stop_loss_price(mut self, stop_loss_price: Option<Decimal>) -> Self {
+        self.stop_loss_price = stop_loss_price;
         self
     }
 }
@@ -1129,8 +1171,34 @@ mod tests {
         // A field the source never provided stays None — never fabricated.
         assert!(perp.mark_price.is_none());
         assert!(perp.collateral.is_empty());
+        // Margin mode and TP/SL are likewise None until set — never defaulted.
+        assert!(perp.margin_mode.is_none());
+        assert!(perp.take_profit_price.is_none());
+        assert!(perp.stop_loss_price.is_none());
 
         assert!(matches!(Position::Perp(perp), Position::Perp(_)));
+    }
+
+    #[test]
+    fn perp_position_carries_margin_mode_and_tpsl_when_set() {
+        let perp = PerpPosition::new(
+            "BTC-USD",
+            PerpSide::Long,
+            Decimal::from_str_exact("0.5").unwrap(),
+        )
+        .with_margin_mode(Some(MarginMode::Isolated))
+        .with_take_profit_price(Some(Decimal::from_str_exact("92500").unwrap()))
+        .with_stop_loss_price(Some(Decimal::from_str_exact("82000").unwrap()));
+
+        assert_eq!(perp.margin_mode, Some(MarginMode::Isolated));
+        assert_eq!(
+            perp.take_profit_price,
+            Some(Decimal::from_str_exact("92500").unwrap())
+        );
+        assert_eq!(
+            perp.stop_loss_price,
+            Some(Decimal::from_str_exact("82000").unwrap())
+        );
     }
 
     #[test]
