@@ -8,6 +8,21 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.0-beta.8] - 2026-10-07
+
+### Added
+
+- **Margin mode and position TP/SL on `PerpPosition`.** New `PerpPosition.margin_mode:
+  Option<MarginMode>` (`Isolated` / `Cross`) plus `take_profit_price` and `stop_loss_price`
+  (`Option<Decimal>`), with `with_margin_mode` / `with_take_profit_price` / `with_stop_loss_price`
+  builders. The Hyperliquid adapter reads the margin mode from the position's `leverage.type` (free,
+  same `clearinghouseState` payload), and at `Detail::Full` attaches each position's resting
+  take-profit and stop-loss trigger prices from `frontendOpenOrders` (orders Hyperliquid flags as the
+  position's own TP/SL). The TP/SL enrichment is **best-effort and advisory**: a transport failure or
+  a malformed order leaves the levels `None` and never fails the net-worth-bearing account read. An
+  unrecognized margin mode maps to `None` rather than failing closed. `None` for sources that don't
+  expose these.
+
 ## [0.2.0-beta.7] - 2026-10-05
 
 ### Added
