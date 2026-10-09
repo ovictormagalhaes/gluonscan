@@ -8,6 +8,14 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hyperliquid funding sign.** `PerpPosition.funding` was passed through from
+  `cumFunding.sinceOpen` verbatim, but Hyperliquid reports that figure from the exchange's side
+  (positive = the position paid funding). The adapter now negates it to match the model's
+  convention (negative = paid). Verified live: an ONDO long's `sinceOpen` of `+33.703202` equals
+  the negated sum of the account's `userFunding` usdc deltas (`-33.703202`).
+
 ## [0.2.0-beta.8] - 2026-10-07
 
 ### Added

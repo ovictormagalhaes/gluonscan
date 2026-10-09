@@ -131,13 +131,15 @@ async fn maps_the_live_short_position() {
         "derived mark ~90.169, got {mark}"
     );
 
-    // PnL and funding are USD Money, verbatim from the API (signed).
+    // PnL is USD Money, verbatim from the API (signed). Funding is negated: Hyperliquid reports
+    // cumFunding from the exchange's side (positive = paid by the account), while the model reads
+    // negative = paid. This short received funding, so the model value is positive.
     let pnl = p.unrealized_pnl.as_ref().expect("pnl");
     assert_eq!(pnl.currency, Currency::Usd);
     assert_eq!(pnl.amount, dec("-2666521.2567420001"));
     let funding = p.funding.as_ref().expect("funding");
     assert_eq!(funding.currency, Currency::Usd);
-    assert_eq!(funding.amount, dec("-570146.735832"));
+    assert_eq!(funding.amount, dec("570146.735832"));
 
     // Collateral is the USDC margin (requirement) carried as a bare amount for detail. Its USD value
     // is intentionally unset: the margin is already encompassed by the account equity below, so
@@ -262,6 +264,23 @@ async fn funding_present_but_malformed_fails_closed() {
         .await
         .expect_err("a present-but-malformed funding value must fail closed");
     assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn funding_paid_by_account_maps_negative() {
+    // Live shape (2026-10-09, ONDO long, positive funding rate): cumFunding.sinceOpen = +33.703202
+    // while the account's userFunding `usdc` deltas sum to -33.703202. The long PAID funding, so
+    // the model value (negative = paid) must be -33.703202.
+    let response = r#"{"marginSummary":{"accountValue":"3380"},"assetPositions":[{"type":"oneWay","position":{
+      "coin":"ONDO","szi":"10318.0","leverage":{"type":"cross","value":3},"entryPx":"0.9",
+      "positionValue":"9500","unrealizedPnl":"214","marginUsed":"3166","liquidationPx":null,
+      "cumFunding":{"allTime":"33.703202","sinceOpen":"33.703202","sinceChange":"2.515933"}}}],"time":1}"#;
+    let reading = read(response).await.expect("read");
+    let p = only_perp(&reading);
+    assert_eq!(
+        p.funding.as_ref().expect("funding").amount,
+        dec("-33.703202")
+    );
 }
 
 #[tokio::test]
