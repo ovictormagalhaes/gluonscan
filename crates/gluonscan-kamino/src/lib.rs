@@ -430,6 +430,17 @@ async fn parse_obligation(
     rpc: &dyn ChainProvider,
     decimals_cache: &mut HashMap<String, u8>,
 ) -> Result<LendingPosition, Error> {
+    // An owner can hold several obligations across markets; the obligation address is the only
+    // stable identity separating them.
+    let obligation = ob
+        .get("obligationAddress")
+        .and_then(|v| v.as_str())
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| Error::Integrity {
+            message: "Kamino obligation missing `obligationAddress`".into(),
+        })?
+        .to_string();
+
     // The API does not return a health factor; derive it from the refreshed stats.
     let liq_limit = decimal_at(ob, "/refreshedStats/borrowLiquidationLimit");
     let adj_debt = decimal_at(ob, "/refreshedStats/userTotalBorrowBorrowFactorAdjusted");
@@ -486,7 +497,9 @@ async fn parse_obligation(
         });
     }
 
-    Ok(LendingPosition::new(supplied, borrowed).with_health_factor(health_factor))
+    Ok(LendingPosition::new(supplied, borrowed)
+        .with_health_factor(health_factor)
+        .with_market_id(Some(obligation)))
 }
 
 /// Build the [`Amount`] for one deposit/borrow leg from a pre-computed raw base-unit amount: scaled

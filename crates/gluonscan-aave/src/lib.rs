@@ -148,7 +148,11 @@ impl ProtocolAdapter for AaveApi {
             enrich_risk(cx, self.endpoint(), market, chain_id, &mut supplied).await?;
         }
 
-        let position = LendingPosition::new(supplied, borrowed).with_health_factor(health_factor);
+        // One Pool per chain holds the whole cross-collateralized account, so its address is the
+        // position's stable identity (unlike the asset mix, it never changes for the account).
+        let position = LendingPosition::new(supplied, borrowed)
+            .with_health_factor(health_factor)
+            .with_market_id(Some(market.to_lowercase()));
         let reading = Reading::new(
             Protocol::AaveV3,
             chain,

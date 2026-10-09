@@ -459,12 +459,13 @@ pub struct LendingPosition {
     pub health_factor: Option<Decimal>,
     /// Claimable protocol rewards / incentives, when the source exposes them.
     pub rewards: Vec<Amount>,
-    /// Source identity of the isolated market this position belongs to, when the protocol is
-    /// per-market isolated (e.g. Morpho Blue's on-chain `marketId`). `None` for cross-collateralized
-    /// protocols (Aave, Kamino), where one position already represents the whole account. Consumers
-    /// that dedup or group positions MUST include this: two isolated markets can share a loan or
-    /// collateral token (and even the same LLTV, differing only by oracle/IRM), so without the
-    /// source id they collapse and a position is lost.
+    /// Stable source identity of the market or account this position belongs to: Morpho Blue's
+    /// on-chain `marketId`, the Aave V3 Pool address (lowercase hex), the Kamino obligation address.
+    /// It does not change when the asset mix or risk parameters move, so consumers can key persisted
+    /// series on it. Consumers that dedup or group positions MUST include this: two isolated markets
+    /// can share a loan or collateral token (and even the same LLTV, differing only by oracle/IRM),
+    /// so without the source id they collapse and a position is lost. `None` when the adapter has
+    /// no such identity.
     pub market_id: Option<String>,
 }
 

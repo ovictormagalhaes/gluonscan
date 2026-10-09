@@ -141,6 +141,43 @@ async fn reads_on_every_supported_chain() {
     }
 }
 
+// The position carries the chain's Aave V3 Pool address as its market id: a stable identity that
+// does not move when the account's asset mix or a reserve's risk parameters change, so consumers can
+// key persisted series on it.
+#[tokio::test]
+async fn position_carries_the_pool_address_as_market_id() {
+    let adapter = AaveApi::new();
+    let cx = ctx();
+    let expected = [
+        (
+            Chain::Ethereum,
+            "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
+        ),
+        (Chain::Base, "0xa238dd80c259a72e81d7e4664a9801593f98d1c5"),
+        (
+            Chain::Arbitrum,
+            "0x794a61358d6845594f94dc1db02a252b5b4814ad",
+        ),
+        (
+            Chain::Optimism,
+            "0x794a61358d6845594f94dc1db02a252b5b4814ad",
+        ),
+        (Chain::Polygon, "0x794a61358d6845594f94dc1db02a252b5b4814ad"),
+        (Chain::Bnb, "0x6807dc923806fe8fd134338eabca509979a7e0cb"),
+    ];
+    for (chain, pool) in expected {
+        let reading = adapter
+            .read(&Wallet::Evm(Address::ZERO), chain, Detail::Full, &cx)
+            .await
+            .unwrap_or_else(|e| panic!("{chain:?} should read: {e}"))
+            .into_inner();
+        let Position::Lending(pos) = &reading.positions[0] else {
+            panic!("expected a lending position");
+        };
+        assert_eq!(pos.market_id.as_deref(), Some(pool), "{chain:?}");
+    }
+}
+
 #[tokio::test]
 async fn only_supported_chains_bind() {
     let adapter = AaveApi::new();

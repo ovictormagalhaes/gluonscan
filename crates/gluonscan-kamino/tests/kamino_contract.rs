@@ -96,6 +96,36 @@ async fn reads_obligation_with_reserve_join() {
         Decimal::from_str_exact("200").unwrap()
     );
     assert_eq!(usdc.apy, Some(Decimal::from_str_exact("0.089").unwrap()));
+    // The obligation address is the stable identity of the position (one owner can hold several
+    // obligations across markets), so it rides as the market id.
+    assert_eq!(p.market_id.as_deref(), Some("obl1"));
+}
+
+#[tokio::test]
+async fn obligation_without_address_fails_closed() {
+    let no_address = OBLIGATIONS.replace(r#""obligationAddress":"obl1","#, "");
+    let http = MockHttp::new()
+        .on(Match::primary_contains("/reserves/metrics"), RESERVES)
+        .on(Match::primary_contains(MAIN_MARKET), &no_address)
+        .on(Match::primary_contains("kamino-market"), "[]");
+    let rpc = MockChainProvider::new()
+        .on(Match::body_contains("MINT_SOL"), mint_account(9))
+        .on(Match::body_contains("MINT_USDC"), mint_account(6));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let err = KaminoApi::new()
+        .read(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect_err("an obligation without its address has no stable identity");
+    assert!(
+        matches!(&err, Error::Integrity { message } if message.contains("obligationAddress")),
+        "expected Integrity(obligationAddress), got {err:?}"
+    );
 }
 
 // Same obligation as OBLIGATIONS but with the `refreshedStats` block removed, so neither
