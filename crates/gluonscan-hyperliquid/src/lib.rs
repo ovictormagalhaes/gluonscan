@@ -237,12 +237,13 @@ fn parse_perp(pos: &Value) -> Result<PerpPosition, Error> {
     };
 
     // Absent cumFunding → None (legitimately unknown); present but unparseable → fail closed, same
-    // as liquidationPx. Negative means funding paid by this position (matches both the model's
-    // convention and Hyperliquid's own sign convention), so the value maps through verbatim.
+    // as liquidationPx. Hyperliquid reports cumFunding from the exchange's side: positive means the
+    // position PAID funding (the account's `userFunding` usdc deltas sum to the exact negation).
+    // The model reads negative = paid, so the value is negated.
     let funding = match pos.get("cumFunding").and_then(|c| c.get("sinceOpen")) {
         None | Some(Value::Null) => None,
         Some(v) => Some(Money::usd(
-            v.as_str()
+            -v.as_str()
                 .and_then(|s| Decimal::from_str(s).ok())
                 .ok_or_else(|| integrity("cumFunding.sinceOpen"))?,
         )),
