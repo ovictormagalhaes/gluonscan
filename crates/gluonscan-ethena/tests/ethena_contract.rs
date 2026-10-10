@@ -134,3 +134,24 @@ async fn unsupported_chain_fails_closed_permanently() {
         "an unsupported chain is a permanent config error, not retryable"
     );
 }
+
+#[tokio::test]
+async fn one_wei_susde_is_dust_not_a_position() {
+    let one_wei = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let reading = read_reply(reply(one_wei)).await.expect("read");
+    assert!(reading.positions.is_empty());
+    assert_eq!(
+        reading.receipt_tokens,
+        vec![SUSDE_ADDR.parse::<Address>().unwrap()]
+    );
+}
+
+#[tokio::test]
+async fn one_gwei_susde_is_kept() {
+    let one_gwei = "0x000000000000000000000000000000000000000000000000000000003b9aca00";
+    let reading = read_reply(reply(one_gwei)).await.expect("read");
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    assert_eq!(p.staked[0].raw, U256::from(1_000_000_000u64));
+}

@@ -12,8 +12,8 @@ use std::str::FromStr;
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail, Error,
-    LockPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
+    is_dust, scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail,
+    Error, LockPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
     Staleness, Timestamp, Token, TokenAddress, Wallet, YieldKind, YieldPosition,
 };
 use gluonscan_evm::{
@@ -180,6 +180,9 @@ impl ProtocolAdapter for PendleApi {
                 continue;
             }
             receipt_tokens.push(token_addr);
+            if is_dust(balance, c.token.decimals) {
+                continue;
+            }
             positions.push(Position::Yield(
                 YieldPosition::new(priced_amount(c.token, balance, c.price_usd)?, c.kind)
                     .with_expiry(c.expiry)
@@ -227,7 +230,7 @@ async fn read_lock(
     )
     .await?;
     let (locked_pendle, expiry) = decode_two_u256(&pd)?;
-    if locked_pendle > U256::ZERO {
+    if !is_dust(locked_pendle, 18) {
         let gov = decode_u256(&eth_call(rpc, chain, None, ve, encode_balance_of(owner)).await?)?;
         out.push(Position::Lock(
             LockPosition::new(vec![
