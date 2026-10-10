@@ -8,6 +8,19 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-09
+
+First stable release of the 0.2 line; the API is the 0.2.0-beta.8 surface plus the changes below.
+
+### Changed
+
+- **Stable `market_id` for Aave V3 and Kamino.** `LendingPosition.market_id` is now set for
+  cross-collateralized protocols too: Aave V3 emits the chain's Pool address (lowercase hex; one
+  Pool per chain holds the whole account) and Kamino the obligation address (an owner can hold
+  several obligations). Consumers no longer need to derive a market identity from the asset mix,
+  which moved whenever collateral or liquidation thresholds changed. A Kamino obligation read
+  without its address now fails closed.
+
 ### Fixed
 
 - **Hyperliquid funding sign.** `PerpPosition.funding` was passed through from
@@ -308,7 +321,9 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.5...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.8...v0.2.0
+[0.2.0-beta.8]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.7...v0.2.0-beta.8
 [0.2.0-beta.5]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.4...v0.2.0-beta.5
 [0.2.0-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.3...v0.2.0-beta.4
 [0.2.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.2...v0.2.0-beta.3
