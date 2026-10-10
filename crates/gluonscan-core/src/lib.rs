@@ -27,10 +27,10 @@ pub use chain::{Chain, Ecosystem};
 pub use error::Error;
 pub use history::{EventKind, History, HistoryEvent};
 pub use model::{
-    scaled, to_raw, Amount, BorrowedAsset, Complete, Currency, LendingPosition, LiquidityPosition,
-    LockPosition, MarginMode, Money, NftPosition, PerpPosition, PerpSide, Position, PositionStatus,
-    Provenance, Reading, StakePosition, Staleness, SuppliedAsset, Timestamp, Token, TokenAddress,
-    WalletBalance, YieldKind, YieldPosition,
+    is_dust, scaled, to_raw, Amount, BorrowedAsset, Complete, Currency, LendingPosition,
+    LiquidityPosition, LockPosition, MarginMode, Money, NftPosition, PerpPosition, PerpSide,
+    Position, PositionStatus, Provenance, Reading, StakePosition, Staleness, SuppliedAsset,
+    Timestamp, Token, TokenAddress, WalletBalance, YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 

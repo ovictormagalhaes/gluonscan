@@ -199,3 +199,38 @@ async fn unsupported_chain_fails_closed_permanently() {
         "an unsupported chain is a permanent config error, not retryable"
     );
 }
+
+const ONE_WEI_WORD: &str = "0x0000000000000000000000000000000000000000000000000000000000000001";
+const ONE_GWEI_WORD: &str = "0x000000000000000000000000000000000000000000000000000000003b9aca00";
+
+// eETH is share-based: a full exit can leave 1 wei of rounding residue. That is no position, but the
+// token stays a receipt so a consumer's wallet list does not surface it either.
+#[tokio::test]
+async fn one_wei_eeth_is_dust_not_a_position() {
+    let reading = read_with(ZERO_WORD, ONE_WEI_WORD).await.expect("read");
+    assert!(reading.positions.is_empty());
+    assert_eq!(
+        reading.receipt_tokens,
+        vec![EETH_ADDR.parse::<Address>().unwrap()]
+    );
+}
+
+#[tokio::test]
+async fn dust_leg_is_dropped_and_real_leg_kept() {
+    let reading = read_with(WEETH_BAL, ONE_WEI_WORD).await.expect("read");
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    assert_eq!(p.staked.len(), 1);
+    assert_eq!(p.staked[0].token.symbol, "weETH");
+    assert_eq!(reading.receipt_tokens.len(), 2);
+}
+
+#[tokio::test]
+async fn one_gwei_eeth_is_kept() {
+    let reading = read_with(ZERO_WORD, ONE_GWEI_WORD).await.expect("read");
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    assert_eq!(p.staked[0].raw, U256::from(1_000_000_000u64));
+}

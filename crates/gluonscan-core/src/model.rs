@@ -40,6 +40,20 @@ pub fn scaled(raw: U256, decimals: u8) -> Result<Decimal, Error> {
         })
 }
 
+/// Whether a raw balance is rounding residue rather than a holding: below `10^(decimals - 9)` base
+/// units (1 gwei for an 18-decimal token), or exactly zero for tokens with fewer than 9 decimals.
+///
+/// Share-based tokens (stETH, eETH) leave a 1-wei remainder after a full exit, so a plain non-zero
+/// check reports a position the owner no longer has. The test is on raw units, never on USD, so an
+/// unpriced balance is never mistaken for dust. Apply it to held/staked/locked amounts only: a
+/// non-zero debt is always real and must never be filtered.
+pub fn is_dust(raw: U256, decimals: u8) -> bool {
+    if decimals < 9 {
+        return raw.is_zero();
+    }
+    raw < U256::from(10u64).pow(U256::from(decimals - 9))
+}
+
 /// A value an adapter has assembled from a fully-successful read. [`Complete::new`] is the single
 /// wrapping point: adapters call it only after every required source has succeeded, so a `Complete`
 /// in a reading signals "no partial data reached here." It is a construction convention the adapters
@@ -1094,6 +1108,18 @@ impl Reading {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dust_is_below_one_gwei_equivalent() {
+        assert!(is_dust(U256::ZERO, 18));
+        assert!(is_dust(U256::from(1u64), 18));
+        assert!(is_dust(U256::from(999_999_999u64), 18));
+        assert!(!is_dust(U256::from(1_000_000_000u64), 18));
+        assert!(is_dust(U256::ZERO, 9));
+        assert!(!is_dust(U256::from(1u64), 9));
+        assert!(is_dust(U256::ZERO, 6));
+        assert!(!is_dust(U256::from(1u64), 6));
+    }
 
     #[test]
     fn scaled_and_to_raw_round_trip() {
