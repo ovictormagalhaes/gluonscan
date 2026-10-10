@@ -543,8 +543,14 @@ pub struct LiquidityPosition {
     pub deposited: Vec<Amount>,
     /// Lifetime withdrawn amounts, `[token0, token1]`.
     pub withdrawn: Vec<Amount>,
-    /// Lifetime collected fees, `[token0, token1]`.
+    /// Lifetime collected fees, `[token0, token1]`. Empty when the source does not report them, or
+    /// when [`collected_fees_unavailable`](Self::collected_fees_unavailable) is set.
     pub collected_fees: Vec<Amount>,
+    /// The source reported lifetime collected fees but they failed an integrity check, so they are
+    /// withheld. The collected total is **unknown** (not zero): consumers must not derive realized
+    /// fees or a fee-based APR for this position. Principal, uncollected fees and the rest of the
+    /// position are unaffected.
+    pub collected_fees_unavailable: bool,
     /// Claimable protocol rewards / incentives (emission tokens), distinct from trading fees —
     /// present only when the source exposes them.
     pub rewards: Vec<Amount>,
@@ -584,6 +590,7 @@ impl LiquidityPosition {
             deposited: Vec::new(),
             withdrawn: Vec::new(),
             collected_fees: Vec::new(),
+            collected_fees_unavailable: false,
             rewards: Vec::new(),
             apr: None,
             status: PositionStatus::Active,
@@ -664,6 +671,16 @@ impl LiquidityPosition {
     #[must_use]
     pub fn with_collected_fees(mut self, collected_fees: Vec<Amount>) -> Self {
         self.collected_fees = collected_fees;
+        self
+    }
+
+    /// Mark the lifetime collected fees as unknown (builder-style): clears
+    /// [`collected_fees`](Self::collected_fees) and sets
+    /// [`collected_fees_unavailable`](Self::collected_fees_unavailable).
+    #[must_use]
+    pub fn with_collected_fees_unavailable(mut self) -> Self {
+        self.collected_fees = Vec::new();
+        self.collected_fees_unavailable = true;
         self
     }
 
@@ -1221,5 +1238,21 @@ mod tests {
         assert_eq!(a.raw, U256::from(2_000_000_000_000_000_000u64));
         assert_eq!(a.amount, Decimal::from_str_exact("2").unwrap());
         assert!(a.usd.is_none());
+    }
+
+    #[test]
+    fn collected_fees_unavailable_clears_fees_and_sets_flag() {
+        let t0 = Token::new("WETH", None, 18);
+        let t1 = Token::new("USDC", None, 6);
+        let fee = Amount::from_decimal(t0.clone(), Decimal::ONE).unwrap();
+        let p = LiquidityPosition::new(t0.clone(), t1.clone(), -60, 60, 0, true)
+            .with_collected_fees(vec![fee]);
+        assert!(!p.collected_fees_unavailable, "known by default");
+        let p = p.with_collected_fees_unavailable();
+        assert!(p.collected_fees_unavailable);
+        assert!(
+            p.collected_fees.is_empty(),
+            "unknown fees are never reported"
+        );
     }
 }

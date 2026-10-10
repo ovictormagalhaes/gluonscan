@@ -71,6 +71,10 @@ pub struct History {
     pub events: Vec<HistoryEvent>,
     /// Where/when this history came from.
     pub provenance: Provenance,
+    /// The source's fee-collection history failed an integrity check, so no
+    /// [`EventKind::CollectFees`] events are emitted. Collected fees over this history are
+    /// **unknown** (not zero); the other event kinds are unaffected.
+    pub collected_fees_unavailable: bool,
 }
 
 impl History {
@@ -86,6 +90,47 @@ impl History {
             chain,
             events,
             provenance,
+            collected_fees_unavailable: false,
         }
+    }
+
+    /// Mark the fee-collection history as unknown (builder-style): drops every
+    /// [`EventKind::CollectFees`] event and sets
+    /// [`collected_fees_unavailable`](Self::collected_fees_unavailable).
+    #[must_use]
+    pub fn with_collected_fees_unavailable(mut self) -> Self {
+        self.events.retain(|e| e.kind != EventKind::CollectFees);
+        self.collected_fees_unavailable = true;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Source, Staleness, Token};
+    use rust_decimal::Decimal;
+
+    #[test]
+    fn collected_fees_unavailable_withholds_only_collects() {
+        let token = Token::new("WETH", None, 18);
+        let amount = Amount::from_decimal(token, Decimal::ONE).unwrap();
+        let ev = |kind| HistoryEvent::new(kind, amount.clone(), "0x1", Timestamp(1));
+        let h = History::new(
+            Protocol::UniswapV3,
+            Chain::Ethereum,
+            vec![ev(EventKind::Deposit), ev(EventKind::CollectFees)],
+            Provenance::new(
+                Source::Subgraph,
+                Chain::Ethereum,
+                Timestamp(1),
+                Staleness::Live,
+            ),
+        );
+        assert!(!h.collected_fees_unavailable);
+        let h = h.with_collected_fees_unavailable();
+        assert!(h.collected_fees_unavailable);
+        assert_eq!(h.events.len(), 1);
+        assert_eq!(h.events[0].kind, EventKind::Deposit);
     }
 }

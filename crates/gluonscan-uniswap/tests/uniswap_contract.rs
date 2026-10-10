@@ -287,6 +287,7 @@ mod history {
     async fn snapshot_deltas_become_paired_events() {
         let h = history(&ctx(SNAPSHOTS)).await;
         assert_eq!(h.protocol, Protocol::UniswapV3);
+        assert!(!h.collected_fees_unavailable);
         // creation deposit (2) + withdraw (2) + collect (2) = 6 paired single-token events.
         assert_eq!(h.events.len(), 6);
 
@@ -316,9 +317,9 @@ mod history {
     }
 
     #[tokio::test]
-    async fn equal_collect_deltas_are_dropped_as_subgraph_corruption() {
+    async fn equal_collect_deltas_mark_collected_history_unavailable() {
         // snap3 reports identical collectedFees on both sides (the known V3 indexing bug) → no
-        // collect events; only the creation deposit + withdraw survive.
+        // collect events and the history says so; the creation deposit + withdraw survive.
         const CORRUPT: &str = r#"{"data":{"positionSnapshots":[
           {"timestamp":"1000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"0.0","withdrawnToken1":"0.0","collectedFeesToken0":"0.0","collectedFeesToken1":"0.0","transaction":{"id":"0xaaa"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}},
           {"timestamp":"2000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"1.0","withdrawnToken1":"2500.0","collectedFeesToken0":"0.0","collectedFeesToken1":"0.0","transaction":{"id":"0xbbb"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}},
@@ -327,9 +328,28 @@ mod history {
         let h = history(&ctx(CORRUPT)).await;
         assert!(
             h.events.iter().all(|e| e.kind != EventKind::CollectFees),
-            "equal-delta collect must be dropped"
+            "equal-delta collect must be withheld"
+        );
+        assert!(
+            h.collected_fees_unavailable,
+            "withheld collects must be surfaced as unknown, not silently dropped"
         );
         assert_eq!(h.events.len(), 4); // deposit pair + withdraw pair
+    }
+
+    #[tokio::test]
+    async fn mirrored_cumulative_totals_withhold_every_collect() {
+        // snap2 holds a genuine-looking collect (distinct deltas), but snap3's cumulative token1
+        // mirrors token0: the token1 series is unreliable, so no partial fee history is emitted.
+        const MIRRORED: &str = r#"{"data":{"positionSnapshots":[
+          {"timestamp":"1000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"0.0","withdrawnToken1":"0.0","collectedFeesToken0":"0.0","collectedFeesToken1":"0.0","transaction":{"id":"0xaaa"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}},
+          {"timestamp":"2000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"0.0","withdrawnToken1":"0.0","collectedFeesToken0":"0.1","collectedFeesToken1":"0.3","transaction":{"id":"0xbbb"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}},
+          {"timestamp":"3000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"0.0","withdrawnToken1":"0.0","collectedFeesToken0":"0.2","collectedFeesToken1":"0.2","transaction":{"id":"0xccc"},"pool":{"token0":{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"},"token1":{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}}
+        ]}}"#;
+        let h = history(&ctx(MIRRORED)).await;
+        assert!(h.collected_fees_unavailable);
+        assert!(h.events.iter().all(|e| e.kind != EventKind::CollectFees));
+        assert_eq!(h.events.len(), 2); // creation deposit pair only
     }
 
     #[tokio::test]
