@@ -8,6 +8,36 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-12
+
+### Added
+
+- **`is_dust(raw, decimals)` in `gluonscan-core`.** A raw balance below `10^(decimals - 9)` base
+  units (1 gwei for an 18-decimal token; exactly zero for tokens with fewer than 9 decimals) is
+  share-rounding residue, not a holding. Raw units only, never USD, so an unpriced balance is never
+  mistaken for dust; a threshold that would overflow `U256` keeps the balance. Not for debt.
+- **`LiquidityPosition.collected_fees_unavailable` and `History.collected_fees_unavailable`**, with
+  `with_collected_fees_unavailable` builders. `true` means the collected-fee history could not be
+  trusted and was withheld: treat `collected_fees` (or the missing `CollectFees` events) as
+  **unknown, not zero**.
+
+### Changed
+
+- **Uniswap V3 corrupted collected fees degrade per position instead of failing the read.** The
+  subgraph mirrors `collectedFeesToken0` into `collectedFeesToken1` for many Ethereum positions. The
+  adapter used to return `Error::Integrity` for the whole chain read; it now keeps the position
+  (liquidity, principal, deposited/withdrawn and on-chain uncollected fees are unaffected), leaves
+  `collected_fees` empty and sets `collected_fees_unavailable`. `read_history` drops every collect
+  event of an affected position and flags the history. Consumers must honour the flag rather than
+  read empty collected fees as zero. The mirror check compares values numerically on both paths.
+
+### Fixed
+
+- **Dust no longer becomes a position.** Lido (stETH/wstETH), ether.fi (eETH/weETH), Ethena (sUSDe)
+  and Pendle (PT/YT and the vePENDLE lock) skip balances that `is_dust` classifies as residue, such
+  as the 1 wei of stETH left after a full exit. Dust tokens stay in `receipt_tokens`, so consumers
+  that hide wrapper tokens from wallet holdings keep hiding them.
+
 ## [0.2.0] - 2026-10-09
 
 First stable release of the 0.2 line; the API is the 0.2.0-beta.8 surface plus the changes below.
