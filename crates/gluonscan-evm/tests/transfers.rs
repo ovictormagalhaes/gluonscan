@@ -67,7 +67,10 @@ async fn receipt_logs_keep_every_log_lowercased() {
         .expect("receipt");
     assert_eq!(out.len(), 2);
     assert_eq!(out[0].address, "0xc36442b4a4522e871399cd717abdd847ab11fe88");
-    assert_eq!(out[0].topics, vec!["0xabcd".to_string(), "0x01".to_string()]);
+    assert_eq!(
+        out[0].topics,
+        vec!["0xabcd".to_string(), "0x01".to_string()]
+    );
     assert_eq!(out[0].data, "0xff");
     assert!(out[1].topics.is_empty());
 }
@@ -83,7 +86,7 @@ async fn missing_receipt_is_an_error_not_an_empty_list() {
     let err = receipt_logs(&rpc, Chain::Ethereum, "0xtx")
         .await
         .expect_err("missing receipt");
-    assert!(matches!(err, gluonscan_core::Error::Integrity { .. }), "{err:?}");
+    assert!(err.is_retryable(), "{err:?}");
 }
 
 #[tokio::test]
