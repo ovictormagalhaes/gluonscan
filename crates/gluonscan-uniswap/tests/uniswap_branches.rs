@@ -119,6 +119,17 @@ async fn collected_fees_equal_nonzero_marks_collected_unavailable_and_keeps_posi
 }
 
 #[tokio::test]
+async fn collected_fees_equal_by_value_but_not_by_string_are_flagged() {
+    let body: &'static str = Box::leak(subgraph("12.5", "12.50", "60").into_boxed_str());
+    let reading = read(&ctx_with(body), Detail::Summary).await.expect("read");
+    let Position::Liquidity(p) = &reading.positions[0] else {
+        panic!("expected a liquidity position");
+    };
+    assert!(p.collected_fees_unavailable);
+    assert!(p.collected_fees.is_empty());
+}
+
+#[tokio::test]
 async fn one_corrupted_position_does_not_fail_its_healthy_sibling() {
     let corrupt = subgraph("12.5", "12.5", "60");
     let healthy = subgraph("0.01", "25.0", "60");

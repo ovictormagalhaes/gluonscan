@@ -335,23 +335,22 @@ impl UniswapV3 {
             human_amount(token0.clone(), item, "/withdrawnToken0")?,
             human_amount(token1.clone(), item, "/withdrawnToken1")?,
         ];
-        // Known subgraph corruption: token0's collected fees mirrored into token1, seen as
-        // byte-identical non-zero values across two distinct tokens (it produced phantom fees and
-        // absurd APY downstream). Only the collected-fee history is affected; principal comes from
-        // the liquidity math and uncollected fees from an on-chain read, so the position is kept
-        // with its collected fees marked unknown rather than failing the whole wallet read.
+        // Known subgraph corruption: token0's collected fees mirrored into token1, seen as equal
+        // non-zero values across two distinct tokens (it produced phantom fees and absurd APY
+        // downstream). Compared numerically so "12.5" and "12.50" match, like the history read.
+        // Only the collected-fee history is affected; principal comes from the liquidity math and
+        // uncollected fees from an on-chain read, so the position is kept with its collected fees
+        // marked unknown rather than failing the whole wallet read.
+        let parse_collected = |ptr: &str| {
+            item.pointer(ptr)
+                .and_then(|v| v.as_str())
+                .and_then(|s| Decimal::from_str(s).ok())
+        };
         let collected_corrupt = match (
-            item.pointer("/collectedFeesToken0")
-                .and_then(|v| v.as_str()),
-            item.pointer("/collectedFeesToken1")
-                .and_then(|v| v.as_str()),
+            parse_collected("/collectedFeesToken0"),
+            parse_collected("/collectedFeesToken1"),
         ) {
-            (Some(a), Some(b)) => {
-                a == b
-                    && Decimal::from_str(a)
-                        .map(|v| v != Decimal::ZERO)
-                        .unwrap_or(false)
-            }
+            (Some(a), Some(b)) => a == b && a != Decimal::ZERO,
             _ => false,
         };
         let collected_fees = if collected_corrupt {
