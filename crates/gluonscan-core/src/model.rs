@@ -51,7 +51,11 @@ pub fn is_dust(raw: U256, decimals: u8) -> bool {
     if decimals < 9 {
         return raw.is_zero();
     }
-    raw < U256::from(10u64).pow(U256::from(decimals - 9))
+    // A threshold too large for U256 (decimals >= 87) would wrap to an arbitrary value, so an
+    // overflow keeps the balance rather than risking hiding a real holding.
+    U256::from(10u64)
+        .checked_pow(U256::from(decimals - 9))
+        .is_some_and(|threshold| raw < threshold)
 }
 
 /// A value an adapter has assembled from a fully-successful read. [`Complete::new`] is the single
@@ -1119,6 +1123,8 @@ mod tests {
         assert!(!is_dust(U256::from(1u64), 9));
         assert!(is_dust(U256::ZERO, 6));
         assert!(!is_dust(U256::from(1u64), 6));
+        assert!(!is_dust(U256::from(1u64), 255));
+        assert!(!is_dust(U256::MAX, 255));
     }
 
     #[test]
