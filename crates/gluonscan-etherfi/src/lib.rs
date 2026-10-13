@@ -16,8 +16,8 @@
 use alloy_primitives::{address, Address};
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter,
-    Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
+    is_dust, Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol,
+    ProtocolAdapter, Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
 };
 use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
@@ -96,18 +96,22 @@ impl ProtocolAdapter for EtherFi {
         let mut staked = Vec::new();
         let mut receipt_tokens = Vec::new();
         if !weeth_raw.is_zero() {
+            receipt_tokens.push(WEETH);
+        }
+        if !is_dust(weeth_raw, 18) {
             staked.push(Amount::from_raw(
                 Token::evm("weETH", Some(WEETH), 18),
                 weeth_raw,
             )?);
-            receipt_tokens.push(WEETH);
         }
         if !eeth_raw.is_zero() {
+            receipt_tokens.push(EETH);
+        }
+        if !is_dust(eeth_raw, 18) {
             staked.push(Amount::from_raw(
                 Token::evm("eETH", Some(EETH), 18),
                 eeth_raw,
             )?);
-            receipt_tokens.push(EETH);
         }
 
         // Empty balances are a valid "no position" result, not an error.

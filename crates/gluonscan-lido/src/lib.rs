@@ -15,8 +15,8 @@
 use alloy_primitives::{address, Address};
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter,
-    Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
+    is_dust, Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol,
+    ProtocolAdapter, Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
 };
 use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
@@ -92,18 +92,22 @@ impl ProtocolAdapter for Lido {
         let mut staked = Vec::new();
         let mut receipt_tokens = Vec::new();
         if !steth_raw.is_zero() {
+            receipt_tokens.push(STETH);
+        }
+        if !is_dust(steth_raw, 18) {
             staked.push(Amount::from_raw(
                 Token::evm("stETH", Some(STETH), 18),
                 steth_raw,
             )?);
-            receipt_tokens.push(STETH);
         }
         if !wsteth_raw.is_zero() {
+            receipt_tokens.push(WSTETH);
+        }
+        if !is_dust(wsteth_raw, 18) {
             staked.push(Amount::from_raw(
                 Token::evm("wstETH", Some(WSTETH), 18),
                 wsteth_raw,
             )?);
-            receipt_tokens.push(WSTETH);
         }
 
         // Empty balances are a valid "no position" result, not an error.
