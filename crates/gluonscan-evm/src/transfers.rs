@@ -185,8 +185,9 @@ pub struct ReceiptLog {
 }
 
 /// Every log of transaction `tx`. Unlike [`receipt_transfers`], a receipt the node does not return
-/// (unknown or not yet mined tx) is an [`Error::Integrity`], never an empty list: a caller rebuilding
-/// amounts from these logs must not read a missing receipt as a tx that emitted nothing.
+/// is an error, never an empty list: a caller rebuilding amounts from these logs must not read a
+/// missing receipt as a tx that emitted nothing. It is retryable, since a load-balanced node lagging
+/// behind the indexer that surfaced the tx is the usual cause.
 pub async fn receipt_logs(
     rpc: &dyn ChainProvider,
     chain: Chain,
@@ -199,8 +200,9 @@ pub async fn receipt_logs(
     let logs = res
         .get("logs")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| Error::Integrity {
+        .ok_or_else(|| Error::Transient {
             message: format!("no receipt for tx {tx}"),
+            retry_after: None,
         })?;
     logs.iter()
         .map(|log| {
@@ -220,9 +222,11 @@ pub async fn receipt_logs(
                 })?
                 .iter()
                 .map(|t| {
-                    t.as_str().map(str::to_lowercase).ok_or_else(|| Error::Integrity {
-                        message: format!("receipt log of {tx} has a non-string topic"),
-                    })
+                    t.as_str()
+                        .map(str::to_lowercase)
+                        .ok_or_else(|| Error::Integrity {
+                            message: format!("receipt log of {tx} has a non-string topic"),
+                        })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ReceiptLog {

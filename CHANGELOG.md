@@ -15,15 +15,19 @@ lockstep: one version, one tag, all crates.
 - **Uniswap V3 mirrored collected fees are rebuilt from receipts.** When the subgraph mirrors
   `collectedFeesToken0` into `collectedFeesToken1`, the true amounts are read from the
   NonfungiblePositionManager `Collect` logs in the receipts of the position's snapshot txs, which
-  needs no `eth_getLogs` range. `read_history` returns the rebuilt collects instead of withholding
-  them; a missing or failed receipt fails the history. An open position read at `Detail::Full`
-  rebuilds its lifetime collected totals the same way; on failure only that position stays
-  `collected_fees_unavailable`. Closed positions, and any read without an RPC, keep the flag.
+  needs no `eth_getLogs` range. Like the subgraph's totals, a `Collect` includes withdrawn principal.
+  The rebuild is accepted only when its token0 sum reproduces the subgraph's token0 total (which the
+  mirror leaves intact). `read_history` then returns the rebuilt collects; a missing or failed
+  receipt fails the history (retryable). A stream the receipts cannot fully account for (no RPC,
+  malformed or truncated snapshots, a tx without a hash, a token0 mismatch) keeps the collects
+  withheld with `collected_fees_unavailable`, as before. An open position read at `Detail::Full`
+  rebuilds its lifetime collected totals the same way; any failure leaves only that position
+  unavailable. Closed positions keep the flag.
 
 ### Added
 
 - **`transfers::receipt_logs`** in `gluonscan-evm`: every log of a receipt. A receipt the node does
-  not return is an `Error::Integrity`, never an empty list.
+  not return is a retryable `Error::Transient`, never an empty list.
 
 ## [0.2.2] - 2026-10-13
 

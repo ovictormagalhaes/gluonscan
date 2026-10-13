@@ -188,6 +188,11 @@ impl ProtocolAdapter for UniswapV3 {
             // the creation snapshot on a first sync.
             let mut event_txs: Vec<(String, i64)> = Vec::new();
 
+            // Token0's collected series stays correct on a mirrored stream, so the rebuilt collects
+            // must account for exactly its change over the window.
+            let mut baseline_col0 = Decimal::ZERO;
+            let mut last_col0 = Decimal::ZERO;
+
             let mut prev = SnapshotTotals::default();
             let mut is_first = true;
             for snap in snaps {
@@ -203,7 +208,10 @@ impl ProtocolAdapter for UniswapV3 {
                 }
                 if !(is_first && since_ts > 0) {
                     event_txs.push((tx.clone(), curr.ts));
+                } else {
+                    baseline_col0 = curr.col0;
                 }
+                last_col0 = curr.col0;
 
                 if is_first {
                     // The baseline snapshot carries no event, except a first-ever sync whose creation
@@ -276,45 +284,46 @@ impl ProtocolAdapter for UniswapV3 {
             }
 
             // The mirrored token1 series makes the snapshot deltas useless for collects, but each
-            // collect's own receipt still carries the true amounts. Without an RPC the collects
-            // stay withheld below; a failed receipt read fails the whole history (never a partial
-            // collect stream).
+            // collect's own receipt still carries the true amounts. A failed receipt read fails the
+            // whole history (retried, never a partial collect stream). A stream the receipts cannot
+            // fully account for (no RPC, a malformed or truncated snapshot list, a tx without a hash,
+            // or receipts that do not reproduce token0's collected total) keeps the collects withheld.
             if collected_corrupt {
-                if let Ok(rpc) = cx.rpc() {
-                    // A skipped snapshot's tx would never have its receipt read.
-                    if skipped_snapshot || snaps.len() >= SNAPSHOT_PAGE {
-                        return Err(Error::Integrity {
-                            message: format!(
-                                "Uniswap position {position_id}: snapshot stream malformed or truncated, collects cannot be rebuilt"
-                            ),
-                        });
-                    }
+                let accountable = !skipped_snapshot
+                    && snaps.len() < SNAPSHOT_PAGE
+                    && event_txs.iter().all(|(tx, _)| !tx.is_empty());
+                if let (Ok(rpc), true) = (cx.rpc(), accountable) {
                     let token_id = parse_token_id(position_id)?;
                     let txs: Vec<String> = event_txs.iter().map(|(tx, _)| tx.clone()).collect();
                     let collects =
                         collects_from_receipts(rpc.as_ref(), chain, token_id, &txs).await?;
-                    events.retain(|e| e.kind != EventKind::CollectFees);
-                    for (tx, raw0, raw1) in collects {
-                        let ts = event_txs
-                            .iter()
-                            .find(|(t, _)| t.to_lowercase() == tx)
-                            .map(|(_, ts)| *ts)
-                            .ok_or_else(|| Error::Integrity {
-                                message: format!("Uniswap collect tx {tx} has no snapshot"),
-                            })?;
-                        push_pair(
-                            &mut events,
-                            EventKind::CollectFees,
-                            &token0,
-                            &token1,
-                            scaled(raw0, token0.decimals)?,
-                            scaled(raw1, token1.decimals)?,
-                            &tx,
-                            ts,
-                        )?;
+                    let raw0 = collects
+                        .iter()
+                        .fold(U256::ZERO, |acc, (_, a0, _)| acc.saturating_add(*a0));
+                    if scaled(raw0, token0.decimals)? == last_col0 - baseline_col0 {
+                        events.retain(|e| e.kind != EventKind::CollectFees);
+                        for (tx, raw0, raw1) in collects {
+                            let ts = event_txs
+                                .iter()
+                                .find(|(t, _)| t.to_lowercase() == tx)
+                                .map(|(_, ts)| *ts)
+                                .ok_or_else(|| Error::Integrity {
+                                    message: format!("Uniswap collect tx {tx} has no snapshot"),
+                                })?;
+                            push_pair(
+                                &mut events,
+                                EventKind::CollectFees,
+                                &token0,
+                                &token1,
+                                scaled(raw0, token0.decimals)?,
+                                scaled(raw1, token1.decimals)?,
+                                &tx,
+                                ts,
+                            )?;
+                        }
+                        events.sort_by_key(|e| e.at.0);
+                        rebuilt_from_receipts = true;
                     }
-                    events.sort_by_key(|e| e.at.0);
-                    rebuilt_from_receipts = true;
                 }
             }
         }
@@ -340,11 +349,14 @@ impl ProtocolAdapter for UniswapV3 {
 
 impl UniswapV3 {
     /// Lifetime raw `(amount0, amount1)` sent out by every collect of position `id`, summed from the
-    /// receipts of all its snapshot txs (the subgraph snapshots every mint, burn and collect).
+    /// receipts of all its snapshot txs (the subgraph snapshots every mint, burn and collect). The
+    /// token0 sum must reproduce the subgraph's token0 total (`expected0`, which the mirror leaves
+    /// intact), so a collect the snapshots did not surface fails the rebuild.
     async fn collected_from_receipts(
         &self,
         id: &str,
         chain: Chain,
+        expected0: (Decimal, u8),
         cx: &Ctx,
     ) -> Result<(U256, U256), Error> {
         let rpc = cx.rpc()?;
@@ -369,11 +381,20 @@ impl UniswapV3 {
         let txs: Vec<String> = snaps.iter().map(snapshot_tx).collect();
         let collects =
             collects_from_receipts(rpc.as_ref(), chain, parse_token_id(id)?, &txs).await?;
-        Ok(collects
+        let (sum0, sum1) = collects
             .into_iter()
             .fold((U256::ZERO, U256::ZERO), |(s0, s1), (_, a0, a1)| {
                 (s0.saturating_add(a0), s1.saturating_add(a1))
-            }))
+            });
+        let (col0, decimals0) = expected0;
+        if scaled(sum0, decimals0)? != col0 {
+            return Err(Error::Integrity {
+                message: format!(
+                    "Uniswap position {id}: receipts do not reproduce the token0 collected total"
+                ),
+            });
+        }
+        Ok((sum0, sum1))
     }
 
     async fn parse_position(
@@ -458,10 +479,12 @@ impl UniswapV3 {
         // snapshot txs. Closed positions stay unknown here (their realized values come from the
         // history read), which bounds the extra calls to the positions a user still holds. Any
         // failure leaves the collected fees unknown for this position only.
-        let rebuilt = if collected_corrupt && with_fees && liquidity != "0" {
-            self.collected_from_receipts(&id, chain, cx).await.ok()
-        } else {
-            None
+        let rebuilt = match parse_collected("/collectedFeesToken0") {
+            Some(col0) if collected_corrupt && with_fees && liquidity != "0" => self
+                .collected_from_receipts(&id, chain, (col0, token0.decimals), cx)
+                .await
+                .ok(),
+            _ => None,
         };
         let collected_corrupt = collected_corrupt && rebuilt.is_none();
         let collected_fees = if let Some((raw0, raw1)) = rebuilt {

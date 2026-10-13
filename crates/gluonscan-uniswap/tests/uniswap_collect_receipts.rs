@@ -244,8 +244,10 @@ async fn an_exit_keeps_its_withdraw_and_a_collect_carrying_the_principal() {
     assert_eq!(of(EventKind::CollectFees, "WETH"), dec("2.1"));
 }
 
+// A snapshot whose totals cannot be read would leave its tx's receipt unread, so the collects stay
+// withheld rather than rebuilt without it (deposits and withdraws are still returned).
 #[tokio::test]
-async fn a_malformed_snapshot_fails_the_rebuild() {
+async fn a_malformed_snapshot_keeps_the_collects_withheld() {
     let broken = format!(
         r#"{{"timestamp":"2000","depositedToken0":"oops","depositedToken1":"5000.0","withdrawnToken0":"0.0","withdrawnToken1":"0.0","collectedFeesToken0":"0.1","collectedFeesToken1":"0.1","transaction":{{"id":"0xbbb"}},{POOL}}}"#
     );
@@ -257,10 +259,60 @@ async fn a_malformed_snapshot_fails_the_rebuild() {
     let cx = Ctx::new(Arc::new(snapshots_http(body)), Arc::new(MockClock(0)))
         .with_rpc(Arc::new(receipts()));
 
-    assert!(
-        history(&cx, None).await.is_err(),
-        "the skipped snapshot's collect would be missing"
+    let h = history(&cx, None).await.expect("history");
+    assert!(h.collected_fees_unavailable);
+    assert!(h.events.iter().all(|e| e.kind != EventKind::CollectFees));
+    assert!(h.events.iter().any(|e| e.kind == EventKind::Deposit));
+}
+
+// Two txs in one block collapse into one snapshot, so a collect can lack a snapshot tx. Token0's
+// collected series is intact on a mirrored stream: receipts that do not reproduce it keep the
+// collects withheld.
+#[tokio::test]
+async fn receipts_that_miss_a_collect_keep_the_history_withheld() {
+    let rpc = on_receipt(MockChainProvider::new(), "0xaaa", receipt(&[]));
+    let rpc = on_receipt(
+        rpc,
+        "0xbbb",
+        receipt(&[collect_log(
+            MANAGER,
+            12345,
+            100_000_000_000_000_000,
+            300_000_000,
+        )]),
     );
+    let rpc = on_receipt(rpc, "0xccc", receipt(&[]));
+    let cx = Ctx::new(
+        Arc::new(snapshots_http(mirrored_snapshots())),
+        Arc::new(MockClock(0)),
+    )
+    .with_rpc(Arc::new(rpc));
+
+    let h = history(&cx, None).await.expect("history");
+    assert!(h.collected_fees_unavailable);
+    assert!(h.events.iter().all(|e| e.kind != EventKind::CollectFees));
+}
+
+#[tokio::test]
+async fn an_open_read_whose_receipts_miss_a_collect_stays_unavailable() {
+    let rpc = on_receipt(MockChainProvider::new(), "0xaaa", receipt(&[]));
+    let rpc = on_receipt(
+        rpc,
+        "0xbbb",
+        receipt(&[collect_log(
+            MANAGER,
+            12345,
+            100_000_000_000_000_000,
+            300_000_000,
+        )]),
+    );
+    let rpc = uncollected(on_receipt(rpc, "0xccc", receipt(&[])));
+    let cx =
+        Ctx::new(Arc::new(read_http("1000000000")), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let p = read_one(&cx).await;
+    assert!(p.collected_fees_unavailable);
+    assert!(p.collected_fees.is_empty());
 }
 
 #[tokio::test]
