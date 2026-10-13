@@ -17,7 +17,7 @@ injected [`ChainProvider`](concepts/providers.md) · `key` a provider API key.
 | `Ethena` | Ethena | EVM | Ethereum | ⛓️ | `RPC` | Positions |
 | `Hyperliquid` | Hyperliquid | EVM | Hyperliquid | 🌐 | `HTTP` | Positions |
 | `Morpho` | Morpho Blue | EVM | Ethereum, Base | 🌐 | `HTTP` | Positions, Health factor, Risk config |
-| `UniswapV3` | Uniswap V3 | EVM | Ethereum, Base, Arbitrum | 📈 + ⛓️ | `HTTP` (+ `RPC` for `Full` fees) | Positions, Fees |
+| `UniswapV3` | Uniswap V3 | EVM | Ethereum, Base, Arbitrum | 📈 + ⛓️ | `HTTP` (+ `RPC` for `Full` fees and mirrored collects) | Positions, Fees, History |
 | `PendleApi` | Pendle | EVM | Ethereum, Arbitrum, Base | 🌐 + ⛓️ | `HTTP` + `RPC` | Positions |
 | `KaminoApi` | Kamino | Solana | Solana | 🌐 | `HTTP` | Positions, Health factor |
 | `RaydiumClmm` | Raydium (CLMM) | Solana | Solana | ⛓️ | `RPC` | Positions, Fees |

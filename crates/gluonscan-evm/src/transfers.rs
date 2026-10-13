@@ -173,6 +173,71 @@ pub async fn receipt_transfers(
     Ok(out)
 }
 
+/// One log of a mined transaction receipt, as returned by the node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiptLog {
+    /// Emitting contract (lowercased `0x…`).
+    pub address: String,
+    /// Indexed topics (lowercased `0x…` 32-byte words), topic0 first.
+    pub topics: Vec<String>,
+    /// Non-indexed data (`0x…`).
+    pub data: String,
+}
+
+/// Every log of transaction `tx`. Unlike [`receipt_transfers`], a receipt the node does not return
+/// is an error, never an empty list: a caller rebuilding amounts from these logs must not read a
+/// missing receipt as a tx that emitted nothing. It is retryable, since a load-balanced node lagging
+/// behind the indexer that surfaced the tx is the usual cause.
+pub async fn receipt_logs(
+    rpc: &dyn ChainProvider,
+    chain: Chain,
+    tx: &str,
+) -> Result<Vec<ReceiptLog>, Error> {
+    let params = serde_json::json!([tx]).to_string();
+    let raw = rpc.call(chain, "eth_getTransactionReceipt", params).await?;
+    let json = parse_json(&raw, "getTransactionReceipt")?;
+    let res = rpc_result(&json, "getTransactionReceipt")?;
+    let logs = res
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::Transient {
+            message: format!("no receipt for tx {tx}"),
+            retry_after: None,
+        })?;
+    logs.iter()
+        .map(|log| {
+            let field = |k: &str| {
+                log.get(k)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_lowercase)
+                    .ok_or_else(|| Error::Integrity {
+                        message: format!("receipt log of {tx} missing `{k}`"),
+                    })
+            };
+            let topics = log
+                .get("topics")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| Error::Integrity {
+                    message: format!("receipt log of {tx} missing `topics`"),
+                })?
+                .iter()
+                .map(|t| {
+                    t.as_str()
+                        .map(str::to_lowercase)
+                        .ok_or_else(|| Error::Integrity {
+                            message: format!("receipt log of {tx} has a non-string topic"),
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ReceiptLog {
+                address: field("address")?,
+                topics,
+                data: field("data")?,
+            })
+        })
+        .collect()
+}
+
 /// The latest block number on `chain`.
 pub async fn latest_block(rpc: &dyn ChainProvider, chain: Chain) -> Result<u64, Error> {
     let raw = rpc.call(chain, "eth_blockNumber", "[]".to_string()).await?;

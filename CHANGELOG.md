@@ -8,6 +8,27 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-13
+
+### Fixed
+
+- **Uniswap V3 mirrored collected fees are rebuilt from receipts.** When the subgraph mirrors
+  `collectedFeesToken0` into `collectedFeesToken1`, the true amounts are read from the
+  NonfungiblePositionManager `Collect` logs in the receipts of the position's snapshot txs, which
+  needs no `eth_getLogs` range. Like the subgraph's totals, a `Collect` includes withdrawn principal.
+  The rebuild is accepted only when its token0 sum reproduces the subgraph's token0 total (which the
+  mirror leaves intact). `read_history` then returns the rebuilt collects; a missing or failed
+  receipt fails the history (retryable). A stream the receipts cannot fully account for (no RPC,
+  malformed or truncated snapshots, a tx without a hash, a token0 mismatch) keeps the collects
+  withheld with `collected_fees_unavailable`, as before. An open position read at `Detail::Full`
+  rebuilds its lifetime collected totals the same way; any failure leaves only that position
+  unavailable. Closed positions keep the flag.
+
+### Added
+
+- **`transfers::receipt_logs`** in `gluonscan-evm`: every log of a receipt. A receipt the node does
+  not return is a retryable `Error::Transient`, never an empty list.
+
 ## [0.2.2] - 2026-10-13
 
 ### Added
@@ -361,7 +382,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.8...v0.2.0
