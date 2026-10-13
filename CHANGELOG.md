@@ -8,6 +8,16 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-13
+
+### Added
+
+- **`LendingPosition.parent_market`**, with a `with_parent_market` builder: the protocol market that
+  holds the account when `market_id` identifies an account rather than a market. Kamino sets it to
+  the lending market of each obligation, so a consumer can call `read_history` with
+  `"obligation|market"` and skip the scan across every known market. `None` for Aave and Morpho,
+  whose `market_id` already is the market.
+
 ## [0.2.1] - 2026-10-12
 
 ### Added
@@ -351,7 +361,9 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.8...v0.2.0
 [0.2.0-beta.8]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.7...v0.2.0-beta.8
 [0.2.0-beta.5]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.4...v0.2.0-beta.5
