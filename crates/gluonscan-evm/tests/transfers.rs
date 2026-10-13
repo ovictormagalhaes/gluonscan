@@ -2,7 +2,7 @@
 //! `Transfer` logs of a receipt, and `eth_blockNumber`. Offline via MockChainProvider.
 
 use gluonscan_core::Chain;
-use gluonscan_evm::transfers::{asset_transfers_in, latest_block, receipt_transfers};
+use gluonscan_evm::transfers::{asset_transfers_in, latest_block, receipt_logs, receipt_transfers};
 use gluonscan_testing::{Match, MockChainProvider};
 
 const TRANSFER_TOPIC: &str = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -53,6 +53,37 @@ async fn receipt_transfers_decode_erc20_logs_and_skip_non_transfer() {
     assert_eq!(out[0].from, "0x1111111111111111111111111111111111111111");
     assert_eq!(out[0].to, "0x2222222222222222222222222222222222222222");
     assert_eq!(out[0].value_raw, "0xff");
+}
+
+#[tokio::test]
+async fn receipt_logs_keep_every_log_lowercased() {
+    let body = r#"{"jsonrpc":"2.0","id":1,"result":{"logs":[
+      {"address":"0xC36442b4a4522E871399CD717aBDD847Ab11FE88","topics":["0xABCD","0x01"],"data":"0xFF"},
+      {"address":"0xother","topics":[],"data":"0x"}
+    ]}}"#;
+    let rpc = MockChainProvider::new().on(Match::method("eth_getTransactionReceipt"), body);
+    let out = receipt_logs(&rpc, Chain::Ethereum, "0xtx")
+        .await
+        .expect("receipt");
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].address, "0xc36442b4a4522e871399cd717abdd847ab11fe88");
+    assert_eq!(out[0].topics, vec!["0xabcd".to_string(), "0x01".to_string()]);
+    assert_eq!(out[0].data, "0xff");
+    assert!(out[1].topics.is_empty());
+}
+
+// A tx the node does not know returns `result: null`; reading that as "no logs" would silently drop
+// whatever the caller is rebuilding from them.
+#[tokio::test]
+async fn missing_receipt_is_an_error_not_an_empty_list() {
+    let rpc = MockChainProvider::new().on(
+        Match::method("eth_getTransactionReceipt"),
+        r#"{"jsonrpc":"2.0","id":1,"result":null}"#,
+    );
+    let err = receipt_logs(&rpc, Chain::Ethereum, "0xtx")
+        .await
+        .expect_err("missing receipt");
+    assert!(matches!(err, gluonscan_core::Error::Integrity { .. }), "{err:?}");
 }
 
 #[tokio::test]

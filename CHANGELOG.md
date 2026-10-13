@@ -8,6 +8,23 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-13
+
+### Fixed
+
+- **Uniswap V3 mirrored collected fees are rebuilt from receipts.** When the subgraph mirrors
+  `collectedFeesToken0` into `collectedFeesToken1`, the true amounts are read from the
+  NonfungiblePositionManager `Collect` logs in the receipts of the position's snapshot txs, which
+  needs no `eth_getLogs` range. `read_history` returns the rebuilt collects instead of withholding
+  them; a missing or failed receipt fails the history. An open position read at `Detail::Full`
+  rebuilds its lifetime collected totals the same way; on failure only that position stays
+  `collected_fees_unavailable`. Closed positions, and any read without an RPC, keep the flag.
+
+### Added
+
+- **`transfers::receipt_logs`** in `gluonscan-evm`: every log of a receipt. A receipt the node does
+  not return is an `Error::Integrity`, never an empty list.
+
 ## [0.2.2] - 2026-10-13
 
 ### Added
@@ -361,7 +378,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0-beta.8...v0.2.0
