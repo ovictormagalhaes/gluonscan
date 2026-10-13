@@ -127,7 +127,7 @@ impl ProtocolAdapter for KaminoApi {
 
             for ob in items {
                 positions.push(Position::Lending(
-                    parse_obligation(ob, &reserve_map, rpc, &mut decimals_cache).await?,
+                    parse_obligation(ob, market, &reserve_map, rpc, &mut decimals_cache).await?,
                 ));
             }
         }
@@ -426,6 +426,7 @@ fn build_reserve_map(reserves: &serde_json::Value) -> Result<HashMap<String, Res
 
 async fn parse_obligation(
     ob: &serde_json::Value,
+    market: &str,
     reserves: &HashMap<String, ReserveMeta>,
     rpc: &dyn ChainProvider,
     decimals_cache: &mut HashMap<String, u8>,
@@ -499,7 +500,8 @@ async fn parse_obligation(
 
     Ok(LendingPosition::new(supplied, borrowed)
         .with_health_factor(health_factor)
-        .with_market_id(Some(obligation)))
+        .with_market_id(Some(obligation))
+        .with_parent_market(Some(market.to_string())))
 }
 
 /// Build the [`Amount`] for one deposit/borrow leg from a pre-computed raw base-unit amount: scaled
