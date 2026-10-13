@@ -202,6 +202,67 @@ async fn a_missing_receipt_fails_the_history() {
     assert!(history(&cx, None).await.is_err());
 }
 
+// A Collect sends out everything owed, principal released by decreaseLiquidity included, exactly
+// like the subgraph's own collected totals (healthy positions match the receipt sums to the wei).
+// The withdraw and the collect of one exit tx are both kept; the consumer nets them.
+#[tokio::test]
+async fn an_exit_keeps_its_withdraw_and_a_collect_carrying_the_principal() {
+    let exit = format!(
+        r#"{{"timestamp":"2000","depositedToken0":"2.0","depositedToken1":"5000.0","withdrawnToken0":"2.0","withdrawnToken1":"5000.0","collectedFeesToken0":"2.1","collectedFeesToken1":"2.1","transaction":{{"id":"0xbbb"}},{POOL}}}"#
+    );
+    let body = format!(
+        r#"{{"data":{{"positionSnapshots":[{},{exit}]}}}}"#,
+        snapshot(1000, "0.0", "0.0", "0xaaa"),
+    );
+    let rpc = on_receipt(MockChainProvider::new(), "0xaaa", receipt(&[]));
+    let rpc = on_receipt(
+        rpc,
+        "0xbbb",
+        receipt(&[
+            collect_log(MANAGER, 12345, 2_000_000_000_000_000_000, 5_000_000_000),
+            collect_log(MANAGER, 12345, 100_000_000_000_000_000, 30_000_000),
+        ]),
+    );
+    let cx =
+        Ctx::new(Arc::new(snapshots_http(body)), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let h = history(&cx, None).await.expect("history");
+
+    let of = |kind: EventKind, symbol: &str| {
+        h.events
+            .iter()
+            .filter(|e| e.kind == kind && e.amount.token.symbol == symbol)
+            .map(|e| e.amount.amount)
+            .sum::<Decimal>()
+    };
+    assert_eq!(of(EventKind::Withdraw, "USDC"), dec("5000"));
+    assert_eq!(
+        of(EventKind::CollectFees, "USDC"),
+        dec("5030"),
+        "two Collects in one tx are summed, principal included"
+    );
+    assert_eq!(of(EventKind::CollectFees, "WETH"), dec("2.1"));
+}
+
+#[tokio::test]
+async fn a_malformed_snapshot_fails_the_rebuild() {
+    let broken = format!(
+        r#"{{"timestamp":"2000","depositedToken0":"oops","depositedToken1":"5000.0","withdrawnToken0":"0.0","withdrawnToken1":"0.0","collectedFeesToken0":"0.1","collectedFeesToken1":"0.1","transaction":{{"id":"0xbbb"}},{POOL}}}"#
+    );
+    let body = format!(
+        r#"{{"data":{{"positionSnapshots":[{},{broken},{}]}}}}"#,
+        snapshot(1000, "0.0", "0.0", "0xaaa"),
+        snapshot(3000, "0.2", "0.2", "0xccc"),
+    );
+    let cx = Ctx::new(Arc::new(snapshots_http(body)), Arc::new(MockClock(0)))
+        .with_rpc(Arc::new(receipts()));
+
+    assert!(
+        history(&cx, None).await.is_err(),
+        "the skipped snapshot's collect would be missing"
+    );
+}
+
 #[tokio::test]
 async fn without_an_rpc_the_mirrored_collects_stay_withheld() {
     let cx = Ctx::new(
