@@ -26,7 +26,9 @@ const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees, C
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum, Chain::Base, Chain::Arbitrum];
 
 /// `keccak256("Collect(uint256,address,uint256,uint256)")`: the NonfungiblePositionManager event
-/// carrying what one collect sent out (principal and fees), with the token id as topic1.
+/// carrying what one collect sent out, with the token id as topic1. Like the subgraph's
+/// `collectedFeesToken*` (which it reproduces to the wei on healthy positions), it includes the
+/// principal released by `decreaseLiquidity`; consumers net withdrawn principal out of it.
 const COLLECT_TOPIC: &str = "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01";
 
 /// The subgraph's page size for a position's snapshots; a full page may be truncated.
@@ -179,6 +181,7 @@ impl ProtocolAdapter for UniswapV3 {
         let mut events: Vec<HistoryEvent> = Vec::new();
         let mut collected_corrupt = false;
         let mut rebuilt_from_receipts = false;
+        let mut skipped_snapshot = false;
         if let Some(first) = snaps.first() {
             let (token0, token1) = snapshot_tokens(first)?;
             // Snapshots that can carry an event of this window: every one after the baseline, plus
@@ -191,6 +194,7 @@ impl ProtocolAdapter for UniswapV3 {
                 // A snapshot with malformed numeric fields is skipped rather than diffed into
                 // synthetic zeroes (never fabricate history amounts).
                 let Some(curr) = SnapshotTotals::parse(snap) else {
+                    skipped_snapshot = true;
                     continue;
                 };
                 let tx = snapshot_tx(snap);
@@ -277,10 +281,11 @@ impl ProtocolAdapter for UniswapV3 {
             // collect stream).
             if collected_corrupt {
                 if let Ok(rpc) = cx.rpc() {
-                    if snaps.len() >= SNAPSHOT_PAGE {
+                    // A skipped snapshot's tx would never have its receipt read.
+                    if skipped_snapshot || snaps.len() >= SNAPSHOT_PAGE {
                         return Err(Error::Integrity {
                             message: format!(
-                                "Uniswap position {position_id}: snapshot page full, collect history may be truncated"
+                                "Uniswap position {position_id}: snapshot stream malformed or truncated, collects cannot be rebuilt"
                             ),
                         });
                     }
@@ -592,7 +597,10 @@ fn decode_collect_data(data: &str) -> Result<(U256, U256), Error> {
         hex.get(i * 64..(i + 1) * 64)
             .and_then(|w| U256::from_str_radix(w, 16).ok())
             .ok_or_else(|| Error::Integrity {
-                message: format!("Uniswap Collect log data malformed: {data}"),
+                message: format!(
+                    "Uniswap Collect log data malformed ({} hex chars)",
+                    hex.len()
+                ),
             })
     };
     Ok((word(1)?, word(2)?))
