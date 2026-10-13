@@ -8,6 +8,24 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-13
+
+### Fixed
+
+- **Kamino amounts and values are live again.** Each leg now comes from the newest point of the
+  obligation's hourly `metrics/history`: the underlying token amount with interest accrued and its
+  refreshed USD value. Before, the adapter read the obligation account `state`, where deposits are
+  collateral shares (understating the underlying by the reserve exchange rate) and debt and market
+  values are frozen at the owner's last transaction, so debt never accrued and USD values stayed
+  fixed while prices moved.
+- **The read fails closed when the point is not live.** A newest point older than
+  `MAX_POINT_AGE_SECS` (4h; the API publishes each hourly point about an hour late), a missing point, or a transaction after the point returns a retryable
+  `Error::Transient`. A point whose reserves differ from the account's, a leg without a USD value,
+  an account without `state.lastUpdate.timestamp` or without its leg arrays returns
+  `Error::Integrity`. A leg under one base unit is skipped before its USD is read, and USD values in
+  exponent notation are accepted. The health factor
+  now comes from the same point as the legs. An emptied obligation is read without a point.
+
 ## [0.2.3] - 2026-10-13
 
 ### Fixed
@@ -382,7 +400,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.0...v0.2.1

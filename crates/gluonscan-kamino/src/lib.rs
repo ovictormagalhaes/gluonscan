@@ -2,12 +2,16 @@
 //!
 //! Kamino adapter (Solana lending), [`Source::Api`] + on-chain mint decimals: reads a wallet's
 //! obligations from the Kamino HTTP API across its markets and normalizes them into
-//! [`LendingPosition`]s. USD values come from the API's scaled-fraction `marketValueSf` (divided by
-//! `2^60`); the human token amount is the raw underlying amount scaled by the mint's decimals (read
-//! on-chain). The health factor is derived (`borrowLiquidationLimit / borrowFactorAdjustedDebt`)
-//! since the API does not expose it directly.
+//! [`LendingPosition`]s. Per-leg amounts and USD values come from the newest point of the
+//! obligation's hourly `metrics/history`, which the API refreshes: underlying token amounts with
+//! interest accrued, valued at the current oracle price. The obligation account's own `state` is
+//! not used for amounts: its deposits are collateral shares, and its debt and market values are
+//! frozen at the owner's last transaction. A point older than [`MAX_POINT_AGE_SECS`], or one that
+//! predates the obligation's last on-chain update, fails the read as retryable. The health factor
+//! is derived (`borrowLiquidationLimit / borrowFactorAdjustedDebt`) since the API does not expose
+//! it directly.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
 
 use alloy_primitives::U256;
@@ -36,6 +40,14 @@ const MARKETS: &[&str] = &[
     "ByVuX9fRdEHsZomwLVryQQHRhQi3yMXZ6uz6DA4gutja",
     "DxXdAyU3kCjnyggvHmY5nAwg5cRbbmdyX3npfDMjjMek",
 ];
+
+/// Oldest obligation history point accepted as a live reading. The API stamps one point per hour
+/// but publishes it about an hour later, so the newest point is normally up to ~2h old; the margin
+/// absorbs one late publication. A transaction after the point is caught separately.
+pub const MAX_POINT_AGE_SECS: i64 = 4 * 3600;
+/// How far back the live-point request looks; wider than [`MAX_POINT_AGE_SECS`] so an aged point
+/// is reported as stale instead of as missing.
+const POINT_LOOKBACK_SECS: i64 = 12 * 3600;
 
 /// Kamino adapter backed by the public HTTP API + on-chain mint decimals.
 #[derive(Debug, Default, Clone)]
@@ -126,8 +138,15 @@ impl ProtocolAdapter for KaminoApi {
             let reserve_map = build_reserve_map(&reserves)?;
 
             for ob in items {
+                // An emptied obligation stays listed but holds no legs: nothing to read live.
+                let live = if holds_legs(ob)? {
+                    latest_obligation_point(self.base(), market, ob, cx).await?
+                } else {
+                    serde_json::Value::Null
+                };
                 positions.push(Position::Lending(
-                    parse_obligation(ob, market, &reserve_map, rpc, &mut decimals_cache).await?,
+                    parse_obligation(ob, &live, market, &reserve_map, rpc, &mut decimals_cache)
+                        .await?,
                 ));
             }
         }
@@ -288,6 +307,99 @@ async fn resolve_market(
     })
 }
 
+/// The newest point of an obligation's hourly `metrics/history`, checked to be a live reading of the
+/// obligation as it stands now: no older than [`MAX_POINT_AGE_SECS`], and not older than the
+/// obligation's last on-chain update (a deposit, withdraw, borrow or repay after the point would be
+/// missing from it). Both checks fail as [`Error::Transient`]: the next hourly point resolves them.
+async fn latest_obligation_point(
+    base: &str,
+    market: &str,
+    ob: &serde_json::Value,
+    cx: &Ctx,
+) -> Result<serde_json::Value, Error> {
+    let obligation = obligation_address(ob)?;
+    let now = cx.clock.now().0;
+    let url = format!(
+        "{base}/v2/kamino-market/{market}/obligations/{obligation}/metrics/history?start={}&end={}",
+        rfc3339(now - POINT_LOOKBACK_SECS),
+        rfc3339(now + 3600)
+    );
+    let raw = cx.http.get(&url, &[]).await?;
+    let hist: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+        message: format!("Kamino obligation history not JSON: {e}"),
+    })?;
+    let points = hist
+        .pointer("/history")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("Kamino obligation {obligation} history has no `history` array"),
+        })?;
+    let latest = points
+        .iter()
+        .filter(|p| snapshot_ts(p) > 0)
+        .max_by_key(|p| snapshot_ts(p))
+        .ok_or_else(|| Error::Transient {
+            message: format!("Kamino obligation {obligation} has no history point yet"),
+            retry_after: None,
+        })?;
+    let point_ts = snapshot_ts(latest);
+    if now - point_ts > MAX_POINT_AGE_SECS {
+        return Err(Error::Transient {
+            message: format!(
+                "Kamino obligation {obligation} newest history point is {}s old",
+                now - point_ts
+            ),
+            retry_after: None,
+        });
+    }
+    let updated = ob
+        .pointer("/state/lastUpdate/timestamp")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .ok_or_else(|| Error::Integrity {
+            message: format!(
+                "Kamino obligation {obligation} has no numeric `state.lastUpdate.timestamp`"
+            ),
+        })?;
+    if updated > point_ts {
+        return Err(Error::Transient {
+            message: format!(
+                "Kamino obligation {obligation} changed on-chain after its newest history point"
+            ),
+            retry_after: None,
+        });
+    }
+    Ok(latest.clone())
+}
+
+fn obligation_address(ob: &serde_json::Value) -> Result<&str, Error> {
+    let address = ob
+        .get("obligationAddress")
+        .and_then(|v| v.as_str())
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| Error::Integrity {
+            message: "Kamino obligation missing `obligationAddress`".into(),
+        })?;
+    // It is interpolated into a request path, so only base58 characters are accepted.
+    if !address
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() && !matches!(b, b'0' | b'O' | b'I' | b'l'))
+    {
+        return Err(Error::Integrity {
+            message: format!("Kamino obligation address {address:?} is not base58"),
+        });
+    }
+    Ok(address)
+}
+
+fn rfc3339(secs: i64) -> String {
+    chrono::DateTime::from_timestamp(secs, 0)
+        .unwrap_or_default()
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
 /// Epoch seconds from a snapshot's RFC3339 `timestamp` (0 if missing/unparseable).
 fn snapshot_ts(snap: &serde_json::Value) -> i64 {
     snap.get("timestamp")
@@ -426,6 +538,7 @@ fn build_reserve_map(reserves: &serde_json::Value) -> Result<HashMap<String, Res
 
 async fn parse_obligation(
     ob: &serde_json::Value,
+    live: &serde_json::Value,
     market: &str,
     reserves: &HashMap<String, ReserveMeta>,
     rpc: &dyn ChainProvider,
@@ -433,39 +546,37 @@ async fn parse_obligation(
 ) -> Result<LendingPosition, Error> {
     // An owner can hold several obligations across markets; the obligation address is the only
     // stable identity separating them.
-    let obligation = ob
-        .get("obligationAddress")
-        .and_then(|v| v.as_str())
-        .filter(|a| !a.is_empty())
-        .ok_or_else(|| Error::Integrity {
-            message: "Kamino obligation missing `obligationAddress`".into(),
-        })?
-        .to_string();
+    let obligation = obligation_address(ob)?.to_string();
 
-    // The API does not return a health factor; derive it from the refreshed stats.
-    let liq_limit = decimal_at(ob, "/refreshedStats/borrowLiquidationLimit");
-    let adj_debt = decimal_at(ob, "/refreshedStats/userTotalBorrowBorrowFactorAdjusted");
+    // The API does not return a health factor; derive it from the point's refreshed stats so it
+    // describes the same moment as the legs.
+    let liq_limit = decimal_at(live, "/refreshedStats/borrowLiquidationLimit");
+    let adj_debt = decimal_at(live, "/refreshedStats/userTotalBorrowBorrowFactorAdjusted");
     let health_factor = match (liq_limit, adj_debt) {
         (Some(l), Some(a)) if a > Decimal::ZERO => l.checked_div(a),
         _ => None,
     };
 
-    // The per-asset legs live under the decoded on-chain account `state` (the top-level
-    // `deposits`/`borrows` are empty aggregation maps). Deposit amounts are plain base units;
-    // borrow amounts are scaled fractions (`borrowedAmountSf`, divide by 2^60).
-    let mut supplied = Vec::new();
-    for dep in ob
-        .pointer("/state/deposits")
-        .and_then(|v| v.as_array())
-        .into_iter()
-        .flatten()
-    {
-        let raw = int_at(dep, "depositedAmount")?;
-        if raw.is_zero() {
-            continue;
+    // The live point and the account must hold the same reserves; a leg present on one side only
+    // means the point does not describe this obligation.
+    for side in ["deposits", "borrows"] {
+        let held = state_reserves(ob, side);
+        let seen = live_reserves(live, side);
+        if held != seen {
+            return Err(Error::Integrity {
+                message: format!(
+                    "Kamino obligation {obligation} {side} differ between the account {held:?} and its newest history point {seen:?}"
+                ),
+            });
         }
-        let (amount, meta) =
-            build_leg(dep, "depositReserve", raw, reserves, rpc, decimals_cache).await?;
+    }
+
+    let mut supplied = Vec::new();
+    for dep in live_legs(live, "deposits") {
+        let Some((raw, reserve, usd)) = live_leg(dep)? else {
+            continue;
+        };
+        let (amount, meta) = build_leg(reserve, raw, usd, reserves, rpc, decimals_cache).await?;
         // Per-asset liquidation threshold is not exposed by reserves/metrics (only maxLtv);
         // a consumer recomputes it from the reserve config if needed.
         supplied.push(
@@ -477,18 +588,11 @@ async fn parse_obligation(
     }
 
     let mut borrowed = Vec::new();
-    for bor in ob
-        .pointer("/state/borrows")
-        .and_then(|v| v.as_array())
-        .into_iter()
-        .flatten()
-    {
-        let raw = sf_to_base(&int_at(bor, "borrowedAmountSf")?);
-        if raw.is_zero() {
+    for bor in live_legs(live, "borrows") {
+        let Some((raw, reserve, usd)) = live_leg(bor)? else {
             continue;
-        }
-        let (amount, meta) =
-            build_leg(bor, "borrowReserve", raw, reserves, rpc, decimals_cache).await?;
+        };
+        let (amount, meta) = build_leg(reserve, raw, usd, reserves, rpc, decimals_cache).await?;
         borrowed.push(BorrowedAsset::new(amount).with_apy(meta.and_then(|m| m.borrow_apy)));
     }
 
@@ -504,22 +608,155 @@ async fn parse_obligation(
         .with_parent_market(Some(market.to_string())))
 }
 
-/// Build the [`Amount`] for one deposit/borrow leg from a pre-computed raw base-unit amount: scaled
-/// by the mint's on-chain decimals, priced from the scaled-fraction `marketValueSf` (`/ 2^60`).
+fn live_legs<'a>(
+    live: &'a serde_json::Value,
+    side: &str,
+) -> impl Iterator<Item = &'a serde_json::Value> {
+    live.get(side)
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+}
+
+/// Reserves with a non-zero leg in the newest history point.
+fn live_reserves(live: &serde_json::Value, side: &str) -> BTreeSet<String> {
+    live_legs(live, side)
+        .filter(|l| {
+            l.get("amount")
+                .and_then(|v| v.as_str())
+                .and_then(base_units)
+                .is_some_and(|a| !a.is_zero())
+        })
+        .filter_map(|l| {
+            l.get("reserve")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// Whether the account `state` holds any leg. A `state` without both leg arrays is not an empty
+/// obligation but an unreadable one, so it fails closed.
+fn holds_legs(ob: &serde_json::Value) -> Result<bool, Error> {
+    for side in ["deposits", "borrows"] {
+        if !ob
+            .pointer(&format!("/state/{side}"))
+            .is_some_and(|v| v.is_array())
+        {
+            return Err(Error::Integrity {
+                message: format!("Kamino obligation account has no `state.{side}` array"),
+            });
+        }
+    }
+    Ok(!state_reserves(ob, "deposits").is_empty() || !state_reserves(ob, "borrows").is_empty())
+}
+
+/// Reserves holding at least one whole base unit in the on-chain account `state`, the same
+/// threshold [`live_reserves`] applies (unused slots are zeroed; debt is a `2^60` scaled fraction).
+/// A missing or unparseable amount counts as held, so it surfaces as a mismatch instead of
+/// vanishing.
+fn state_reserves(ob: &serde_json::Value, side: &str) -> BTreeSet<String> {
+    let (key, amount, one_unit) = if side == "borrows" {
+        ("borrowReserve", "borrowedAmountSf", U256::from(1u64 << 60))
+    } else {
+        ("depositReserve", "depositedAmount", U256::from(1u64))
+    };
+    ob.pointer(&format!("/state/{side}"))
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|l| {
+            l.get(amount)
+                .and_then(|v| v.as_str())
+                .and_then(|s| U256::from_str(s).ok())
+                .is_none_or(|a| a >= one_unit)
+        })
+        .filter_map(|l| l.get(key).and_then(|v| v.as_str()).map(str::to_string))
+        .collect()
+}
+
+/// One leg of a history point: whole base units (the API carries accrued fractions of a base unit,
+/// which are dropped), its reserve, and its refreshed USD value. `None` for a leg under one base
+/// unit, whose USD the API may print in exponent form and which is not a holding.
+fn live_leg(leg: &serde_json::Value) -> Result<Option<(U256, &str, Decimal)>, Error> {
+    let raw = leg
+        .get("amount")
+        .and_then(|v| v.as_str())
+        .and_then(base_units)
+        .ok_or_else(|| Error::Integrity {
+            message: "Kamino history leg missing a numeric `amount`".into(),
+        })?;
+    if raw.is_zero() {
+        return Ok(None);
+    }
+    let reserve = leg
+        .get("reserve")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::Integrity {
+            message: "Kamino history leg missing `reserve`".into(),
+        })?;
+    let usd = leg
+        .get("marketValueRefreshed")
+        .and_then(|v| v.as_str())
+        .and_then(api_decimal)
+        .ok_or_else(|| Error::Integrity {
+            message: format!(
+                "Kamino history leg for reserve {reserve} has no numeric `marketValueRefreshed`"
+            ),
+        })?;
+    Ok(Some((raw, reserve, usd)))
+}
+
+/// The integer part of a non-negative decimal string, as base units.
+fn base_units(s: &str) -> Option<U256> {
+    let int = s.split('.').next()?;
+    if int.is_empty() || !int.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    U256::from_str(int).ok()
+}
+
+/// Parse a non-negative number as the Kamino API prints it: a decimal whose fraction can exceed
+/// `Decimal`'s 28 digits, or exponent notation for very small values (`4e-7`). Magnitudes below
+/// `Decimal`'s smallest step read as zero.
+fn api_decimal(s: &str) -> Option<Decimal> {
+    let (mantissa, exp) = match s.split_once(['e', 'E']) {
+        Some((m, e)) => (m, e.parse::<i32>().ok()?),
+        None => (s, 0),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if int.is_empty() || !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let frac = &frac[..frac.len().min(12)];
+    let base = Decimal::from_str(&if frac.is_empty() {
+        int.to_string()
+    } else {
+        format!("{int}.{frac}")
+    })
+    .ok()?;
+    let step = Decimal::from(10u64.checked_pow(exp.unsigned_abs().min(19))?);
+    match exp {
+        0 => Some(base),
+        e if e > 0 => base.checked_mul(Decimal::from(10u64.checked_pow(e.unsigned_abs())?)),
+        e if e < -28 => Some(Decimal::ZERO),
+        e if e < -19 => base
+            .checked_div(step)?
+            .checked_div(Decimal::from(10u64.pow(e.unsigned_abs() - 19))),
+        _ => base.checked_div(step),
+    }
+}
+
+/// Build the [`Amount`] for one deposit/borrow leg from whole base units, scaled by the mint's
+/// on-chain decimals and carrying the leg's refreshed USD value.
 async fn build_leg<'a>(
-    leg: &serde_json::Value,
-    reserve_key: &str,
+    reserve: &str,
     raw: U256,
+    usd: Decimal,
     reserves: &'a HashMap<String, ReserveMeta>,
     rpc: &dyn ChainProvider,
     decimals_cache: &mut HashMap<String, u8>,
 ) -> Result<(Amount, Option<&'a ReserveMeta>), Error> {
-    let reserve = leg
-        .get(reserve_key)
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Integrity {
-            message: format!("Kamino leg missing `{reserve_key}`"),
-        })?;
     let meta = reserves.get(reserve);
     let (symbol, mint) = match meta {
         Some(m) => (m.symbol.clone(), m.mint.clone()),
@@ -540,54 +777,56 @@ async fn build_leg<'a>(
         }
     };
 
-    let usd = leg
-        .get("marketValueSf")
-        .and_then(|v| v.as_str())
-        .and_then(sf_to_usd)
-        .map(|amount| Money {
-            amount,
-            currency: Currency::Usd,
-        });
-
-    let amount = Amount::from_raw(Token::solana(symbol, Some(mint), decimals), raw)?.with_usd(usd);
+    let usd = Money {
+        amount: usd,
+        currency: Currency::Usd,
+    };
+    let amount =
+        Amount::from_raw(Token::solana(symbol, Some(mint), decimals), raw)?.with_usd(Some(usd));
 
     Ok((amount, meta))
-}
-
-/// Read a base-10 integer amount (a JSON string) into a [`U256`].
-fn int_at(leg: &serde_json::Value, key: &str) -> Result<U256, Error> {
-    let s = leg
-        .get(key)
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Integrity {
-            message: format!("Kamino leg missing `{key}`"),
-        })?;
-    U256::from_str(s).map_err(|e| Error::Integrity {
-        message: format!("Kamino `{key}` not an integer: {e}"),
-    })
-}
-
-/// Convert a scaled-fraction amount (`2^60` scale) to whole base units by integer division.
-fn sf_to_base(sf: &U256) -> U256 {
-    // 2^60 = 1_152_921_504_606_846_976.
-    sf / U256::from(1_152_921_504_606_846_976u64)
-}
-
-/// Kamino's scaled-fraction (`Sf`) values are fixed-point with a `2^60` scale.
-fn sf_to_usd(sf: &str) -> Option<Decimal> {
-    let n = Decimal::from_str(sf).ok()?;
-    // 2^60 = 1_152_921_504_606_846_976.
-    n.checked_div(Decimal::from(1_152_921_504_606_846_976u64))
 }
 
 /// Read a decimal from a JSON string or number literal at `pointer` (never via `f64`).
 fn decimal_at(v: &serde_json::Value, pointer: &str) -> Option<Decimal> {
     let node = v.pointer(pointer)?;
     if let Some(s) = node.as_str() {
-        Decimal::from_str(s).ok()
+        Decimal::from_str(s).ok().or_else(|| api_decimal(s))
     } else if node.is_number() {
         Decimal::from_str(&node.to_string()).ok()
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(s: &str) -> Decimal {
+        Decimal::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn api_decimal_reads_the_shapes_the_api_prints() {
+        assert_eq!(
+            api_decimal("8860.502505082070346209969544206781459677"),
+            Some(d("8860.502505082070"))
+        );
+        assert_eq!(
+            api_decimal("2.5981563428673729727e-9"),
+            Some(d("0.000000002598156342867"))
+        );
+        assert_eq!(api_decimal("4e-7"), Some(d("0.0000004")));
+        assert_eq!(api_decimal("7.805e2"), Some(d("780.5")));
+        assert_eq!(
+            api_decimal("1.2455e-24"),
+            Some(d("0.0000000000000000000000012455"))
+        );
+        assert_eq!(api_decimal("3e-40"), Some(Decimal::ZERO));
+        assert_eq!(api_decimal("-780.5"), None);
+        assert_eq!(api_decimal("1e400"), None);
+        assert_eq!(api_decimal("12a"), None);
+        assert_eq!(api_decimal(""), None);
     }
 }
