@@ -99,6 +99,9 @@ async fn reads_obligation_with_reserve_join() {
     // The obligation address is the stable identity of the position (one owner can hold several
     // obligations across markets), so it rides as the market id.
     assert_eq!(p.market_id.as_deref(), Some("obl1"));
+    // The lending market holding the obligation rides alongside, so history can be addressed as
+    // "obligation|market" without rescanning every market.
+    assert_eq!(p.parent_market.as_deref(), Some(MAIN_MARKET));
 }
 
 #[tokio::test]
