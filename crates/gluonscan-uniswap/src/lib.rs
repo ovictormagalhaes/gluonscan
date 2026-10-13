@@ -195,6 +195,7 @@ impl ProtocolAdapter for UniswapV3 {
 
             let mut prev = SnapshotTotals::default();
             let mut is_first = true;
+            let mut parsed = 0usize;
             for snap in snaps {
                 // A snapshot with malformed numeric fields is skipped rather than diffed into
                 // synthetic zeroes (never fabricate history amounts).
@@ -202,6 +203,7 @@ impl ProtocolAdapter for UniswapV3 {
                     skipped_snapshot = true;
                     continue;
                 };
+                parsed += 1;
                 let tx = snapshot_tx(snap);
                 if curr.col0 == curr.col1 && curr.col0 != Decimal::ZERO {
                     collected_corrupt = true;
@@ -281,6 +283,13 @@ impl ProtocolAdapter for UniswapV3 {
                 }
 
                 prev = curr;
+            }
+
+            // The mirror copies token0 into token1 even when token0 is zero, so a position that only
+            // ever collected token1 reads 0/0 and its collects leave no delta. Zero totals on both
+            // sides after any activity past the first snapshot are checked against the receipts.
+            if parsed > 1 && prev.col0 == Decimal::ZERO && prev.col1 == Decimal::ZERO {
+                collected_corrupt = true;
             }
 
             // The mirrored token1 series makes the snapshot deltas useless for collects, but each
@@ -458,21 +467,23 @@ impl UniswapV3 {
             human_amount(token1.clone(), item, "/withdrawnToken1")?,
         ];
         // Known subgraph corruption: token0's collected fees mirrored into token1, seen as equal
-        // non-zero values across two distinct tokens (it produced phantom fees and absurd APY
-        // downstream). Compared numerically so "12.5" and "12.50" match, like the history read.
-        // Only the collected-fee history is affected; principal comes from the liquidity math and
-        // uncollected fees from an on-chain read, so the position is kept with its collected fees
-        // marked unknown rather than failing the whole wallet read.
+        // values across two distinct tokens (it produced phantom fees and absurd APY downstream).
+        // Compared numerically so "12.5" and "12.50" match, like the history read. A mirrored zero
+        // hides token1-only collects, so equal zero totals count once principal was withdrawn
+        // (collected includes it). Only the collected-fee history is affected; principal comes from
+        // the liquidity math and uncollected fees from an on-chain read, so the position is kept with
+        // its collected fees marked unknown rather than failing the whole wallet read.
         let parse_collected = |ptr: &str| {
             item.pointer(ptr)
                 .and_then(|v| v.as_str())
                 .and_then(|s| Decimal::from_str(s).ok())
         };
+        let withdrew = withdrawn.iter().any(|a| a.amount > Decimal::ZERO);
         let collected_corrupt = match (
             parse_collected("/collectedFeesToken0"),
             parse_collected("/collectedFeesToken1"),
         ) {
-            (Some(a), Some(b)) => a == b && a != Decimal::ZERO,
+            (Some(a), Some(b)) => a == b && (a != Decimal::ZERO || withdrew),
             _ => false,
         };
         // An open position read at Full detail rebuilds its lifetime collects from the receipts of its
