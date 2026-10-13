@@ -5,16 +5,17 @@
 //! returns the **complete** position resource: principal amounts (from the Q64.96 liquidity math),
 //! lifetime deposited/withdrawn/collected, fee tier, tick range, and the in-range flag.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    scaled, Amount, Capability, Chain, Complete, Ctx, Detail, Error, EventKind, History,
-    HistoryEvent, LiquidityPosition, Position, PositionStatus, Protocol, ProtocolAdapter,
+    scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Detail, Error, EventKind,
+    History, HistoryEvent, LiquidityPosition, Position, PositionStatus, Protocol, ProtocolAdapter,
     Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet,
 };
+use gluonscan_evm::transfers::receipt_logs;
 use gluonscan_evm::{decode_two_u256, encode_collect, eth_call};
 use gluonscan_math::{
     get_amounts_for_liquidity, get_sqrt_ratio_at_tick, is_in_range, MAX_TICK, MIN_TICK,
@@ -23,6 +24,13 @@ use rust_decimal::Decimal;
 
 const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees, Capability::History];
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum, Chain::Base, Chain::Arbitrum];
+
+/// `keccak256("Collect(uint256,address,uint256,uint256)")`: the NonfungiblePositionManager event
+/// carrying what one collect sent out (principal and fees), with the token id as topic1.
+const COLLECT_TOPIC: &str = "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01";
+
+/// The subgraph's page size for a position's snapshots; a full page may be truncated.
+const SNAPSHOT_PAGE: usize = 1000;
 
 /// Uniswap V3 adapter (subgraph discovery + on-chain fees). One instance serves every chain it has
 /// a subgraph URL for, so it can back a single long-lived engine that routes by chain.
@@ -170,8 +178,12 @@ impl ProtocolAdapter for UniswapV3 {
 
         let mut events: Vec<HistoryEvent> = Vec::new();
         let mut collected_corrupt = false;
+        let mut rebuilt_from_receipts = false;
         if let Some(first) = snaps.first() {
             let (token0, token1) = snapshot_tokens(first)?;
+            // Snapshots that can carry an event of this window: every one after the baseline, plus
+            // the creation snapshot on a first sync.
+            let mut event_txs: Vec<(String, i64)> = Vec::new();
 
             let mut prev = SnapshotTotals::default();
             let mut is_first = true;
@@ -184,6 +196,9 @@ impl ProtocolAdapter for UniswapV3 {
                 let tx = snapshot_tx(snap);
                 if curr.col0 == curr.col1 && curr.col0 != Decimal::ZERO {
                     collected_corrupt = true;
+                }
+                if !(is_first && since_ts > 0) {
+                    event_txs.push((tx.clone(), curr.ts));
                 }
 
                 if is_first {
@@ -255,6 +270,48 @@ impl ProtocolAdapter for UniswapV3 {
 
                 prev = curr;
             }
+
+            // The mirrored token1 series makes the snapshot deltas useless for collects, but each
+            // collect's own receipt still carries the true amounts. Without an RPC the collects
+            // stay withheld below; a failed receipt read fails the whole history (never a partial
+            // collect stream).
+            if collected_corrupt {
+                if let Ok(rpc) = cx.rpc() {
+                    if snaps.len() >= SNAPSHOT_PAGE {
+                        return Err(Error::Integrity {
+                            message: format!(
+                                "Uniswap position {position_id}: snapshot page full, collect history may be truncated"
+                            ),
+                        });
+                    }
+                    let token_id = parse_token_id(position_id)?;
+                    let txs: Vec<String> = event_txs.iter().map(|(tx, _)| tx.clone()).collect();
+                    let collects =
+                        collects_from_receipts(rpc.as_ref(), chain, token_id, &txs).await?;
+                    events.retain(|e| e.kind != EventKind::CollectFees);
+                    for (tx, raw0, raw1) in collects {
+                        let ts = event_txs
+                            .iter()
+                            .find(|(t, _)| t.to_lowercase() == tx)
+                            .map(|(_, ts)| *ts)
+                            .ok_or_else(|| Error::Integrity {
+                                message: format!("Uniswap collect tx {tx} has no snapshot"),
+                            })?;
+                        push_pair(
+                            &mut events,
+                            EventKind::CollectFees,
+                            &token0,
+                            &token1,
+                            scaled(raw0, token0.decimals)?,
+                            scaled(raw1, token1.decimals)?,
+                            &tx,
+                            ts,
+                        )?;
+                    }
+                    events.sort_by_key(|e| e.at.0);
+                    rebuilt_from_receipts = true;
+                }
+            }
         }
 
         let history = History::new(
@@ -266,15 +323,54 @@ impl ProtocolAdapter for UniswapV3 {
         // A token1 series that mirrors token0 is the known subgraph corruption; once it appears the
         // cumulative collected totals are unreliable for the whole stream, so every collect is
         // withheld (marked unknown) rather than emitting a partial fee history.
-        Ok(Complete::new(if collected_corrupt {
-            history.with_collected_fees_unavailable()
-        } else {
-            history
-        }))
+        Ok(Complete::new(
+            if collected_corrupt && !rebuilt_from_receipts {
+                history.with_collected_fees_unavailable()
+            } else {
+                history
+            },
+        ))
     }
 }
 
 impl UniswapV3 {
+    /// Lifetime raw `(amount0, amount1)` sent out by every collect of position `id`, summed from the
+    /// receipts of all its snapshot txs (the subgraph snapshots every mint, burn and collect).
+    async fn collected_from_receipts(
+        &self,
+        id: &str,
+        chain: Chain,
+        cx: &Ctx,
+    ) -> Result<(U256, U256), Error> {
+        let rpc = cx.rpc()?;
+        let raw = cx
+            .http
+            .post(self.subgraph_url(chain)?, history_query_body(id, 0), &[])
+            .await?;
+        let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+            message: format!("Uniswap snapshots response not JSON: {e}"),
+        })?;
+        let snaps = json
+            .pointer("/data/positionSnapshots")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| Error::Integrity {
+                message: "Uniswap response missing data.positionSnapshots".into(),
+            })?;
+        if snaps.is_empty() || snaps.len() >= SNAPSHOT_PAGE {
+            return Err(Error::Integrity {
+                message: format!("Uniswap position {id}: snapshot stream empty or truncated"),
+            });
+        }
+        let txs: Vec<String> = snaps.iter().map(snapshot_tx).collect();
+        let collects =
+            collects_from_receipts(rpc.as_ref(), chain, parse_token_id(id)?, &txs).await?;
+        Ok(collects
+            .into_iter()
+            .fold((U256::ZERO, U256::ZERO), |(s0, s1), (_, a0, a1)| {
+                (s0.saturating_add(a0), s1.saturating_add(a1))
+            }))
+    }
+
     async fn parse_position(
         &self,
         item: &serde_json::Value,
@@ -353,7 +449,22 @@ impl UniswapV3 {
             (Some(a), Some(b)) => a == b && a != Decimal::ZERO,
             _ => false,
         };
-        let collected_fees = if collected_corrupt {
+        // An open position read at Full detail rebuilds its lifetime collects from the receipts of its
+        // snapshot txs. Closed positions stay unknown here (their realized values come from the
+        // history read), which bounds the extra calls to the positions a user still holds. Any
+        // failure leaves the collected fees unknown for this position only.
+        let rebuilt = if collected_corrupt && with_fees && liquidity != "0" {
+            self.collected_from_receipts(&id, chain, cx).await.ok()
+        } else {
+            None
+        };
+        let collected_corrupt = collected_corrupt && rebuilt.is_none();
+        let collected_fees = if let Some((raw0, raw1)) = rebuilt {
+            vec![
+                raw_amount(token0.clone(), raw0)?,
+                raw_amount(token1.clone(), raw1)?,
+            ]
+        } else if collected_corrupt {
             Vec::new()
         } else {
             vec![
@@ -421,6 +532,70 @@ impl UniswapV3 {
             position
         }))
     }
+}
+
+fn parse_token_id(id: &str) -> Result<U256, Error> {
+    U256::from_str(id).map_err(|e| Error::Integrity {
+        message: format!("Uniswap position id not a number: {e}"),
+    })
+}
+
+/// The position manager's `Collect` amounts for `token_id` in each of `txs`, summed per tx, in tx
+/// order (txs without one are omitted). A tx hash the subgraph left empty cannot be checked, so it
+/// fails the read rather than possibly hiding a collect.
+async fn collects_from_receipts(
+    rpc: &dyn ChainProvider,
+    chain: Chain,
+    token_id: U256,
+    txs: &[String],
+) -> Result<Vec<(String, U256, U256)>, Error> {
+    let manager = UniswapV3::position_manager(chain).ok_or_else(|| Error::Permanent {
+        message: format!("no Uniswap position manager for {chain:?}"),
+    })?;
+    let manager = format!("{manager:#x}");
+    let id_topic = format!("{:#x}", B256::from(token_id));
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for tx in txs {
+        if tx.is_empty() {
+            return Err(Error::Integrity {
+                message: "Uniswap snapshot without a tx hash; collects cannot be verified".into(),
+            });
+        }
+        let tx = tx.to_lowercase();
+        if !seen.insert(tx.clone()) {
+            continue;
+        }
+        let mut sum: Option<(U256, U256)> = None;
+        for log in receipt_logs(rpc, chain, &tx).await? {
+            let is_collect = log.address == manager
+                && log.topics.first().map(String::as_str) == Some(COLLECT_TOPIC)
+                && log.topics.get(1) == Some(&id_topic);
+            if !is_collect {
+                continue;
+            }
+            let (a0, a1) = decode_collect_data(&log.data)?;
+            let (s0, s1) = sum.unwrap_or((U256::ZERO, U256::ZERO));
+            sum = Some((s0.saturating_add(a0), s1.saturating_add(a1)));
+        }
+        if let Some((a0, a1)) = sum {
+            out.push((tx, a0, a1));
+        }
+    }
+    Ok(out)
+}
+
+/// `Collect` data is `(address recipient, uint256 amount0, uint256 amount1)`, one 32-byte word each.
+fn decode_collect_data(data: &str) -> Result<(U256, U256), Error> {
+    let hex = data.trim_start_matches("0x");
+    let word = |i: usize| {
+        hex.get(i * 64..(i + 1) * 64)
+            .and_then(|w| U256::from_str_radix(w, 16).ok())
+            .ok_or_else(|| Error::Integrity {
+                message: format!("Uniswap Collect log data malformed: {data}"),
+            })
+    };
+    Ok((word(1)?, word(2)?))
 }
 
 /// Uniswap V3 tick spacing for a fee tier (hundredths of a bp). The canonical factory mapping.
