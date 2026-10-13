@@ -485,6 +485,11 @@ pub struct LendingPosition {
     /// so without the source id they collapse and a position is lost. `None` when the adapter has
     /// no such identity.
     pub market_id: Option<String>,
+    /// The protocol market the account lives in, when `market_id` identifies an account inside a
+    /// market rather than the market itself: the Kamino lending market that holds the obligation.
+    /// Lets a consumer address the position (e.g. `read_history` with `"obligation|market"`)
+    /// without rescanning every market. `None` when `market_id` already is the market, or unknown.
+    pub parent_market: Option<String>,
 }
 
 impl LendingPosition {
@@ -496,6 +501,7 @@ impl LendingPosition {
             health_factor: None,
             rewards: Vec::new(),
             market_id: None,
+            parent_market: None,
         }
     }
 
@@ -503,6 +509,14 @@ impl LendingPosition {
     #[must_use]
     pub fn with_market_id(mut self, market_id: Option<String>) -> Self {
         self.market_id = market_id;
+        self
+    }
+
+    /// Attach the market that holds the account (builder-style). See
+    /// [`LendingPosition::parent_market`].
+    #[must_use]
+    pub fn with_parent_market(mut self, parent_market: Option<String>) -> Self {
+        self.parent_market = parent_market;
         self
     }
 
@@ -1184,6 +1198,18 @@ mod tests {
                 .with_apy(Some(Decimal::from_str_exact("0.0485").unwrap()))
                 .apy,
             Some(Decimal::from_str_exact("0.0485").unwrap())
+        );
+    }
+
+    #[test]
+    fn parent_market_defaults_none_and_set_via_builder() {
+        assert!(LendingPosition::new(vec![], vec![]).parent_market.is_none());
+        assert_eq!(
+            LendingPosition::new(vec![], vec![])
+                .with_parent_market(Some("7u3H".into()))
+                .parent_market
+                .as_deref(),
+            Some("7u3H")
         );
     }
 
