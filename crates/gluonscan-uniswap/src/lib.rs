@@ -169,6 +169,7 @@ impl ProtocolAdapter for UniswapV3 {
             })?;
 
         let mut events: Vec<HistoryEvent> = Vec::new();
+        let mut collected_corrupt = false;
         if let Some(first) = snaps.first() {
             let (token0, token1) = snapshot_tokens(first)?;
 
@@ -181,6 +182,9 @@ impl ProtocolAdapter for UniswapV3 {
                     continue;
                 };
                 let tx = snapshot_tx(snap);
+                if curr.col0 == curr.col1 && curr.col0 != Decimal::ZERO {
+                    collected_corrupt = true;
+                }
 
                 if is_first {
                     // The baseline snapshot carries no event, except a first-ever sync whose creation
@@ -233,9 +237,10 @@ impl ProtocolAdapter for UniswapV3 {
                         curr.ts,
                     )?;
                 }
-                if (d_col0 > Decimal::ZERO || d_col1 > Decimal::ZERO) && d_col0 != d_col1 {
-                    // Equal non-zero deltas are the known V3 subgraph bug (token1 denominated as
-                    // token0); a genuine collect never reports identical amounts, so it is dropped.
+                if d_col0 > Decimal::ZERO && d_col0 == d_col1 {
+                    collected_corrupt = true;
+                }
+                if d_col0 > Decimal::ZERO || d_col1 > Decimal::ZERO {
                     push_pair(
                         &mut events,
                         EventKind::CollectFees,
@@ -258,7 +263,14 @@ impl ProtocolAdapter for UniswapV3 {
             events,
             Provenance::new(Source::Subgraph, chain, cx.clock.now(), Staleness::Live),
         );
-        Ok(Complete::new(history))
+        // A token1 series that mirrors token0 is the known subgraph corruption; once it appears the
+        // cumulative collected totals are unreliable for the whole stream, so every collect is
+        // withheld (marked unknown) rather than emitting a partial fee history.
+        Ok(Complete::new(if collected_corrupt {
+            history.with_collected_fees_unavailable()
+        } else {
+            history
+        }))
     }
 }
 
@@ -323,32 +335,32 @@ impl UniswapV3 {
             human_amount(token0.clone(), item, "/withdrawnToken0")?,
             human_amount(token1.clone(), item, "/withdrawnToken1")?,
         ];
-        // Known subgraph corruption: token0's collected fees mirrored into token1, seen as
-        // byte-identical non-zero values across two distinct tokens (it produced phantom fees and
-        // absurd APY downstream). That is not physically plausible, so fail closed rather than emit
-        // degraded fee data.
-        if let (Some(a), Some(b)) = (
-            item.pointer("/collectedFeesToken0")
-                .and_then(|v| v.as_str()),
-            item.pointer("/collectedFeesToken1")
-                .and_then(|v| v.as_str()),
+        // Known subgraph corruption: token0's collected fees mirrored into token1, seen as equal
+        // non-zero values across two distinct tokens (it produced phantom fees and absurd APY
+        // downstream). Compared numerically so "12.5" and "12.50" match, like the history read.
+        // Only the collected-fee history is affected; principal comes from the liquidity math and
+        // uncollected fees from an on-chain read, so the position is kept with its collected fees
+        // marked unknown rather than failing the whole wallet read.
+        let parse_collected = |ptr: &str| {
+            item.pointer(ptr)
+                .and_then(|v| v.as_str())
+                .and_then(|s| Decimal::from_str(s).ok())
+        };
+        let collected_corrupt = match (
+            parse_collected("/collectedFeesToken0"),
+            parse_collected("/collectedFeesToken1"),
         ) {
-            if a == b
-                && Decimal::from_str(a)
-                    .map(|v| v != Decimal::ZERO)
-                    .unwrap_or(false)
-            {
-                return Err(Error::Integrity {
-                    message: "Uniswap subgraph collectedFees token0 == token1 (known corruption); \
-                         refusing to emit phantom fees"
-                        .into(),
-                });
-            }
-        }
-        let collected_fees = vec![
-            human_amount(token0.clone(), item, "/collectedFeesToken0")?,
-            human_amount(token1.clone(), item, "/collectedFeesToken1")?,
-        ];
+            (Some(a), Some(b)) => a == b && a != Decimal::ZERO,
+            _ => false,
+        };
+        let collected_fees = if collected_corrupt {
+            Vec::new()
+        } else {
+            vec![
+                human_amount(token0.clone(), item, "/collectedFeesToken0")?,
+                human_amount(token1.clone(), item, "/collectedFeesToken1")?,
+            ]
+        };
 
         // Uncollected fees are an on-chain read; fetched only at Full detail.
         let mut uncollected_fees = Vec::new();
@@ -383,28 +395,31 @@ impl UniswapV3 {
             .pointer("/transaction/timestamp")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<i64>().ok());
-        Ok(Position::Liquidity(
-            LiquidityPosition::new(
-                token0,
-                token1,
-                lower,
-                upper,
-                current,
-                is_in_range(current, lower, upper),
-            )
-            .with_id(Some(id))
-            .with_pool(pool_id)
-            .with_fee_tier_bps(fee_tier_bps)
-            .with_sqrt_price(sqrt_price)
-            .with_tick_spacing(tick_spacing_for_fee(fee_tier_bps))
-            .with_created_at(created_at)
-            .with_assets(assets)
-            .with_uncollected_fees(uncollected_fees)
-            .with_deposited(deposited)
-            .with_withdrawn(withdrawn)
-            .with_collected_fees(collected_fees)
-            .with_status(status),
-        ))
+        let position = LiquidityPosition::new(
+            token0,
+            token1,
+            lower,
+            upper,
+            current,
+            is_in_range(current, lower, upper),
+        )
+        .with_id(Some(id))
+        .with_pool(pool_id)
+        .with_fee_tier_bps(fee_tier_bps)
+        .with_sqrt_price(sqrt_price)
+        .with_tick_spacing(tick_spacing_for_fee(fee_tier_bps))
+        .with_created_at(created_at)
+        .with_assets(assets)
+        .with_uncollected_fees(uncollected_fees)
+        .with_deposited(deposited)
+        .with_withdrawn(withdrawn)
+        .with_collected_fees(collected_fees)
+        .with_status(status);
+        Ok(Position::Liquidity(if collected_corrupt {
+            position.with_collected_fees_unavailable()
+        } else {
+            position
+        }))
     }
 }
 

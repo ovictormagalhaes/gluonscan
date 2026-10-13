@@ -1,5 +1,5 @@
 //! Branch + fail-closed coverage for the Uniswap V3 adapter: malformed subgraph shapes, the
-//! tick-range guard, the known collectedFees-corruption guard, and an exact-amount pin so a
+//! tick-range guard, the known collectedFees-corruption degrade, and an exact-amount pin so a
 //! Q64.96 scaling regression (e.g. amounts halved) breaks the build. Entirely offline.
 
 use std::sync::Arc;
@@ -86,14 +86,87 @@ async fn out_of_range_tick_fails_closed_as_integrity() {
 }
 
 #[tokio::test]
-async fn collected_fees_equal_nonzero_triggers_corruption_guard() {
-    // token0 fees byte-identical to token1 fees, both non-zero → known subgraph corruption.
+async fn collected_fees_equal_nonzero_marks_collected_unavailable_and_keeps_position() {
+    // token0 fees byte-identical to token1 fees, both non-zero → known subgraph corruption. The
+    // read must succeed: only the collected fees become unknown; principal and lifetime totals stay.
     let body: &'static str = Box::leak(subgraph("12.5", "12.5", "60").into_boxed_str());
     let cx = ctx_with(body);
-    let msg = assert_integrity(read(&cx, Detail::Summary).await.expect_err("must fail"));
+    let reading = read(&cx, Detail::Summary)
+        .await
+        .expect("a corrupted fee history must not fail the read");
+    assert_eq!(reading.positions.len(), 1);
+    let Position::Liquidity(p) = &reading.positions[0] else {
+        panic!("expected a liquidity position");
+    };
+    assert!(p.collected_fees_unavailable, "corruption must be flagged");
     assert!(
-        msg.contains("collectedFees") && msg.contains("corruption"),
-        "wrong branch, got: {msg}"
+        p.collected_fees.is_empty(),
+        "phantom collected fees must be withheld, not reported"
+    );
+    assert_eq!(
+        p.assets[0].amount,
+        Decimal::from_str_exact(EXPECTED_AMOUNT0).unwrap(),
+        "principal must be intact"
+    );
+    assert_eq!(
+        p.assets[1].amount,
+        Decimal::from_str_exact(EXPECTED_AMOUNT1).unwrap()
+    );
+    assert_eq!(
+        p.deposited[1].amount,
+        Decimal::from_str_exact("5000").unwrap()
+    );
+}
+
+#[tokio::test]
+async fn collected_fees_equal_by_value_but_not_by_string_are_flagged() {
+    let body: &'static str = Box::leak(subgraph("12.5", "12.50", "60").into_boxed_str());
+    let reading = read(&ctx_with(body), Detail::Summary).await.expect("read");
+    let Position::Liquidity(p) = &reading.positions[0] else {
+        panic!("expected a liquidity position");
+    };
+    assert!(p.collected_fees_unavailable);
+    assert!(p.collected_fees.is_empty());
+}
+
+#[tokio::test]
+async fn one_corrupted_position_does_not_fail_its_healthy_sibling() {
+    let corrupt = subgraph("12.5", "12.5", "60");
+    let healthy = subgraph("0.01", "25.0", "60");
+    let item = |s: &str| {
+        let v: serde_json::Value = serde_json::from_str(s).unwrap();
+        v.pointer("/data/positions/0").unwrap().clone()
+    };
+    let body = serde_json::json!({"data": {"positions": [item(&corrupt), item(&healthy)]}});
+    let body: &'static str = Box::leak(body.to_string().into_boxed_str());
+    let reading = read(&ctx_with(body), Detail::Summary).await.expect("read");
+    assert_eq!(reading.positions.len(), 2);
+    let flags: Vec<bool> = reading
+        .positions
+        .iter()
+        .map(|p| match p {
+            Position::Liquidity(l) => l.collected_fees_unavailable,
+            _ => panic!("expected liquidity"),
+        })
+        .collect();
+    assert_eq!(flags, vec![true, false]);
+}
+
+#[tokio::test]
+async fn distinct_collected_fees_are_parsed_and_not_flagged() {
+    let body: &'static str = Box::leak(subgraph("0.01", "25.0", "60").into_boxed_str());
+    let reading = read(&ctx_with(body), Detail::Summary).await.expect("read");
+    let Position::Liquidity(p) = &reading.positions[0] else {
+        panic!("expected a liquidity position");
+    };
+    assert!(!p.collected_fees_unavailable);
+    assert_eq!(
+        p.collected_fees[0].amount,
+        Decimal::from_str_exact("0.01").unwrap()
+    );
+    assert_eq!(
+        p.collected_fees[1].amount,
+        Decimal::from_str_exact("25.0").unwrap()
     );
 }
 
@@ -114,6 +187,7 @@ async fn collected_fees_equal_zero_does_not_trigger_guard() {
         "zero fees must survive the guard"
     );
     assert_eq!(p.collected_fees[1].amount, Decimal::ZERO);
+    assert!(!p.collected_fees_unavailable);
 }
 
 #[tokio::test]
