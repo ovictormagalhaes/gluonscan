@@ -14,8 +14,8 @@
 use alloy_primitives::{address, Address};
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter,
-    Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
+    is_dust, Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol,
+    ProtocolAdapter, Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
 };
 use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
@@ -87,9 +87,12 @@ impl ProtocolAdapter for Ethena {
         let susde_raw =
             decode_u256(&eth_call(rpc, chain, None, SUSDE, encode_balance_of(owner)).await?)?;
 
-        // A zero balance is a valid "no position" result, not an error.
+        // A zero balance is a valid "no position" result, not an error. Dust is no position either,
+        // but sUSDe stays a receipt token so a consumer's wallet list does not surface it.
         let (positions, receipt_tokens) = if susde_raw.is_zero() {
             (Vec::new(), Vec::new())
+        } else if is_dust(susde_raw, 18) {
+            (Vec::new(), vec![SUSDE])
         } else {
             let staked = vec![Amount::from_raw(
                 Token::evm("sUSDe", Some(SUSDE), 18),

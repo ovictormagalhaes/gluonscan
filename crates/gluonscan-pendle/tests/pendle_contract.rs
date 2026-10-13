@@ -171,3 +171,61 @@ async fn reads_vependle_lock() {
         .iter()
         .any(|p| matches!(p, Position::Stake(_))));
 }
+
+fn word(hex: &str) -> String {
+    format!(r#"{{"jsonrpc":"2.0","id":1,"result":"0x{hex:0>64}"}}"#)
+}
+
+// A 1-wei PT is rounding residue, not a position, but stays a receipt token so a wallet listing
+// still dedups it; a 1-gwei YT (the dust threshold) is a real position.
+#[tokio::test]
+async fn sub_gwei_pt_is_dust_but_stays_a_receipt() {
+    let http = MockHttp::new().on(Match::primary_contains("markets"), CATALOG);
+    let rpc = MockChainProvider::new()
+        .on(
+            Match::all([
+                Match::method("eth_call"),
+                Match::body_contains("1111111111111111111111111111111111111111"),
+            ]),
+            word("1"),
+        )
+        .on(
+            Match::all([
+                Match::method("eth_call"),
+                Match::body_contains("2222222222222222222222222222222222222222"),
+            ]),
+            word("3b9aca00"),
+        )
+        // vePENDLE positionData -> (1 wei, expiry): dust, so no lock.
+        .on(
+            Match::body_contains("cb6b4f3c"),
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:0>64}{:0>64}"}}"#,
+                "1",
+                format!("{:x}", 1_800_000_000u64)
+            ),
+        );
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+
+    let reading = PendleApi::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+
+    assert_eq!(reading.positions.len(), 1);
+    let Position::Yield(y) = &reading.positions[0] else {
+        panic!("expected a yield position");
+    };
+    assert_eq!(y.kind, YieldKind::YieldToken);
+    assert_eq!(reading.receipt_tokens.len(), 2);
+    assert!(!reading
+        .positions
+        .iter()
+        .any(|p| matches!(p, Position::Lock(_))));
+}
