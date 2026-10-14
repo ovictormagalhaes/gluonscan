@@ -195,6 +195,7 @@ impl ProtocolAdapter for UniswapV3 {
 
             let mut prev = SnapshotTotals::default();
             let mut is_first = true;
+            let mut parsed = 0usize;
             for snap in snaps {
                 // A snapshot with malformed numeric fields is skipped rather than diffed into
                 // synthetic zeroes (never fabricate history amounts).
@@ -202,6 +203,7 @@ impl ProtocolAdapter for UniswapV3 {
                     skipped_snapshot = true;
                     continue;
                 };
+                parsed += 1;
                 let tx = snapshot_tx(snap);
                 if curr.col0 == curr.col1 && curr.col0 != Decimal::ZERO {
                     collected_corrupt = true;
@@ -281,6 +283,13 @@ impl ProtocolAdapter for UniswapV3 {
                 }
 
                 prev = curr;
+            }
+
+            // The mirror copies token0 into token1 even when token0 is zero, so a position that only
+            // ever collected token1 reads 0/0 and its collects leave no delta. Zero totals on both
+            // sides after any activity past the first snapshot are checked against the receipts.
+            if parsed > 1 && prev.col0 == Decimal::ZERO && prev.col1 == Decimal::ZERO {
+                collected_corrupt = true;
             }
 
             // The mirrored token1 series makes the snapshot deltas useless for collects, but each
@@ -378,6 +387,13 @@ impl UniswapV3 {
                 message: format!("Uniswap position {id}: snapshot stream empty or truncated"),
             });
         }
+        let (col0, decimals0) = expected0;
+        // Only the mint has touched a position whose sole snapshot is its creation: nothing collected.
+        if snaps.len() == 1 && col0 == Decimal::ZERO {
+            return Ok((U256::ZERO, U256::ZERO));
+        }
+        // The subgraph snapshots every collect, so these txs carry all of them; token0's total is the
+        // only independent cross-check (a zero one only rules out unseen token0 collects).
         let txs: Vec<String> = snaps.iter().map(snapshot_tx).collect();
         let collects =
             collects_from_receipts(rpc.as_ref(), chain, parse_token_id(id)?, &txs).await?;
@@ -386,7 +402,6 @@ impl UniswapV3 {
             .fold((U256::ZERO, U256::ZERO), |(s0, s1), (_, a0, a1)| {
                 (s0.saturating_add(a0), s1.saturating_add(a1))
             });
-        let (col0, decimals0) = expected0;
         if scaled(sum0, decimals0)? != col0 {
             return Err(Error::Integrity {
                 message: format!(
@@ -458,21 +473,26 @@ impl UniswapV3 {
             human_amount(token1.clone(), item, "/withdrawnToken1")?,
         ];
         // Known subgraph corruption: token0's collected fees mirrored into token1, seen as equal
-        // non-zero values across two distinct tokens (it produced phantom fees and absurd APY
-        // downstream). Compared numerically so "12.5" and "12.50" match, like the history read.
-        // Only the collected-fee history is affected; principal comes from the liquidity math and
-        // uncollected fees from an on-chain read, so the position is kept with its collected fees
-        // marked unknown rather than failing the whole wallet read.
+        // values across two distinct tokens (it produced phantom fees and absurd APY downstream).
+        // Compared numerically so "12.5" and "12.50" match, like the history read. A mirrored zero
+        // hides token1-only collects, so equal zero totals are suspect too: an open position read at
+        // Full detail checks them against its snapshots, and any other counts once principal was
+        // withdrawn (collected includes it). Only the collected-fee history is affected; principal
+        // comes from the liquidity math and uncollected fees from an on-chain read, so the position is
+        // kept with its collected fees marked unknown rather than failing the whole wallet read.
         let parse_collected = |ptr: &str| {
             item.pointer(ptr)
                 .and_then(|v| v.as_str())
                 .and_then(|s| Decimal::from_str(s).ok())
         };
+        let withdrew = withdrawn.iter().any(|a| a.amount > Decimal::ZERO);
         let collected_corrupt = match (
             parse_collected("/collectedFeesToken0"),
             parse_collected("/collectedFeesToken1"),
         ) {
-            (Some(a), Some(b)) => a == b && a != Decimal::ZERO,
+            (Some(a), Some(b)) => {
+                a == b && (a != Decimal::ZERO || withdrew || (with_fees && liquidity != "0"))
+            }
             _ => false,
         };
         // An open position read at Full detail rebuilds its lifetime collects from the receipts of its

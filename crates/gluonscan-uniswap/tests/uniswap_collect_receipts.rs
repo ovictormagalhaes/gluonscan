@@ -423,3 +423,244 @@ async fn a_closed_position_stays_unavailable_without_chain_calls() {
         "closed positions cost no receipt reads"
     );
 }
+
+// A position that only ever collected token1: the mirror copies token0's zero into token1, so every
+// snapshot reads 0/0 and the collect at 0xbbb leaves no delta.
+fn zero_mirrored_snapshots() -> String {
+    format!(
+        r#"{{"data":{{"positionSnapshots":[{},{}]}}}}"#,
+        snapshot(1000, "0.0", "0.0", "0xaaa"),
+        snapshot(2000, "0.0", "0.0", "0xbbb"),
+    )
+}
+
+fn token1_only_receipts() -> MockChainProvider {
+    let rpc = on_receipt(MockChainProvider::new(), "0xaaa", receipt(&[]));
+    on_receipt(
+        rpc,
+        "0xbbb",
+        receipt(&[collect_log(MANAGER, 12345, 0, 300_000_000)]),
+    )
+}
+
+fn collect_amounts(h: &gluonscan_core::History) -> Vec<(&str, &str, Decimal)> {
+    h.events
+        .iter()
+        .filter(|e| e.kind == EventKind::CollectFees)
+        .map(|e| {
+            (
+                e.tx.as_str(),
+                e.amount.token.symbol.as_str(),
+                e.amount.amount,
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_zero_mirror_hiding_token1_collects_is_rebuilt_from_receipts() {
+    let cx = Ctx::new(
+        Arc::new(snapshots_http(zero_mirrored_snapshots())),
+        Arc::new(MockClock(0)),
+    )
+    .with_rpc(Arc::new(token1_only_receipts()));
+
+    let h = history(&cx, None).await.expect("history");
+
+    assert!(!h.collected_fees_unavailable);
+    assert_eq!(collect_amounts(&h), vec![("0xbbb", "USDC", dec("300"))]);
+}
+
+#[tokio::test]
+async fn a_zero_mirror_without_an_rpc_is_withheld_not_zero() {
+    let cx = Ctx::new(
+        Arc::new(snapshots_http(zero_mirrored_snapshots())),
+        Arc::new(MockClock(0)),
+    );
+    let h = history(&cx, None).await.expect("history");
+    assert!(h.collected_fees_unavailable);
+    assert!(collect_amounts(&h).is_empty());
+}
+
+#[tokio::test]
+async fn a_token0_collect_the_zero_totals_never_saw_keeps_the_history_withheld() {
+    let rpc = on_receipt(
+        on_receipt(MockChainProvider::new(), "0xaaa", receipt(&[])),
+        "0xbbb",
+        receipt(&[collect_log(MANAGER, 12345, 100_000_000_000_000_000, 0)]),
+    );
+    let cx = Ctx::new(
+        Arc::new(snapshots_http(zero_mirrored_snapshots())),
+        Arc::new(MockClock(0)),
+    )
+    .with_rpc(Arc::new(rpc));
+
+    let h = history(&cx, None).await.expect("history");
+
+    assert!(h.collected_fees_unavailable);
+    assert!(collect_amounts(&h).is_empty());
+}
+
+#[tokio::test]
+async fn a_lone_creation_snapshot_costs_no_receipt_reads() {
+    let body = format!(
+        r#"{{"data":{{"positionSnapshots":[{}]}}}}"#,
+        snapshot(1000, "0.0", "0.0", "0xaaa"),
+    );
+    let rpc = Arc::new(MockChainProvider::new());
+    let cx = Ctx::new(Arc::new(snapshots_http(body)), Arc::new(MockClock(0))).with_rpc(rpc.clone());
+
+    let h = history(&cx, None).await.expect("history");
+
+    assert!(!h.collected_fees_unavailable);
+    assert!(rpc.calls().is_empty());
+}
+
+fn zero_mirror_positions_body(withdrawn1: &str) -> String {
+    format!(
+        r#"{{"data":{{"positions":[{{
+      "id":"12345","liquidity":"1000000000",
+      "depositedToken0":"2.0","depositedToken1":"5000.0",
+      "withdrawnToken0":"0.0","withdrawnToken1":"{withdrawn1}",
+      "collectedFeesToken0":"0","collectedFeesToken1":"0",
+      "tickLower":{{"tickIdx":"-60"}},"tickUpper":{{"tickIdx":"60"}},
+      "pool":{{"id":"0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","tick":"0","sqrtPrice":"79228162514264337593543950336","feeTier":"3000",
+        "token0":{{"id":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","symbol":"WETH","decimals":"18"}},
+        "token1":{{"id":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","symbol":"USDC","decimals":"6"}}}}}}]}}}}"#
+    )
+}
+
+fn zero_mirror_read_http_with(liquidity: &str, withdrawn1: &str, snapshots: String) -> MockHttp {
+    MockHttp::new()
+        .on(Match::body_contains("positionSnapshots"), snapshots)
+        .on(
+            Match::body_contains("positions"),
+            zero_mirror_positions_body(withdrawn1).replace(
+                r#""liquidity":"1000000000""#,
+                &format!(r#""liquidity":"{liquidity}""#),
+            ),
+        )
+}
+
+fn zero_mirror_read_http(withdrawn1: &str) -> MockHttp {
+    zero_mirror_read_http_with("1000000000", withdrawn1, zero_mirrored_snapshots())
+}
+
+fn lone_creation_snapshot() -> String {
+    format!(
+        r#"{{"data":{{"positionSnapshots":[{}]}}}}"#,
+        snapshot(1000, "0.0", "0.0", "0xaaa"),
+    )
+}
+
+#[tokio::test]
+async fn an_open_zero_mirror_with_withdrawn_principal_reads_its_collects_from_receipts() {
+    let cx = Ctx::new(
+        Arc::new(zero_mirror_read_http("250.0")),
+        Arc::new(MockClock(0)),
+    )
+    .with_rpc(Arc::new(uncollected(token1_only_receipts())));
+
+    let p = read_one(&cx).await;
+
+    assert!(!p.collected_fees_unavailable);
+    let totals: Vec<_> = p
+        .collected_fees
+        .iter()
+        .map(|a| (a.token.symbol.as_str(), a.amount))
+        .collect();
+    assert_eq!(totals, vec![("WETH", dec("0")), ("USDC", dec("300"))]);
+}
+
+#[tokio::test]
+async fn an_open_zero_mirror_that_only_collected_token1_fees_reads_them_from_receipts() {
+    let cx = Ctx::new(
+        Arc::new(zero_mirror_read_http("0.0")),
+        Arc::new(MockClock(0)),
+    )
+    .with_rpc(Arc::new(uncollected(token1_only_receipts())));
+
+    let p = read_one(&cx).await;
+
+    assert!(!p.collected_fees_unavailable);
+    let totals: Vec<_> = p
+        .collected_fees
+        .iter()
+        .map(|a| (a.token.symbol.as_str(), a.amount))
+        .collect();
+    assert_eq!(totals, vec![("WETH", dec("0")), ("USDC", dec("300"))]);
+}
+
+#[tokio::test]
+async fn an_open_position_with_only_its_creation_snapshot_reads_zero_without_receipts() {
+    let rpc = Arc::new(uncollected(MockChainProvider::new()));
+    let http = zero_mirror_read_http_with("1000000000", "0.0", lone_creation_snapshot());
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(rpc.clone());
+
+    let p = read_one(&cx).await;
+
+    assert!(!p.collected_fees_unavailable);
+    assert!(p.collected_fees.iter().all(|a| a.amount.is_zero()));
+    assert!(
+        rpc.calls()
+            .iter()
+            .all(|(method, _)| method != "eth_getTransactionReceipt"),
+        "a position only the mint touched costs no receipt reads"
+    );
+}
+
+#[tokio::test]
+async fn a_closed_zero_mirror_with_withdrawn_principal_is_unknown_without_chain_calls() {
+    let rpc = Arc::new(token1_only_receipts());
+    let http = zero_mirror_read_http_with("0", "5000.0", zero_mirrored_snapshots());
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(rpc.clone());
+
+    let p = read_one(&cx).await;
+
+    assert!(p.collected_fees_unavailable);
+    assert!(p.collected_fees.is_empty());
+    assert!(rpc.calls().is_empty());
+}
+
+// Deposits only: the 0/0 stream is checked against its receipts, which hold no collect, so the
+// history stays complete with no collect events.
+#[tokio::test]
+async fn a_deposits_only_zero_stream_is_confirmed_by_its_receipts() {
+    let rpc = on_receipt(
+        on_receipt(MockChainProvider::new(), "0xaaa", receipt(&[])),
+        "0xbbb",
+        receipt(&[]),
+    );
+    let cx = Ctx::new(
+        Arc::new(snapshots_http(zero_mirrored_snapshots())),
+        Arc::new(MockClock(0)),
+    )
+    .with_rpc(Arc::new(rpc));
+
+    let h = history(&cx, None).await.expect("history");
+
+    assert!(!h.collected_fees_unavailable);
+    assert!(collect_amounts(&h).is_empty());
+}
+
+// An incremental window: the baseline snapshot at the checkpoint was already read, so only the new
+// snapshot's receipt is checked.
+#[tokio::test]
+async fn an_incremental_zero_mirror_window_reads_only_the_new_receipt() {
+    let rpc = Arc::new(on_receipt(
+        MockChainProvider::new(),
+        "0xbbb",
+        receipt(&[collect_log(MANAGER, 12345, 0, 300_000_000)]),
+    ));
+    let cx = Ctx::new(
+        Arc::new(snapshots_http(zero_mirrored_snapshots())),
+        Arc::new(MockClock(0)),
+    )
+    .with_rpc(rpc.clone());
+
+    let h = history(&cx, Some(Timestamp(1000))).await.expect("history");
+
+    assert!(!h.collected_fees_unavailable);
+    assert_eq!(collect_amounts(&h), vec![("0xbbb", "USDC", dec("300"))]);
+    assert_eq!(rpc.calls().len(), 1, "the baseline receipt is not re-read");
+}

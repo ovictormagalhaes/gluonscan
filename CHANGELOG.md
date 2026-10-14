@@ -8,6 +8,22 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-13
+
+### Fixed
+
+- **Uniswap V3 mirrored zero collected fees are detected.** The subgraph mirror copies token0's
+  collected total into token1 even when token0's is zero, so a position that only ever collected
+  token1 read as 0/0 and its collects were silently lost. `read_history` now checks a stream whose
+  collected totals are zero on both sides after any activity past its first snapshot against the
+  `Collect` receipts, under the same acceptance rules as 0.2.3 (the token0 sum must reproduce the
+  subgraph's token0 change, here zero); without an RPC or on a mismatch the collects are withheld.
+  A Full read of an open position with zero totals rebuilds its lifetime collects from the receipts
+  too, unless its only snapshot is the creation one; a closed one with withdrawn principal (which a
+  collect includes) is marked unknown. Without an RPC, a history whose totals are zero on both
+  sides after any activity past its first snapshot is now returned with its collects withheld
+  rather than as complete.
+
 ## [0.2.4] - 2026-10-13
 
 ### Fixed
