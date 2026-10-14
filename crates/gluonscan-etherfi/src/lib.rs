@@ -20,12 +20,14 @@ use gluonscan_core::{
     ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading, Source,
     StakePosition, Staleness, Token, Wallet,
 };
-use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
+use gluonscan_evm::{convert_amount, decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
 const WEETH: Address = address!("Cd5fE23C85820F7B72D0926FC9b05b43E359b7ee");
 const EETH: Address = address!("35fA164735182de50811E8e2E824cFb9B6118ac2");
+/// `getEETHByWeETH(uint256)`: the eETH a weETH amount unwraps to.
+const GET_EETH_BY_WEETH: [u8; 4] = [0x94, 0x62, 0x60, 0x44];
 
 /// The ether.fi staking APR, as a fraction (`0.023` = 2.3%), from the ether.fi API: a simple APR,
 /// never an APY. The API returns the APRs of its recent reports in basis points (`"230"` = 2.30%),
@@ -115,6 +117,7 @@ impl ProtocolAdapter for EtherFi {
             decode_u256(&eth_call(rpc, chain, None, EETH, encode_balance_of(owner)).await?)?;
 
         let mut staked = Vec::new();
+        let mut underlying = Vec::new();
         let mut receipt_tokens = Vec::new();
         if !weeth_raw.is_zero() {
             receipt_tokens.push(WEETH);
@@ -124,6 +127,10 @@ impl ProtocolAdapter for EtherFi {
                 Token::evm("weETH", Some(WEETH), 18),
                 weeth_raw,
             )?);
+            let eeth = convert_amount(rpc, chain, WEETH, GET_EETH_BY_WEETH, weeth_raw).await;
+            underlying.push(
+                eeth.and_then(|raw| Amount::from_raw(Token::evm("eETH", Some(EETH), 18), raw).ok()),
+            );
         }
         if !eeth_raw.is_zero() {
             receipt_tokens.push(EETH);
@@ -133,6 +140,8 @@ impl ProtocolAdapter for EtherFi {
                 Token::evm("eETH", Some(EETH), 18),
                 eeth_raw,
             )?);
+            // eETH rebases: its balance already is the underlying.
+            underlying.push(None);
         }
 
         // Empty balances are a valid "no position" result, not an error.
@@ -141,7 +150,9 @@ impl ProtocolAdapter for EtherFi {
         } else {
             let rates = fetch_rates(cx).await;
             vec![Position::Stake(
-                StakePosition::new(staked).with_rates(rates),
+                StakePosition::new(staked)
+                    .with_rates(rates)
+                    .with_underlying(underlying),
             )]
         };
 

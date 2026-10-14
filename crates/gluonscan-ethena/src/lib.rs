@@ -18,11 +18,14 @@ use gluonscan_core::{
     ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading, Source,
     StakePosition, Staleness, Timestamp, Token, Wallet,
 };
-use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
+use gluonscan_evm::{convert_amount, decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
 const SUSDE: Address = address!("9D39A5DE30e57443BfF2A8307A4256c8797A3497");
+const USDE: Address = address!("4c9EdD5852cd905f086C759E8383e09bff1E68B3");
+/// ERC-4626 `convertToAssets(uint256)`: the USDe a sUSDe amount redeems for.
+const CONVERT_TO_ASSETS: [u8; 4] = [0x07, 0xa2, 0xd1, 0x3a];
 
 /// Distinct UTC days averaged into the trailing week.
 const WEEK_POINTS: usize = 7;
@@ -196,9 +199,14 @@ impl ProtocolAdapter for Ethena {
                 susde_raw,
             )?];
             let rates = fetch_rates(cx).await;
+            let usde = convert_amount(rpc, chain, SUSDE, CONVERT_TO_ASSETS, susde_raw)
+                .await
+                .and_then(|raw| Amount::from_raw(Token::evm("USDe", Some(USDE), 18), raw).ok());
             (
                 vec![Position::Stake(
-                    StakePosition::new(staked).with_rates(rates),
+                    StakePosition::new(staked)
+                        .with_rates(rates)
+                        .with_underlying(vec![usde]),
                 )],
                 vec![SUSDE],
             )
