@@ -387,6 +387,13 @@ impl UniswapV3 {
                 message: format!("Uniswap position {id}: snapshot stream empty or truncated"),
             });
         }
+        let (col0, decimals0) = expected0;
+        // Only the mint has touched a position whose sole snapshot is its creation: nothing collected.
+        if snaps.len() == 1 && col0 == Decimal::ZERO {
+            return Ok((U256::ZERO, U256::ZERO));
+        }
+        // The subgraph snapshots every collect, so these txs carry all of them; token0's total is the
+        // only independent cross-check (a zero one only rules out unseen token0 collects).
         let txs: Vec<String> = snaps.iter().map(snapshot_tx).collect();
         let collects =
             collects_from_receipts(rpc.as_ref(), chain, parse_token_id(id)?, &txs).await?;
@@ -395,7 +402,6 @@ impl UniswapV3 {
             .fold((U256::ZERO, U256::ZERO), |(s0, s1), (_, a0, a1)| {
                 (s0.saturating_add(a0), s1.saturating_add(a1))
             });
-        let (col0, decimals0) = expected0;
         if scaled(sum0, decimals0)? != col0 {
             return Err(Error::Integrity {
                 message: format!(
@@ -469,10 +475,11 @@ impl UniswapV3 {
         // Known subgraph corruption: token0's collected fees mirrored into token1, seen as equal
         // values across two distinct tokens (it produced phantom fees and absurd APY downstream).
         // Compared numerically so "12.5" and "12.50" match, like the history read. A mirrored zero
-        // hides token1-only collects, so equal zero totals count once principal was withdrawn
-        // (collected includes it). Only the collected-fee history is affected; principal comes from
-        // the liquidity math and uncollected fees from an on-chain read, so the position is kept with
-        // its collected fees marked unknown rather than failing the whole wallet read.
+        // hides token1-only collects, so equal zero totals are suspect too: an open position read at
+        // Full detail checks them against its snapshots, and any other counts once principal was
+        // withdrawn (collected includes it). Only the collected-fee history is affected; principal
+        // comes from the liquidity math and uncollected fees from an on-chain read, so the position is
+        // kept with its collected fees marked unknown rather than failing the whole wallet read.
         let parse_collected = |ptr: &str| {
             item.pointer(ptr)
                 .and_then(|v| v.as_str())
@@ -483,7 +490,9 @@ impl UniswapV3 {
             parse_collected("/collectedFeesToken0"),
             parse_collected("/collectedFeesToken1"),
         ) {
-            (Some(a), Some(b)) => a == b && (a != Decimal::ZERO || withdrew),
+            (Some(a), Some(b)) => {
+                a == b && (a != Decimal::ZERO || withdrew || (with_fees && liquidity != "0"))
+            }
             _ => false,
         };
         // An open position read at Full detail rebuilds its lifetime collects from the receipts of its
