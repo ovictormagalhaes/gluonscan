@@ -241,3 +241,61 @@ async fn one_gwei_eeth_is_kept() {
     };
     assert_eq!(p.staked[0].raw, U256::from(1_000_000_000u64));
 }
+
+// `getEETHByWeETH(49,251.088846137389798352 weETH)` captured from mainnet at block 26,192,046
+// (2026-10-14): 54,458.724127009360453278 eETH.
+const WEETH_TO_EETH: &str = "0x000000000000000000000000000000000000000000000b88369e22d41bda1e9e";
+
+async fn read_with_rate(rate_reply: String) -> gluonscan_core::Reading {
+    let rpc = MockChainProvider::new()
+        .on(eth_call_to("94626044"), rate_reply) // getEETHByWeETH, before the `to` routes
+        .on(eth_call_to("cd5fe23c85820f7b"), ok(WEETH_BAL))
+        .on(eth_call_to("35fa164735182de5"), ok(EETH_BAL));
+    let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    EtherFi::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner()
+}
+
+#[tokio::test]
+async fn weeth_carries_the_eeth_it_unwraps_to_and_eeth_carries_none() {
+    // Arrange
+    let rate = ok(WEETH_TO_EETH);
+
+    // Act
+    let reading = read_with_rate(rate).await;
+
+    // Assert
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    assert_eq!(p.underlying.len(), p.staked.len());
+    let eeth = p.underlying[0].as_ref().expect("weETH underlying");
+    assert_eq!(eeth.token.symbol, "eETH");
+    assert_eq!(eeth.token.address, evm(EETH_ADDR));
+    assert_eq!(eeth.amount.to_string(), "54458.724127009360453278");
+    assert!(p.underlying[1].is_none(), "eETH rebases: no underlying");
+}
+
+#[tokio::test]
+async fn a_failed_rate_read_leaves_the_underlying_unknown_and_keeps_the_position() {
+    // Arrange
+    let rate = RPC_ERROR.to_string();
+
+    // Act
+    let reading = read_with_rate(rate).await;
+
+    // Assert
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    assert_eq!(p.staked.len(), 2);
+    assert_eq!(p.underlying, vec![None, None]);
+}

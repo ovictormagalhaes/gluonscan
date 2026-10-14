@@ -8,6 +8,39 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.2] - 2026-10-17
+
+### Added
+
+- **`StakePosition::underlying`: what a wrapped stake redeems for.** Index-aligned with `staked`:
+  wstETH carries the stETH it unwraps to (`getStETHByWstETH`), weETH the eETH (`getEETHByWeETH`),
+  sUSDe the USDe (`convertToAssets`). A consumer can tell the staking yield (the underlying growing
+  at a constant wrapper balance) from a price move. Rebasing tokens (stETH, eETH) carry `None`, as
+  does a wrapper whose rate read failed: like `rates`, the rate never fails the balance read.
+- **`gluonscan_evm::convert_amount` and `encode_selector_with_u256`**, the best-effort
+  `uint256 -> uint256` view read behind it.
+- **`gluonscan_morpho::holds_market`.** Asks the Morpho Blue singleton (`position(id, user)`)
+  whether a wallet still holds anything in a market, so a consumer can confirm a market that
+  vanished from the API before accepting it as closed. Any failure is an error, never `false`.
+  The facade exposes it over the engine's RPC as `Gluonscan::morpho_holds_market`.
+- **`WalletBalance::gated` and `WalletGate`.** Marks a balance a hygiene gate would hide.
+
+### Changed
+
+- **Alchemy wallet readers report gated balances instead of dropping them.** An unpriced
+  unverified token is reported with no USD amount and `gated: Some(Unpriced)`; a balance worth less
+  than the $1 dust floor keeps its value and `gated: Some(BelowDust)`. A held token whose quote
+  dipped under the floor or went missing for a day used to vanish and come back, which read as a
+  transfer out and in. Spoofed symbols and implausible values or prices are still dropped.
+  Consumers that want the old behaviour drop every leaf with `gated.is_some()`.
+
+### Fixed
+
+- **Morpho: a null user or a null amount is the API failing, not an empty wallet.** The live API
+  answers a never-seen address with an empty `marketPositions` list, so `userByAddress: null` now
+  returns a retryable `Error::Transient` instead of an empty reading, and a null `supplyAssets`,
+  `borrowAssets` or `collateral` no longer reads as zero (which could drop a live market as empty).
+
 ## [0.3.0-beta.1] - 2026-10-15
 
 ### Changed

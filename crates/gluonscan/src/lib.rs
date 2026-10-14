@@ -404,4 +404,16 @@ impl Gluonscan {
     pub async fn latest_block(&self, chain: Chain) -> Result<u64, Error> {
         transfers::latest_block(self.cx.rpc()?.as_ref(), chain).await
     }
+
+    /// Whether `owner` still holds anything in the Morpho Blue market `market_id`, read on-chain.
+    /// See [`gluonscan_morpho::holds_market`]: any failure is an error, never `false`.
+    pub async fn morpho_holds_market(
+        &self,
+        chain: Chain,
+        market_id: &str,
+        owner: &Wallet,
+    ) -> Result<bool, Error> {
+        gluonscan_morpho::holds_market(self.cx.rpc()?.as_ref(), chain, market_id, owner.evm()?)
+            .await
+    }
 }

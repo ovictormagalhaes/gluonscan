@@ -8,22 +8,65 @@
 //! single aggregate. A single LLTV per market is both the max borrow LTV and the liquidation
 //! threshold; debt has no borrow factor (it counts at 100%).
 //!
-//! No RPC — HTTP-only. Claimable incentives moved to Merkl (a separate per-wallet system) and are a
-//! planned follow-up; `rewards` is left empty here rather than guessed.
+//! The read is HTTP-only. Claimable incentives moved to Merkl (a separate per-wallet system) and are
+//! a planned follow-up; `rewards` is left empty here rather than guessed.
+//!
+//! The API's indexer can answer with a wallet's markets missing (an empty list) while they still
+//! hold funds on-chain, which reads exactly like a full exit. [`holds_market`] asks the Morpho Blue
+//! contract directly, so a consumer that saw a market before can confirm a disappearance before
+//! accepting it.
 
 use std::str::FromStr;
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Detail, Error, LendingPosition,
-    Position, Protocol, ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading,
-    Source, Staleness, SuppliedAsset, Timestamp, Token, Wallet,
+    Amount, BorrowedAsset, Capability, Chain, ChainProvider, Complete, Ctx, Detail, Error,
+    LendingPosition, Position, Protocol, ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow,
+    Rates, Reading, Source, Staleness, SuppliedAsset, Timestamp, Token, Wallet,
 };
+use gluonscan_evm::eth_call;
 use rust_decimal::Decimal;
 use serde_json::Value;
 
 const MORPHO_API: &str = "https://blue-api.morpho.org/graphql";
+
+/// The Morpho Blue singleton, deployed at the same address on Ethereum and Base.
+pub const MORPHO_BLUE: Address =
+    alloy_primitives::address!("BBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb");
+/// `position(bytes32 id, address user)` → `(supplyShares, borrowShares, collateral)`.
+const POSITION_SELECTOR: [u8; 4] = [0x93, 0xc5, 0x20, 0x62];
+
+/// Whether `owner` still holds anything (supply shares, borrow shares or collateral) in the market
+/// `market_id` (the 32-byte id as `0x…` hex), read from the Morpho Blue contract. Any failure is an
+/// error, never `false`: a disappearance is only accepted once the chain confirms it.
+pub async fn holds_market(
+    rpc: &dyn ChainProvider,
+    chain: Chain,
+    market_id: &str,
+    owner: Address,
+) -> Result<bool, Error> {
+    let id = alloy_primitives::hex::decode(market_id.trim_start_matches("0x"))
+        .ok()
+        .filter(|b| b.len() == 32)
+        .ok_or_else(|| Error::Integrity {
+            message: format!("Morpho market id `{market_id}` is not 32 bytes of hex"),
+        })?;
+    let mut data = POSITION_SELECTOR.to_vec();
+    data.extend_from_slice(&id);
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(owner.as_slice());
+    let out = eth_call(rpc, chain, None, MORPHO_BLUE, data).await?;
+    if out.len() < 96 {
+        return Err(Error::Integrity {
+            message: format!(
+                "Morpho position() returned {} bytes, expected 96",
+                out.len()
+            ),
+        });
+    }
+    Ok(out[..96].iter().any(|b| *b != 0))
+}
 
 const QUERY: &str = r#"query($address:String!,$chainId:Int){userByAddress(address:$address,chainId:$chainId){marketPositions{healthFactor state{supplyAssets borrowAssets collateral} market{marketId lltv loanAsset{symbol address decimals} collateralAsset{symbol address decimals} state{timestamp supplyApy borrowApy dailySupplyApy dailyBorrowApy weeklySupplyApy weeklyBorrowApy monthlySupplyApy monthlyBorrowApy}}}}}"#;
 
@@ -104,20 +147,22 @@ impl ProtocolAdapter for Morpho {
         })?;
         check_graphql_errors(&json)?;
 
-        // A never-seen wallet comes back as `userByAddress: null` — "nothing here", not an error.
-        // But a non-null user with no `marketPositions` array is a malformed payload: fail closed
-        // rather than silently read it as empty.
-        let empty = Vec::new();
-        let market_positions = match json.pointer("/data/userByAddress") {
-            Some(user) if !user.is_null() => user
-                .get("marketPositions")
-                .and_then(Value::as_array)
-                .ok_or_else(|| Error::Integrity {
-                    message: "Morpho userByAddress present but marketPositions is not an array"
-                        .into(),
-                })?,
-            _ => &empty,
-        };
+        // Even a never-seen wallet comes back as a user with an empty `marketPositions` list, so a
+        // null or missing user is the API failing to answer, not "nothing here": reading it as
+        // empty would drop every position the wallet holds. A user without the array is malformed.
+        let user = json
+            .pointer("/data/userByAddress")
+            .filter(|u| !u.is_null())
+            .ok_or_else(|| Error::Transient {
+                message: "Morpho API returned no user for the wallet".into(),
+                retry_after: None,
+            })?;
+        let market_positions = user
+            .get("marketPositions")
+            .and_then(Value::as_array)
+            .ok_or_else(|| Error::Integrity {
+                message: "Morpho userByAddress present but marketPositions is not an array".into(),
+            })?;
 
         let mut positions = Vec::new();
         for mp in market_positions {
@@ -271,15 +316,19 @@ fn token_of(node: Option<&Value>, field: &str) -> Result<Token, Error> {
 
 /// Exact non-negative integer from Morpho's `BigInt`. The API serializes a `BigInt` as a JSON
 /// string once it exceeds 2^53 and as a bare number below that, so a string is parsed verbatim and a
-/// bare number always fits `u64` (hence exact). An explicit JSON null means zero (no supply/borrow).
-/// Any other shape — including a bare number too large for `u64`, which the API never emits — fails
+/// bare number always fits `u64` (hence exact). The API reports an empty side as `0`, so a JSON null
+/// is an answer it failed to compute: reading it as zero could drop a live market as empty, so it
+/// fails as retryable. Any other shape — including a bare number too large for `u64`, which the API never emits — fails
 /// closed rather than risk an f64 round-trip that would silently corrupt the amount.
 fn big_uint(v: Option<&Value>, field: &str) -> Result<U256, Error> {
     let v = v.ok_or_else(|| Error::Integrity {
         message: format!("Morpho field `{field}` missing"),
     })?;
     if v.is_null() {
-        return Ok(U256::ZERO);
+        return Err(Error::Transient {
+            message: format!("Morpho field `{field}` is null"),
+            retry_after: None,
+        });
     }
     if let Some(s) = v.as_str() {
         return U256::from_str(s.trim()).map_err(|e| Error::Integrity {
