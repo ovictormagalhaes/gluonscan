@@ -5,7 +5,8 @@
 use std::sync::Arc;
 
 use gluonscan_core::{
-    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, TokenAddress, Wallet, U256,
+    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, RateBasis, RateWindow,
+    Source, Timestamp, TokenAddress, Wallet, U256,
 };
 use gluonscan_morpho::Morpho;
 use gluonscan_testing::{Match, MockClock, MockHttp};
@@ -75,8 +76,14 @@ async fn maps_the_live_borrow_and_drops_the_zeroed_market() {
     assert!(collateral.is_collateral);
     assert_eq!(collateral.liquidation_threshold, Some(dec("0.86")));
     assert_eq!(collateral.max_ltv, Some(dec("0.86")));
-    // Morpho Blue collateral earns no yield — an accurate zero, not a fabricated one.
-    assert_eq!(collateral.apy, Some(Decimal::ZERO));
+    // Morpho Blue never lends collateral: exactly one rate, a contract-defined 0 Instant APY.
+    assert_eq!(collateral.rates().len(), 1);
+    let collateral_rate = collateral
+        .rates()
+        .get(RateBasis::Apy, RateWindow::Instant)
+        .expect("collateral carries the contract's 0 APY");
+    assert_eq!(collateral_rate.value, Decimal::ZERO);
+    assert_eq!(collateral_rate.source, gluonscan_core::Source::OnChain);
 
     // Borrow leg: USDC (address + 6-decimal amount pinned), borrow factor 1 (Morpho Blue has none),
     // APY carried through as a fraction (~4.9%, not 490%).
@@ -87,7 +94,11 @@ async fn maps_the_live_borrow_and_drops_the_zeroed_market() {
     assert_eq!(debt.amount.raw, U256::from(5_149_558_401_067u64));
     assert_eq!(debt.amount.amount.to_string(), "5149558.401067"); // 5149558401067 / 1e6
     assert_eq!(debt.borrow_factor, Some(Decimal::ONE));
-    let apy = debt.apy.expect("borrow apy");
+    let apy = debt
+        .rates()
+        .get(RateBasis::Apy, RateWindow::Instant)
+        .expect("borrow apy")
+        .value;
     assert!(
         apy > dec("0.048") && apy < dec("0.05"),
         "borrow apy ~4.9% fraction, got {apy}"
@@ -182,7 +193,15 @@ async fn large_18_decimal_amount_stays_lossless() {
         U256::from_str_radix("100000000000000000000000000", 10).unwrap(),
         "big-int amount must not be truncated to f64"
     );
-    assert_eq!(supply.apy, Some(dec("0.03")));
+    assert_eq!(
+        supply
+            .rates()
+            .get(RateBasis::Apy, RateWindow::Instant)
+            .map(|r| r.value),
+        Some(dec("0.03"))
+    );
+    // A state without the trailing fields carries the instantaneous rate only.
+    assert_eq!(supply.rates().len(), 1);
     assert!(p.borrowed.is_empty());
     assert!(p.health_factor.is_none());
 }
@@ -296,4 +315,58 @@ async fn unsupported_chain_fails_closed() {
         !err.is_retryable(),
         "an unsupported chain is a permanent config error"
     );
+}
+
+#[tokio::test]
+async fn maps_every_reported_window_dated_at_the_market_state() {
+    // Field names and shapes as the live Blue API returns them for `MarketState` (2026-10-15).
+    let response = r#"{"data":{"userByAddress":{"marketPositions":[
+      {"healthFactor":1.5,"state":{"supplyAssets":"1000000","borrowAssets":"500000","collateral":0},
+       "market":{"marketId":"0xabc","lltv":"860000000000000000",
+         "loanAsset":{"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","decimals":6},
+         "collateralAsset":null,
+         "state":{"timestamp":1792077251,"supplyApy":0.0498,"borrowApy":0.0547,
+           "dailySupplyApy":0.0517,"dailyBorrowApy":0.0566,
+           "weeklySupplyApy":0.0373,"weeklyBorrowApy":0.0418,
+           "monthlySupplyApy":0.0375,"monthlyBorrowApy":null}}}
+    ]}}}"#;
+    let reading = read(response).await.expect("read");
+    let Position::Lending(p) = &reading.positions[0] else {
+        panic!("expected a lending position");
+    };
+    let supply = p.supplied[0].rates();
+    let borrow = p.borrowed[0].rates();
+    let value = |rates: &gluonscan_core::Rates, window| {
+        rates
+            .get(RateBasis::Apy, window)
+            .map(|r| r.value.round_dp(4))
+    };
+    assert_eq!(value(supply, RateWindow::Instant), Some(dec("0.0498")));
+    assert_eq!(
+        value(supply, RateWindow::Trailing { hours: 24 }),
+        Some(dec("0.0517"))
+    );
+    assert_eq!(
+        value(supply, RateWindow::Trailing { hours: 168 }),
+        Some(dec("0.0373"))
+    );
+    assert_eq!(
+        value(supply, RateWindow::Trailing { hours: 720 }),
+        Some(dec("0.0375"))
+    );
+    assert_eq!(
+        value(borrow, RateWindow::Trailing { hours: 24 }),
+        Some(dec("0.0566"))
+    );
+    assert_eq!(
+        value(borrow, RateWindow::Trailing { hours: 168 }),
+        Some(dec("0.0418"))
+    );
+    // A null window is absent, never zero and never another window's value.
+    assert_eq!(value(borrow, RateWindow::Trailing { hours: 720 }), None);
+    assert_eq!(borrow.len(), 3);
+    for r in supply.iter().chain(borrow.iter()) {
+        assert_eq!(r.as_of, Timestamp(1_792_077_251));
+        assert_eq!(r.source, Source::Api);
+    }
 }

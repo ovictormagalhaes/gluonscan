@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use gluonscan_core::{
-    Address, Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, TokenAddress, Wallet,
-    U256,
+    Address, Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, RateBasis, RateWindow,
+    Source, Timestamp, TokenAddress, Wallet, U256,
 };
 use gluonscan_lido::Lido;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
@@ -55,6 +55,103 @@ async fn read_with(steth: &str, wsteth: &str) -> Result<gluonscan_core::Reading,
     read_replies(ok(steth), ok(wsteth)).await
 }
 
+// Real `apr/last` and `apr/sma` responses (2026-10-15): one daily oracle report, and the 7 most
+// recent reports with their simple mean.
+const APR_LAST: &str = r#"{"data":{"timeUnix":1792066919,"apr":2.255},"meta":{"symbol":"stETH","address":"0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84","chainId":1}}"#;
+const APR_SMA: &str = r#"{"data":{"aprs":[{"timeUnix":1791548555,"apr":2.238},{"timeUnix":1791635003,"apr":2.216},{"timeUnix":1791721319,"apr":2.203},{"timeUnix":1791807719,"apr":2.218},{"timeUnix":1791894191,"apr":2.245},{"timeUnix":1791980507,"apr":2.209},{"timeUnix":1792066919,"apr":2.255}],"smaApr":2.2262857142857144},"meta":{"symbol":"stETH","address":"0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84","chainId":1}}"#;
+
+async fn read_rates(http: MockHttp) -> gluonscan_core::Rates {
+    read_rates_at(http, 1_792_070_000).await
+}
+
+async fn read_rates_at(http: MockHttp, now: i64) -> gluonscan_core::Rates {
+    let rpc = MockChainProvider::new()
+        .on(eth_call_to("ae7ab96520de3a18"), ok(STETH_BAL))
+        .on(eth_call_to("7f39c581f595b53c"), ok(WSTETH_BAL));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(now))).with_rpc(Arc::new(rpc));
+    let reading = Lido::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    p.rates().clone()
+}
+
+#[tokio::test]
+async fn lido_rates_are_aprs_never_apys() {
+    let rates = read_rates(
+        MockHttp::new()
+            .on(Match::primary_contains("apr/last"), APR_LAST)
+            .on(Match::primary_contains("apr/sma"), APR_SMA),
+    )
+    .await;
+    assert_eq!(rates.len(), 2);
+    assert!(
+        rates.iter().all(|r| r.basis == RateBasis::Apr),
+        "Lido publishes APRs; they must never be labelled APY"
+    );
+    assert!(rates.iter().all(|r| r.source == Source::Api));
+
+    // The last oracle report: 2.255% -> 0.02255, dated at the report, not at the read.
+    let last = rates
+        .get(RateBasis::Apr, RateWindow::Epoch { hours: Some(24) })
+        .expect("last report apr");
+    assert_eq!(last.value, Decimal::from_str_exact("0.02255").unwrap());
+    assert_eq!(last.as_of, Timestamp(1_792_066_919));
+
+    // The 7-report SMA, dated at the newest report.
+    let sma = rates
+        .get(RateBasis::Apr, RateWindow::Trailing { hours: 168 })
+        .expect("7-day sma");
+    assert_eq!(
+        sma.value,
+        Decimal::from_str_exact("0.022262857142857144").unwrap()
+    );
+    assert_eq!(sma.as_of, Timestamp(1_792_066_919));
+}
+
+#[tokio::test]
+async fn sma_over_fewer_than_seven_reports_is_omitted() {
+    let short = r#"{"data":{"aprs":[{"timeUnix":1791980507,"apr":2.209},{"timeUnix":1792066919,"apr":2.255}],"smaApr":2.232},"meta":{}}"#;
+    let rates = read_rates(
+        MockHttp::new()
+            .on(Match::primary_contains("apr/last"), APR_LAST)
+            .on(Match::primary_contains("apr/sma"), short),
+    )
+    .await;
+    assert!(rates
+        .get(RateBasis::Apr, RateWindow::Trailing { hours: 168 })
+        .is_none());
+    assert_eq!(rates.len(), 1, "the last-report APR is kept on its own");
+}
+
+#[tokio::test]
+async fn sma_needs_a_newest_report_at_most_48h_old_and_not_in_the_future() {
+    let newest = 1_792_066_919;
+    let sma = |now| async move {
+        read_rates_at(
+            MockHttp::new()
+                .on(Match::primary_contains("apr/last"), APR_LAST)
+                .on(Match::primary_contains("apr/sma"), APR_SMA),
+            now,
+        )
+        .await
+        .get(RateBasis::Apr, RateWindow::Trailing { hours: 168 })
+        .is_some()
+    };
+    assert!(sma(newest + 48 * 3600).await);
+    assert!(!sma(newest + 48 * 3600 + 1).await);
+    assert!(!sma(newest - 1).await);
+}
+
 #[tokio::test]
 async fn attaches_the_lido_apr_as_a_fraction() {
     let rpc = MockChainProvider::new()
@@ -62,7 +159,7 @@ async fn attaches_the_lido_apr_as_a_fraction() {
         .on(eth_call_to("7f39c581f595b53c"), ok(WSTETH_BAL));
     // The Lido API returns a percentage; the position carries it as a fraction.
     let http = MockHttp::new().on(
-        Match::primary_contains("eth-api.lido.fi"),
+        Match::primary_contains("apr/last"),
         r#"{"data":{"timeUnix":1,"apr":2.216},"meta":{}}"#,
     );
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
@@ -79,23 +176,25 @@ async fn attaches_the_lido_apr_as_a_fraction() {
     let Position::Stake(p) = &reading.positions[0] else {
         panic!("expected a stake position");
     };
-    let apy = p.apy.expect("apr attached");
-    assert!(
-        apy > Decimal::from_str_exact("0.0221").unwrap()
-            && apy < Decimal::from_str_exact("0.0222").unwrap(),
-        "2.216% -> ~0.02216 fraction, got {apy}"
-    );
+    // The SMA request is unmocked and fails: only that rate is missing.
+    assert_eq!(p.rates().len(), 1);
+    let apr = p
+        .rates()
+        .get(RateBasis::Apr, RateWindow::Epoch { hours: Some(24) })
+        .expect("apr attached")
+        .value;
+    assert_eq!(apr, Decimal::from_str_exact("0.02216").unwrap());
 }
 
 #[tokio::test]
-async fn apr_fetch_failure_leaves_apy_none_but_keeps_the_position() {
+async fn apr_fetch_failure_leaves_rates_empty_but_keeps_the_position() {
     // Best-effort: the APY is informational, so an API outage (here: unmocked GET) must never fail
     // the balance read — the position is still complete, just without an APY.
     let reading = read_with(STETH_BAL, WSTETH_BAL).await.expect("read");
     let Position::Stake(p) = &reading.positions[0] else {
         panic!("expected a stake position");
     };
-    assert!(p.apy.is_none());
+    assert!(p.rates().is_empty());
     assert_eq!(p.staked.len(), 2);
 }
 

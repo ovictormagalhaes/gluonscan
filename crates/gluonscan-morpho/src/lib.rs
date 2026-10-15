@@ -17,15 +17,15 @@ use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
     Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Detail, Error, LendingPosition,
-    Position, Protocol, ProtocolAdapter, Provenance, Reading, Source, Staleness, SuppliedAsset,
-    Token, Wallet,
+    Position, Protocol, ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading,
+    Source, Staleness, SuppliedAsset, Timestamp, Token, Wallet,
 };
 use rust_decimal::Decimal;
 use serde_json::Value;
 
 const MORPHO_API: &str = "https://blue-api.morpho.org/graphql";
 
-const QUERY: &str = r#"query($address:String!,$chainId:Int){userByAddress(address:$address,chainId:$chainId){marketPositions{healthFactor state{supplyAssets borrowAssets collateral} market{marketId lltv loanAsset{symbol address decimals} collateralAsset{symbol address decimals} state{supplyApy borrowApy}}}}}"#;
+const QUERY: &str = r#"query($address:String!,$chainId:Int){userByAddress(address:$address,chainId:$chainId){marketPositions{healthFactor state{supplyAssets borrowAssets collateral} market{marketId lltv loanAsset{symbol address decimals} collateralAsset{symbol address decimals} state{timestamp supplyApy borrowApy dailySupplyApy dailyBorrowApy weeklySupplyApy weeklyBorrowApy monthlySupplyApy monthlyBorrowApy}}}}}"#;
 
 const CAPABILITIES: &[Capability] = &[
     Capability::Positions,
@@ -121,7 +121,7 @@ impl ProtocolAdapter for Morpho {
 
         let mut positions = Vec::new();
         for mp in market_positions {
-            if let Some(position) = parse_market_position(mp)? {
+            if let Some(position) = parse_market_position(mp, cx.clock.now())? {
                 positions.push(Position::Lending(position));
             }
         }
@@ -138,7 +138,7 @@ impl ProtocolAdapter for Morpho {
 }
 
 /// Map one `marketPosition`. Returns `None` for an empty (historical/dust) market so it is dropped.
-fn parse_market_position(mp: &Value) -> Result<Option<LendingPosition>, Error> {
+fn parse_market_position(mp: &Value, read_at: Timestamp) -> Result<Option<LendingPosition>, Error> {
     let state = mp.get("state").ok_or_else(|| Error::Integrity {
         message: "Morpho marketPosition missing `state`".into(),
     })?;
@@ -167,7 +167,7 @@ fn parse_market_position(mp: &Value) -> Result<Option<LendingPosition>, Error> {
         })?;
     let loan_token = token_of(market.get("loanAsset"), "loanAsset")?;
     let lltv = wad_ratio(market.get("lltv"))?;
-    let (supply_apy, borrow_apy) = market_apys(market.get("state"));
+    let (supply_rates, borrow_rates) = market_rates(market.get("state"), read_at);
 
     let mut supplied = Vec::new();
     if !collateral_raw.is_zero() {
@@ -185,14 +185,23 @@ fn parse_market_position(mp: &Value) -> Result<Option<LendingPosition>, Error> {
                 .with_collateral(true, true)
                 .with_liquidation_threshold(Some(lltv))
                 .with_max_ltv(Some(lltv))
-                .with_apy(Some(Decimal::ZERO)),
+                // Morpho Blue never lends collateral out: `supplyCollateral` only credits
+                // `position.collateral`, which accrues no interest. The 0 is the contract's rule,
+                // not a missing API field; any yield of the collateral token itself is not Morpho's.
+                .with_rate(Rate::new(
+                    Decimal::ZERO,
+                    RateBasis::Apy,
+                    RateWindow::Instant,
+                    Source::OnChain,
+                    read_at,
+                )),
         );
     }
     if !supply_raw.is_zero() {
         supplied.push(
             SuppliedAsset::new(Amount::from_raw(loan_token.clone(), supply_raw)?)
                 .with_collateral(false, false)
-                .with_apy(supply_apy),
+                .with_rates(supply_rates),
         );
     }
 
@@ -201,7 +210,7 @@ fn parse_market_position(mp: &Value) -> Result<Option<LendingPosition>, Error> {
         borrowed.push(
             BorrowedAsset::new(Amount::from_raw(loan_token, borrow_raw)?)
                 .with_borrow_factor(Some(Decimal::ONE))
-                .with_apy(borrow_apy),
+                .with_rates(borrow_rates),
         );
     }
 
@@ -296,16 +305,50 @@ fn wad_ratio(v: Option<&Value>) -> Result<Decimal, Error> {
     Ok(wad / Decimal::from(1_000_000_000_000_000_000u64))
 }
 
-/// Supply/borrow APY (ratios). Missing market state leaves them unknown (`None`), never a fake `0`.
-fn market_apys(state: Option<&Value>) -> (Option<Decimal>, Option<Decimal>) {
-    let supply = state
-        .and_then(|s| s.get("supplyApy"))
-        .and_then(Value::as_f64)
-        .and_then(dec);
-    let borrow = state
-        .and_then(|s| s.get("borrowApy"))
-        .and_then(Value::as_f64)
-        .and_then(dec);
+/// The market state's APY fields (excluding rewards) per window: instantaneous, daily, weekly and
+/// monthly (30-day) trailing.
+const RATE_FIELDS: &[(&str, &str, RateWindow)] = &[
+    ("supplyApy", "borrowApy", RateWindow::Instant),
+    (
+        "dailySupplyApy",
+        "dailyBorrowApy",
+        RateWindow::Trailing { hours: 24 },
+    ),
+    (
+        "weeklySupplyApy",
+        "weeklyBorrowApy",
+        RateWindow::Trailing { hours: 168 },
+    ),
+    (
+        "monthlySupplyApy",
+        "monthlyBorrowApy",
+        RateWindow::Trailing { hours: 720 },
+    ),
+];
+
+/// Supply and borrow APYs (fractions) of the market, one per window the state reports, dated at the
+/// state's own `timestamp` (the read time when absent). A missing field leaves that window out,
+/// never a fake `0`.
+fn market_rates(state: Option<&Value>, read_at: Timestamp) -> (Rates, Rates) {
+    let as_of = state
+        .and_then(|s| s.get("timestamp"))
+        .and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))
+        .map_or(read_at, Timestamp);
+    let field = |name: &str| {
+        state
+            .and_then(|s| s.get(name))
+            .and_then(Value::as_f64)
+            .and_then(dec)
+    };
+    let mut supply = Rates::new();
+    let mut borrow = Rates::new();
+    for (supply_field, borrow_field, window) in RATE_FIELDS {
+        for (rates, name) in [(&mut supply, supply_field), (&mut borrow, borrow_field)] {
+            if let Some(apy) = field(name) {
+                rates.insert(Rate::new(apy, RateBasis::Apy, *window, Source::Api, as_of));
+            }
+        }
+    }
     (supply, borrow)
 }
 
