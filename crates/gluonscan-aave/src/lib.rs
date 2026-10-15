@@ -15,7 +15,8 @@ use async_trait::async_trait;
 use gluonscan_core::{
     Amount, BorrowedAsset, Capability, Chain, Complete, Ctx, Currency, Detail, Error, EventKind,
     History, HistoryEvent, LendingPosition, Money, Position, Protocol, ProtocolAdapter, Provenance,
-    Reading, Source, Staleness, SuppliedAsset, Timestamp, Token, TokenAddress, Wallet,
+    Rate, RateBasis, RateWindow, Rates, Reading, Source, Staleness, SuppliedAsset, Timestamp,
+    Token, TokenAddress, Wallet,
 };
 use rust_decimal::Decimal;
 
@@ -130,8 +131,9 @@ impl ProtocolAdapter for AaveApi {
             message: "Aave response missing `data`".into(),
         })?;
 
-        let mut supplied = parse_supplied(data.get("userSupplies"))?;
-        let borrowed = parse_borrowed(data.get("userBorrows"))?;
+        let now = cx.clock.now();
+        let mut supplied = parse_supplied(data.get("userSupplies"), now)?;
+        let borrowed = parse_borrowed(data.get("userBorrows"), now)?;
 
         let has_debt = !borrowed.is_empty();
         let health_factor = parse_health_factor(data.get("userMarketState"));
@@ -461,9 +463,14 @@ fn parse_amount_entry(item: &serde_json::Value, balance_key: &str) -> Result<Amo
     .with_usd(usd))
 }
 
-/// Read `apy { value }` as a fraction, when present.
-fn parse_apy(item: &serde_json::Value) -> Option<Decimal> {
-    item.pointer("/apy/value").and_then(json_decimal)
+/// The entry's `apy { value }` as an instantaneous APY fraction. The API stamps no time on it, so
+/// it is dated at the read.
+fn parse_rates(item: &serde_json::Value, now: Timestamp) -> Rates {
+    item.pointer("/apy/value")
+        .and_then(json_decimal)
+        .map(|apy| Rate::new(apy, RateBasis::Apy, RateWindow::Instant, Source::Api, now))
+        .into_iter()
+        .collect()
 }
 
 /// The positions array for a GraphQL field. An absent or null field means "no positions" (`Ok`
@@ -484,7 +491,10 @@ fn as_position_array<'a>(
     }
 }
 
-fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>, Error> {
+fn parse_supplied(
+    list: Option<&serde_json::Value>,
+    now: Timestamp,
+) -> Result<Vec<SuppliedAsset>, Error> {
     let items = as_position_array(list, "userSupplies")?;
     let mut out = Vec::with_capacity(items.len());
     for item in items {
@@ -502,13 +512,16 @@ fn parse_supplied(list: Option<&serde_json::Value>) -> Result<Vec<SuppliedAsset>
         out.push(
             SuppliedAsset::new(amount)
                 .with_collateral(is_collateral, can_be_collateral)
-                .with_apy(parse_apy(item)),
+                .with_rates(parse_rates(item, now)),
         );
     }
     Ok(out)
 }
 
-fn parse_borrowed(list: Option<&serde_json::Value>) -> Result<Vec<BorrowedAsset>, Error> {
+fn parse_borrowed(
+    list: Option<&serde_json::Value>,
+    now: Timestamp,
+) -> Result<Vec<BorrowedAsset>, Error> {
     let items = as_position_array(list, "userBorrows")?;
     let mut out = Vec::with_capacity(items.len());
     for item in items {
@@ -517,7 +530,7 @@ fn parse_borrowed(list: Option<&serde_json::Value>) -> Result<Vec<BorrowedAsset>
         out.push(
             BorrowedAsset::new(amount)
                 .with_borrow_factor(Some(Decimal::ONE))
-                .with_apy(parse_apy(item)),
+                .with_rates(parse_rates(item, now)),
         );
     }
     Ok(out)

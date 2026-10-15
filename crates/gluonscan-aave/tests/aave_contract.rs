@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use gluonscan_aave::AaveApi;
 use gluonscan_core::{
-    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Source, Wallet,
+    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, RateBasis, RateWindow, Rates,
+    Source, Timestamp, Wallet,
 };
 use gluonscan_testing::{load_contracts, MockClock, MockHttp};
 use rust_decimal::Decimal;
@@ -47,12 +48,26 @@ async fn aave_ethereum_reads_from_contract() {
     );
     assert_eq!(weth.max_ltv, Some(Decimal::from_str("0.805").unwrap()));
     assert!(weth.is_collateral && weth.can_be_collateral);
-    assert_eq!(weth.apy, Some(Decimal::from_str("0.021").unwrap()));
+    let instant = |rates: &Rates| {
+        let r = rates
+            .get(RateBasis::Apy, RateWindow::Instant)
+            .expect("instant apy")
+            .clone();
+        assert_eq!(r.source, Source::Api);
+        assert_eq!(
+            r.as_of,
+            Timestamp(0),
+            "the API stamps no time; dated at read"
+        );
+        assert_eq!(rates.len(), 1, "Aave serves the instantaneous rate only");
+        r.value
+    };
+    assert_eq!(instant(weth.rates()), Decimal::from_str("0.021").unwrap());
 
     let usdc = &pos.borrowed[0];
     assert_eq!(usdc.amount.token.symbol, "USDC");
     assert_eq!(usdc.borrow_factor, Some(Decimal::from_str("1").unwrap()));
-    assert_eq!(usdc.apy, Some(Decimal::from_str("0.055").unwrap()));
+    assert_eq!(instant(usdc.rates()), Decimal::from_str("0.055").unwrap());
     assert_eq!(pos.health_factor, Some(Decimal::from_str("2.35").unwrap()));
 }
 
@@ -100,7 +115,7 @@ async fn lending_legs_carry_addresses_risk_params_and_health_factor() {
             "Full detail must populate liquidation_threshold"
         );
         assert!(s.max_ltv.is_some(), "Full detail must populate max_ltv");
-        assert!(s.apy.is_some(), "supplied apy required");
+        assert!(!s.rates().is_empty(), "supplied rate required");
     }
     for b in &pos.borrowed {
         let addr = b
@@ -116,7 +131,7 @@ async fn lending_legs_carry_addresses_risk_params_and_health_factor() {
             Some(Decimal::from_str("1").unwrap()),
             "Aave V3 pins borrow_factor to 1.0"
         );
-        assert!(b.apy.is_some(), "borrowed apy required");
+        assert!(!b.rates().is_empty(), "borrowed rate required");
     }
     if !pos.borrowed.is_empty() {
         assert!(

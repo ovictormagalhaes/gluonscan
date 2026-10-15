@@ -59,3 +59,23 @@ in-range), `LockPosition`, `StakePosition`, `YieldPosition` (PT/YT with maturity
 `LendingPosition`, `LiquidityPosition` and `StakePosition` also carry claimable `rewards`
 (emission/incentive tokens, distinct from LP trading fees) when a source exposes them — surfaced by
 the `Rewards` capability.
+
+## Rates
+
+Supplied and borrowed lending legs, `LiquidityPosition`, `StakePosition` and `YieldPosition` carry
+`rates: Rates`: at most one `Rate` per `(RateBasis, RateWindow)`, each with its value as a fraction,
+its `Source` and its `as_of` timestamp (the upstream timestamp when the source gives one, else the
+read time). `Rates::get(basis, window)` never substitutes another window or basis; an APR is never
+converted into an APY. A window whose data does not cover it is omitted, not filled.
+
+| Backend | Basis | Windows |
+|---|---|---|
+| `AaveApi` | APY | `Instant` |
+| `Morpho` | APY | `Instant`, `Trailing` 24h / 168h / 720h (the API's daily, weekly and monthly APYs), dated at the market state's timestamp. Collateral carries none. |
+| `KaminoApi` | APY | `Instant` (`reserves/metrics`), `Trailing` 24h / 168h (mean of the reserve's hourly history; emitted with at least 90% of the hourly points and a newest point at most 3h old) |
+| `PendleApi` | APY | `Implied` |
+| `Lido` | APR | `Epoch` 24h (last oracle report), `Trailing` 168h (the API's 7-report SMA) |
+| `EtherFi` | APR | `Epoch` of unstated length |
+| `Ethena` | APY | `Epoch` 24h (newest DeFiLlama point), `Trailing` 168h (mean of the newest 7 daily points; emitted when they span at most 8 days and the newest is at most 48h old) |
+
+Rates are informational: a failed rate request leaves that rate out and never fails the read.

@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use gluonscan_core::{
-    Address, Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, TokenAddress, Wallet,
-    U256,
+    Address, Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, RateBasis, RateWindow,
+    Source, Timestamp, TokenAddress, Wallet, U256,
 };
 use gluonscan_etherfi::EtherFi;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
@@ -65,7 +65,7 @@ async fn attaches_the_etherfi_apr_as_a_fraction() {
         Match::primary_contains("etherfi.bid"),
         r#"{"sucess":true,"latest_aprs":["224","225","230"]}"#,
     );
-    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(1_792_070_000))).with_rpc(Arc::new(rpc));
     let reading = EtherFi::new()
         .read(
             &Wallet::Evm(Address::ZERO),
@@ -79,13 +79,20 @@ async fn attaches_the_etherfi_apr_as_a_fraction() {
     let Position::Stake(p) = &reading.positions[0] else {
         panic!("expected a stake position");
     };
-    let apy = p.apy.expect("apr attached");
-    // latest "230" bps -> 2.30% -> ~0.0230 fraction.
-    assert!(
-        apy > Decimal::from_str_exact("0.0229").unwrap()
-            && apy < Decimal::from_str_exact("0.0231").unwrap(),
-        "got {apy}"
-    );
+    // ether.fi publishes an APR of a period it does not state; it must never be labelled APY.
+    assert_eq!(p.rates().len(), 1);
+    let apr = p.rates().iter().next().unwrap();
+    assert_eq!(apr.basis, RateBasis::Apr);
+    assert_eq!(apr.window, RateWindow::Epoch { hours: None });
+    assert_eq!(apr.source, Source::Api);
+    // No upstream timestamp: dated at the read.
+    assert_eq!(apr.as_of, Timestamp(1_792_070_000));
+    // latest "230" bps -> 2.30% -> 0.0230 fraction, exactly.
+    assert_eq!(apr.value, Decimal::from_str_exact("0.023").unwrap());
+    assert!(p
+        .rates()
+        .get(RateBasis::Apy, RateWindow::Epoch { hours: None })
+        .is_none());
 }
 
 #[tokio::test]

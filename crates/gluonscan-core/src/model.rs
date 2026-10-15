@@ -1,6 +1,6 @@
 //! Normalized domain model — the shapes a fetch returns, already converted and priced.
 
-use crate::{Chain, Error, Protocol, Source};
+use crate::{Chain, Error, Protocol, Rate, Rates, Source};
 use alloy_primitives::{Address, U256};
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -381,8 +381,8 @@ pub struct SuppliedAsset {
     pub is_collateral: bool,
     /// Whether this asset is eligible to be collateral.
     pub can_be_collateral: bool,
-    /// Supply APY as a fraction (e.g. `0.031` = 3.1%), when known.
-    pub apy: Option<Decimal>,
+    /// Supply rates (empty when the source reports none).
+    pub rates: Rates,
 }
 
 impl SuppliedAsset {
@@ -394,7 +394,7 @@ impl SuppliedAsset {
             max_ltv: None,
             is_collateral: false,
             can_be_collateral: false,
-            apy: None,
+            rates: Rates::new(),
         }
     }
 
@@ -420,11 +420,23 @@ impl SuppliedAsset {
         self
     }
 
-    /// Set the supply APY fraction (builder-style).
+    /// Replace the supply rates (builder-style).
     #[must_use]
-    pub fn with_apy(mut self, apy: Option<Decimal>) -> Self {
-        self.apy = apy;
+    pub fn with_rates(mut self, rates: Rates) -> Self {
+        self.rates = rates;
         self
+    }
+
+    /// Add one supply rate, replacing any with the same basis and window (builder-style).
+    #[must_use]
+    pub fn with_rate(mut self, rate: Rate) -> Self {
+        self.rates.insert(rate);
+        self
+    }
+
+    /// The supply rates.
+    pub fn rates(&self) -> &Rates {
+        &self.rates
     }
 }
 
@@ -436,8 +448,8 @@ pub struct BorrowedAsset {
     pub amount: Amount,
     /// Borrow factor as a fraction (Aave pins `1.0`; Kamino per-reserve), when known.
     pub borrow_factor: Option<Decimal>,
-    /// Borrow APY as a fraction, when known.
-    pub apy: Option<Decimal>,
+    /// Borrow rates (empty when the source reports none).
+    pub rates: Rates,
 }
 
 impl BorrowedAsset {
@@ -446,7 +458,7 @@ impl BorrowedAsset {
         BorrowedAsset {
             amount,
             borrow_factor: None,
-            apy: None,
+            rates: Rates::new(),
         }
     }
 
@@ -457,11 +469,23 @@ impl BorrowedAsset {
         self
     }
 
-    /// Set the borrow APY fraction (builder-style).
+    /// Replace the borrow rates (builder-style).
     #[must_use]
-    pub fn with_apy(mut self, apy: Option<Decimal>) -> Self {
-        self.apy = apy;
+    pub fn with_rates(mut self, rates: Rates) -> Self {
+        self.rates = rates;
         self
+    }
+
+    /// Add one borrow rate, replacing any with the same basis and window (builder-style).
+    #[must_use]
+    pub fn with_rate(mut self, rate: Rate) -> Self {
+        self.rates.insert(rate);
+        self
+    }
+
+    /// The borrow rates.
+    pub fn rates(&self) -> &Rates {
+        &self.rates
     }
 }
 
@@ -586,15 +610,15 @@ pub struct LiquidityPosition {
     /// Claimable protocol rewards / incentives (emission tokens), distinct from trading fees —
     /// present only when the source exposes them.
     pub rewards: Vec<Amount>,
-    /// Annualized rate (APR) as a fraction (e.g. `0.14` = 14%), when a source provides it.
-    pub apr: Option<Decimal>,
+    /// Pool rates (empty when the source reports none).
+    pub rates: Rates,
     /// Whether the position still holds liquidity, or is dormant (closed but not burned). A dormant
     /// position is returned, not dropped, so the consumer can account for it without touching totals.
     pub status: PositionStatus,
 }
 
 impl LiquidityPosition {
-    /// A liquidity position from its pool geometry. The amount vectors, fee tier and APR default to
+    /// A liquidity position from its pool geometry. The amount vectors, fee tier and rates default to
     /// empty/absent; attach them with the `with_*` setters. `status` defaults per [`PositionStatus`].
     pub fn new(
         token0: Token,
@@ -624,7 +648,7 @@ impl LiquidityPosition {
             collected_fees: Vec::new(),
             collected_fees_unavailable: false,
             rewards: Vec::new(),
-            apr: None,
+            rates: Rates::new(),
             status: PositionStatus::Active,
         }
     }
@@ -723,11 +747,23 @@ impl LiquidityPosition {
         self
     }
 
-    /// Set the annualized rate fraction (builder-style).
+    /// Replace the pool rates (builder-style).
     #[must_use]
-    pub fn with_apr(mut self, apr: Option<Decimal>) -> Self {
-        self.apr = apr;
+    pub fn with_rates(mut self, rates: Rates) -> Self {
+        self.rates = rates;
         self
+    }
+
+    /// Add one pool rate, replacing any with the same basis and window (builder-style).
+    #[must_use]
+    pub fn with_rate(mut self, rate: Rate) -> Self {
+        self.rates.insert(rate);
+        self
+    }
+
+    /// The pool rates.
+    pub fn rates(&self) -> &Rates {
+        &self.rates
     }
 
     /// Set the position status (builder-style).
@@ -771,18 +807,18 @@ pub struct YieldPosition {
     pub kind: YieldKind,
     /// Maturity, when applicable.
     pub expiry: Option<Timestamp>,
-    /// Implied/aggregated APY as a fraction, when the source provides it.
-    pub apy: Option<Decimal>,
+    /// Yield rates, e.g. the market-implied APY (empty when the source reports none).
+    pub rates: Rates,
 }
 
 impl YieldPosition {
-    /// A yield holding of `kind` for `amount` (no maturity or APY yet).
+    /// A yield holding of `kind` for `amount` (no maturity or rates yet).
     pub fn new(amount: Amount, kind: YieldKind) -> Self {
         YieldPosition {
             amount,
             kind,
             expiry: None,
-            apy: None,
+            rates: Rates::new(),
         }
     }
 
@@ -793,11 +829,23 @@ impl YieldPosition {
         self
     }
 
-    /// Set the implied/aggregated APY fraction (builder-style).
+    /// Replace the yield rates (builder-style).
     #[must_use]
-    pub fn with_apy(mut self, apy: Option<Decimal>) -> Self {
-        self.apy = apy;
+    pub fn with_rates(mut self, rates: Rates) -> Self {
+        self.rates = rates;
         self
+    }
+
+    /// Add one yield rate, replacing any with the same basis and window (builder-style).
+    #[must_use]
+    pub fn with_rate(mut self, rate: Rate) -> Self {
+        self.rates.insert(rate);
+        self
+    }
+
+    /// The yield rates.
+    pub fn rates(&self) -> &Rates {
+        &self.rates
     }
 }
 
@@ -886,11 +934,10 @@ pub struct StakePosition {
     pub staked: Vec<Amount>,
     /// Claimable staking rewards, when the source exposes them.
     pub rewards: Vec<Amount>,
-    /// Current staking yield as a FRACTION (`0.03` = 3%), when the source exposes it. This is the
-    /// protocol-wide rate (the same for every staker), informational only — it never affects a
-    /// position's value, so a source that can't supply it leaves this `None` rather than failing the
-    /// read.
-    pub apy: Option<Decimal>,
+    /// Protocol-wide staking rates (the same for every staker). Informational only — they never
+    /// affect a position's value, so a source that can't supply them leaves this empty rather than
+    /// failing the read.
+    pub rates: Rates,
 }
 
 impl StakePosition {
@@ -899,7 +946,7 @@ impl StakePosition {
         StakePosition {
             staked,
             rewards: Vec::new(),
-            apy: None,
+            rates: Rates::new(),
         }
     }
 
@@ -910,11 +957,23 @@ impl StakePosition {
         self
     }
 
-    /// Set the current staking yield as a fraction (builder-style). See [`StakePosition::apy`].
+    /// Replace the staking rates (builder-style).
     #[must_use]
-    pub fn with_apy(mut self, apy: Option<Decimal>) -> Self {
-        self.apy = apy;
+    pub fn with_rates(mut self, rates: Rates) -> Self {
+        self.rates = rates;
         self
+    }
+
+    /// Add one staking rate, replacing any with the same basis and window (builder-style).
+    #[must_use]
+    pub fn with_rate(mut self, rate: Rate) -> Self {
+        self.rates.insert(rate);
+        self
+    }
+
+    /// The staking rates.
+    pub fn rates(&self) -> &Rates {
+        &self.rates
     }
 }
 
@@ -1190,14 +1249,48 @@ mod tests {
     }
 
     #[test]
-    fn stake_apy_defaults_none_and_set_via_builder() {
+    fn rates_default_empty_and_set_via_builder() {
+        use crate::{RateBasis, RateWindow};
         // A source that can't supply the yield leaves it unset; never fabricated.
-        assert!(StakePosition::new(vec![]).apy.is_none());
+        assert!(StakePosition::new(vec![]).rates().is_empty());
+        let apr = Rate::new(
+            Decimal::from_str_exact("0.0225").unwrap(),
+            RateBasis::Apr,
+            RateWindow::Epoch { hours: Some(24) },
+            Source::Api,
+            Timestamp(1),
+        );
+        let stake = StakePosition::new(vec![]).with_rate(apr.clone());
         assert_eq!(
-            StakePosition::new(vec![])
-                .with_apy(Some(Decimal::from_str_exact("0.0485").unwrap()))
-                .apy,
-            Some(Decimal::from_str_exact("0.0485").unwrap())
+            stake
+                .rates()
+                .get(RateBasis::Apr, RateWindow::Epoch { hours: Some(24) }),
+            Some(&apr)
+        );
+        assert!(stake
+            .rates()
+            .get(RateBasis::Apy, RateWindow::Epoch { hours: Some(24) })
+            .is_none());
+        let t = Token::new("USDC", None, 6);
+        let amount = Amount::from_decimal(t, Decimal::ONE).unwrap();
+        let rates = Rates::new().with(apr);
+        assert_eq!(
+            SuppliedAsset::new(amount.clone())
+                .with_rates(rates.clone())
+                .rates(),
+            &rates
+        );
+        assert_eq!(
+            BorrowedAsset::new(amount.clone())
+                .with_rates(rates.clone())
+                .rates(),
+            &rates
+        );
+        assert_eq!(
+            YieldPosition::new(amount, YieldKind::PrincipalToken)
+                .with_rates(rates.clone())
+                .rates(),
+            &rates
         );
     }
 
