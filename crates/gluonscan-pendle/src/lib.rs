@@ -13,8 +13,9 @@ use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
     is_dust, scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail,
-    Error, LockPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Reading, Source,
-    Staleness, Timestamp, Token, TokenAddress, Wallet, YieldKind, YieldPosition,
+    Error, LockPosition, Money, Position, Protocol, ProtocolAdapter, Provenance, Rate, RateBasis,
+    RateWindow, Rates, Reading, Source, Staleness, Timestamp, Token, TokenAddress, Wallet,
+    YieldKind, YieldPosition,
 };
 use gluonscan_evm::{
     decode_two_u256, decode_u256, encode_balance_of, encode_selector_with_address, eth_call,
@@ -52,7 +53,7 @@ struct Candidate {
     token: Token,
     price_usd: Option<Decimal>,
     expiry: Option<Timestamp>,
-    apy: Option<Decimal>,
+    rates: Rates,
     kind: YieldKind,
 }
 
@@ -142,7 +143,19 @@ impl ProtocolAdapter for PendleApi {
                 .and_then(|e| e.as_str())
                 .and_then(iso_to_unix)
                 .map(Timestamp);
-            let apy = decimal_at(m, "/impliedApy");
+            // The catalog carries no per-market timestamp, so the implied APY is dated at the read.
+            let rates: Rates = decimal_at(m, "/impliedApy")
+                .map(|apy| {
+                    Rate::new(
+                        apy,
+                        RateBasis::Apy,
+                        RateWindow::Implied,
+                        Source::Api,
+                        cx.clock.now(),
+                    )
+                })
+                .into_iter()
+                .collect();
             for (key, kind) in [
                 ("pt", YieldKind::PrincipalToken),
                 ("yt", YieldKind::YieldToken),
@@ -152,7 +165,7 @@ impl ProtocolAdapter for PendleApi {
                         token: parse_token(tok)?,
                         price_usd: decimal_at(tok, "/price/usd"),
                         expiry,
-                        apy,
+                        rates: rates.clone(),
                         kind,
                     });
                 }
@@ -186,7 +199,7 @@ impl ProtocolAdapter for PendleApi {
             positions.push(Position::Yield(
                 YieldPosition::new(priced_amount(c.token, balance, c.price_usd)?, c.kind)
                     .with_expiry(c.expiry)
-                    .with_apy(c.apy),
+                    .with_rates(c.rates),
             ));
         }
 

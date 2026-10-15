@@ -16,23 +16,98 @@ use alloy_primitives::{address, Address};
 use async_trait::async_trait;
 use gluonscan_core::{
     is_dust, Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
+    ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading, Source,
+    StakePosition, Staleness, Timestamp, Token, Wallet,
 };
 use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
+use std::str::FromStr;
 
 const STETH: Address = address!("ae7ab96520DE3A18E5e111B5EaAb095312D7fE84");
 const WSTETH: Address = address!("7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0");
 
-/// Current stETH staking APR, as a fraction (`0.0222` = 2.22%), from the Lido API. Best-effort: any
-/// failure (network, schema, parse) yields `None` — the APY is informational and must never fail the
-/// balance read closed. The API returns a percentage (`2.216` = 2.216%), normalized here.
-async fn fetch_apr(cx: &Ctx) -> Option<Decimal> {
-    const APR_URL: &str = "https://eth-api.lido.fi/v1/protocol/steth/apr/last";
-    let raw = cx.http.get(APR_URL, &[]).await.ok()?;
-    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let apr = json.get("data")?.get("apr")?.as_f64()?;
-    Decimal::try_from(apr / 100.0).ok()
+const APR_LAST_URL: &str = "https://eth-api.lido.fi/v1/protocol/steth/apr/last";
+const APR_SMA_URL: &str = "https://eth-api.lido.fi/v1/protocol/steth/apr/sma";
+/// The SMA endpoint averages this many daily oracle reports.
+const SMA_REPORTS: usize = 7;
+/// The SMA's newest report must be at most this old (one missed daily report of slack).
+const MAX_SMA_AGE_SECS: i64 = 48 * 3600;
+
+/// The stETH staking APRs from the Lido API, as fractions. Both are simple APRs, never APYs.
+///
+/// - `apr/last`: the APR of the last daily oracle report, an [`RateWindow::Epoch`] of 24h dated at
+///   the report's `timeUnix`.
+/// - `apr/sma`: the mean of the last 7 daily reports' APRs, a 168h [`RateWindow::Trailing`] dated at
+///   the newest report. Omitted unless all 7 reports are present.
+///
+/// Best-effort: any failure (network, schema, parse) leaves that rate out — rates are informational
+/// and must never fail the balance read closed. The API returns percentages (`2.216` = 2.216%).
+async fn fetch_rates(cx: &Ctx) -> Rates {
+    let mut rates = Rates::new();
+    if let Some(rate) = fetch_json(cx, APR_LAST_URL)
+        .await
+        .and_then(|j| parse_last(&j))
+    {
+        rates.insert(rate);
+    }
+    if let Some(rate) = fetch_json(cx, APR_SMA_URL)
+        .await
+        .and_then(|j| parse_sma(&j, cx.clock.now().0))
+    {
+        rates.insert(rate);
+    }
+    rates
+}
+
+async fn fetch_json(cx: &Ctx, url: &str) -> Option<serde_json::Value> {
+    let raw = cx.http.get(url, &[]).await.ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn parse_last(json: &serde_json::Value) -> Option<Rate> {
+    let data = json.get("data")?;
+    Some(Rate::new(
+        percent(data.get("apr")?)?,
+        RateBasis::Apr,
+        RateWindow::Epoch { hours: Some(24) },
+        Source::Api,
+        Timestamp(data.get("timeUnix")?.as_i64()?),
+    ))
+}
+
+fn parse_sma(json: &serde_json::Value, now: i64) -> Option<Rate> {
+    let data = json.get("data")?;
+    let reports = data.get("aprs")?.as_array()?;
+    if reports.len() < SMA_REPORTS {
+        return None;
+    }
+    let newest = reports
+        .iter()
+        .filter_map(|r| r.get("timeUnix")?.as_i64())
+        .max()?;
+    if newest > now || now - newest > MAX_SMA_AGE_SECS {
+        return None;
+    }
+    Some(Rate::new(
+        percent(data.get("smaApr")?)?,
+        RateBasis::Apr,
+        RateWindow::Trailing { hours: 168 },
+        Source::Api,
+        Timestamp(newest),
+    ))
+}
+
+/// A JSON percentage number as a fraction, parsed from serde_json's shortest round-trip literal
+/// rather than by `f64` arithmetic.
+fn percent(v: &serde_json::Value) -> Option<Decimal> {
+    if !v.is_number() {
+        return None;
+    }
+    let literal = v.to_string();
+    Decimal::from_str(&literal)
+        .or_else(|_| Decimal::from_scientific(&literal))
+        .ok()?
+        .checked_div(Decimal::ONE_HUNDRED)
 }
 
 const CAPABILITIES: &[Capability] = &[Capability::Positions];
@@ -114,8 +189,10 @@ impl ProtocolAdapter for Lido {
         let positions = if staked.is_empty() {
             Vec::new()
         } else {
-            let apy = fetch_apr(cx).await;
-            vec![Position::Stake(StakePosition::new(staked).with_apy(apy))]
+            let rates = fetch_rates(cx).await;
+            vec![Position::Stake(
+                StakePosition::new(staked).with_rates(rates),
+            )]
         };
 
         let reading = Reading::new(

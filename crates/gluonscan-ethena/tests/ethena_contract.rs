@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use gluonscan_core::{
-    Address, Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, TokenAddress, Wallet,
-    U256,
+    Address, Chain, Ctx, Detail, Error, Position, Protocol, ProtocolAdapter, RateBasis, RateWindow,
+    Source, Timestamp, TokenAddress, Wallet, U256,
 };
 use gluonscan_ethena::Ethena;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
@@ -47,7 +47,8 @@ async fn attaches_the_ethena_yield_as_a_fraction() {
         Match::primary_contains("llama.fi"),
         r#"{"status":"success","data":[{"timestamp":"2026-10-04T00:00:00.000Z","apy":5.1,"apyBase":5.1},{"timestamp":"2026-10-05T00:00:00.000Z","apy":4.8492,"apyBase":4.8492}]}"#,
     );
-    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    // Read 12h after the newest point (2026-10-05T00:00:00Z = 1791158400).
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(1_791_201_600))).with_rpc(Arc::new(rpc));
     let reading = Ethena::new()
         .read(
             &Wallet::Evm(Address::ZERO),
@@ -61,13 +62,66 @@ async fn attaches_the_ethena_yield_as_a_fraction() {
     let Position::Stake(p) = &reading.positions[0] else {
         panic!("expected a stake position");
     };
-    let apy = p.apy.expect("yield attached");
-    // 4.8492% -> ~0.048492 fraction.
-    assert!(
-        apy > Decimal::from_str_exact("0.048").unwrap()
-            && apy < Decimal::from_str_exact("0.049").unwrap(),
-        "got {apy}"
+    let epoch = p
+        .rates()
+        .get(RateBasis::Apy, RateWindow::Epoch { hours: Some(24) })
+        .expect("yield attached");
+    // 4.8492% -> 0.048492 fraction, dated at the chart point rather than at the read.
+    assert_eq!(epoch.value, Decimal::from_str_exact("0.048492").unwrap());
+    assert_eq!(epoch.as_of, Timestamp(1_791_158_400));
+    assert_eq!(epoch.source, Source::Api);
+    // Two daily points do not cover a week: no trailing rate, and no substitute.
+    assert!(p
+        .rates()
+        .get(RateBasis::Apy, RateWindow::Trailing { hours: 168 })
+        .is_none());
+    assert_eq!(p.rates().len(), 1);
+}
+
+#[tokio::test]
+async fn trailing_week_from_the_last_seven_daily_points() {
+    let rpc = MockChainProvider::new().on(Match::method("eth_call"), reply(SUSDE_BAL));
+    // Real chart tail (2026-10-07..15): daily points stamped ~23:01Z, then today's intraday point.
+    let http = MockHttp::new().on(
+        Match::primary_contains("llama.fi"),
+        r#"{"status":"success","data":[
+          {"timestamp":"2026-10-07T23:01:37.586Z","apy":5.00367},
+          {"timestamp":"2026-10-08T23:01:24.795Z","apy":5.05133},
+          {"timestamp":"2026-10-09T23:01:47.211Z","apy":5.06817},
+          {"timestamp":"2026-10-10T23:01:42.977Z","apy":4.86106},
+          {"timestamp":"2026-10-11T23:01:23.683Z","apy":4.86848},
+          {"timestamp":"2026-10-12T23:02:02.211Z","apy":4.86896},
+          {"timestamp":"2026-10-13T23:01:24.945Z","apy":4.87052},
+          {"timestamp":"2026-10-14T23:01:14.650Z","apy":4.88828},
+          {"timestamp":"2026-10-15T15:01:21.499Z","apy":4.91502}]}"#,
     );
+    // 2026-10-15T15:30:00Z.
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(1_792_078_200))).with_rpc(Arc::new(rpc));
+    let reading = Ethena::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    let week = p
+        .rates()
+        .get(RateBasis::Apy, RateWindow::Trailing { hours: 168 })
+        .expect("seven points within the span");
+    // Mean of the newest 7 (10-09 .. 10-15): 34.34049 / 7 %.
+    assert_eq!(
+        week.value.round_dp(10),
+        Decimal::from_str_exact("0.0490578429").unwrap()
+    );
+    // 2026-10-15T15:01:21Z, the newest point.
+    assert_eq!(week.as_of, Timestamp(1_792_076_481));
+    assert!(p.rates().iter().all(|r| r.basis == RateBasis::Apy));
 }
 
 #[tokio::test]

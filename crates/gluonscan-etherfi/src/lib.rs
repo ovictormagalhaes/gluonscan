@@ -17,25 +17,46 @@ use alloy_primitives::{address, Address};
 use async_trait::async_trait;
 use gluonscan_core::{
     is_dust, Amount, Capability, Chain, Complete, Ctx, Detail, Error, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, StakePosition, Staleness, Token, Wallet,
+    ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading, Source,
+    StakePosition, Staleness, Token, Wallet,
 };
 use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
+use std::str::FromStr;
 
 const WEETH: Address = address!("Cd5fE23C85820F7B72D0926FC9b05b43E359b7ee");
 const EETH: Address = address!("35fA164735182de50811E8e2E824cFb9B6118ac2");
 
-/// Current ether.fi staking APR, as a fraction (`0.023` = 2.3%), from the ether.fi API. Best-effort:
-/// any failure yields `None` (the APY is informational and must never fail the balance read closed).
-/// The API returns recent APRs in basis points (`"230"` = 2.30%); the latest is taken and normalized.
+/// The ether.fi staking APR, as a fraction (`0.023` = 2.3%), from the ether.fi API: a simple APR,
+/// never an APY. The API returns the APRs of its recent reports in basis points (`"230"` = 2.30%),
+/// with no timestamps or period length; the last entry is taken as the newest report, an
+/// [`RateWindow::Epoch`] of unknown length dated at the read.
+///
+/// Best-effort: any failure leaves the rates empty (they are informational and must never fail the
+/// balance read closed).
+async fn fetch_rates(cx: &Ctx) -> Rates {
+    fetch_apr(cx)
+        .await
+        .map(|apr| {
+            Rate::new(
+                apr,
+                RateBasis::Apr,
+                RateWindow::Epoch { hours: None },
+                Source::Api,
+                cx.clock.now(),
+            )
+        })
+        .into_iter()
+        .collect()
+}
+
 async fn fetch_apr(cx: &Ctx) -> Option<Decimal> {
     const APR_URL: &str = "https://www.etherfi.bid/api/etherfi/apr";
     let raw = cx.http.get(APR_URL, &[]).await.ok()?;
     let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let latest = json.get("latest_aprs")?.as_array()?.last()?;
-    // Values are strings in basis points, e.g. "230" = 2.30% = 0.0230.
-    let bps: f64 = latest.as_str()?.parse().ok()?;
-    Decimal::try_from(bps / 10_000.0).ok()
+    let bps = Decimal::from_str(latest.as_str()?.trim()).ok()?;
+    bps.checked_div(Decimal::from(10_000))
 }
 
 const CAPABILITIES: &[Capability] = &[Capability::Positions];
@@ -118,8 +139,10 @@ impl ProtocolAdapter for EtherFi {
         let positions = if staked.is_empty() {
             Vec::new()
         } else {
-            let apy = fetch_apr(cx).await;
-            vec![Position::Stake(StakePosition::new(staked).with_apy(apy))]
+            let rates = fetch_rates(cx).await;
+            vec![Position::Stake(
+                StakePosition::new(staked).with_rates(rates),
+            )]
         };
 
         let reading = Reading::new(

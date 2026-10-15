@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use gluonscan_core::{
-    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, Timestamp, Wallet, YieldKind,
+    Address, Chain, Ctx, Detail, Position, Protocol, ProtocolAdapter, RateBasis, RateWindow,
+    Source, Timestamp, Wallet, YieldKind,
 };
 use gluonscan_pendle::PendleApi;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
@@ -87,7 +88,13 @@ async fn reads_held_pt_prices_it_and_skips_zero_yt() {
         Decimal::from_i128_with_scale(1_000_000_000_000_000_000, 18)
     );
     assert_eq!(y.expiry, Some(Timestamp(1767225600))); // 2026-01-01Z
-    assert_eq!(y.apy, Some(Decimal::from_str_exact("0.072").unwrap()));
+    let implied = y
+        .rates()
+        .get(RateBasis::Apy, RateWindow::Implied)
+        .expect("implied apy");
+    assert_eq!(implied.value, Decimal::from_str_exact("0.072").unwrap());
+    assert_eq!(implied.source, Source::Api);
+    assert_eq!(y.rates().len(), 1);
     let usd = y.amount.usd.as_ref().expect("priced from catalog");
     assert_eq!(usd.amount, Decimal::from_str_exact("0.98").unwrap());
 
