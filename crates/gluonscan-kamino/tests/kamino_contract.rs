@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use base64::Engine;
 use gluonscan_core::{
-    Chain, Ctx, Detail, Error, EventKind, Position, Protocol, ProtocolAdapter, Wallet,
+    Chain, Ctx, Detail, Error, EventKind, Position, Protocol, ProtocolAdapter, RateBasis,
+    RateWindow, Rates, Source, Timestamp, Wallet,
 };
 use gluonscan_kamino::KaminoApi;
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
@@ -76,6 +77,12 @@ fn ctx_with(obligations: &str, live: &str) -> Ctx {
     Ctx::new(Arc::new(http), Arc::new(MockClock(NOW))).with_rpc(Arc::new(rpc))
 }
 
+fn instant(rates: &Rates) -> Option<Decimal> {
+    rates
+        .get(RateBasis::Apy, RateWindow::Instant)
+        .map(|r| r.value)
+}
+
 async fn read_err(cx: &Ctx) -> Error {
     KaminoApi::new()
         .read(
@@ -125,7 +132,10 @@ async fn reads_obligation_with_reserve_join() {
         Decimal::from_str_exact("780.5").unwrap()
     );
     assert_eq!(sol.max_ltv, Some(Decimal::from_str_exact("0.7").unwrap()));
-    assert_eq!(sol.apy, Some(Decimal::from_str_exact("0.045").unwrap()));
+    assert_eq!(
+        instant(sol.rates()),
+        Some(Decimal::from_str_exact("0.045").unwrap())
+    );
     assert!(sol.is_collateral);
 
     // Debt with interest accrued since the last transaction: 200.45, not the stored 200.
@@ -139,7 +149,10 @@ async fn reads_obligation_with_reserve_join() {
         usdc.amount.usd.as_ref().unwrap().amount,
         Decimal::from_str_exact("200.45").unwrap()
     );
-    assert_eq!(usdc.apy, Some(Decimal::from_str_exact("0.089").unwrap()));
+    assert_eq!(
+        instant(usdc.rates()),
+        Some(Decimal::from_str_exact("0.089").unwrap())
+    );
     // The obligation address is the stable identity of the position (one owner can hold several
     // obligations across markets), so it rides as the market id.
     assert_eq!(p.market_id.as_deref(), Some("ob1"));
@@ -608,4 +621,174 @@ async fn account_without_leg_arrays_fails_closed() {
         "expected Integrity(state.borrows), got {err:?}"
     );
     assert!(!err.is_retryable());
+}
+
+// Reserve addresses must be base58 to be requested, so the rate-history tests rename the reserves.
+const SOL_RESERVE: &str = "ResSoL";
+const USDC_RESERVE: &str = "ResUsdc";
+
+fn base58_reserves(s: &str) -> String {
+    s.replace("RES_SOL", SOL_RESERVE)
+        .replace("RES_USDC", USDC_RESERVE)
+}
+
+/// A week of hourly USDC reserve history ending one hour before `NOW` (07:00Z), shaped like the
+/// live `reserves/{reserve}/metrics/history` response. The borrow APY spikes to 40% at 23:00Z and
+/// 00:00Z every day, as Kamino's USDC reserve does around the daily rollover; the rest of the day
+/// it sits at 6.8% over the last 24h and 6% before that. Supply is a flat 5%.
+fn usdc_rate_history() -> String {
+    let newest = NOW - 3600;
+    let points: Vec<String> = (0..168)
+        .map(|i| {
+            let ts = newest - i * 3600;
+            let hour = (ts / 3600) % 24;
+            let borrow = if hour == 23 || hour == 0 {
+                "0.4"
+            } else if i < 24 {
+                "0.068"
+            } else {
+                "0.06"
+            };
+            let stamp = chrono::DateTime::from_timestamp(ts, 0)
+                .unwrap()
+                .format("%Y-%m-%dT%H:%M:%S.000Z");
+            format!(
+                r#"{{"timestamp":"{stamp}","metrics":{{"symbol":"USDC","borrowInterestAPY":{borrow},"supplyInterestAPY":0.05}}}}"#
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"reserve":"{USDC_RESERVE}","history":[{}]}}"#,
+        points.join(",")
+    )
+}
+
+fn rated_ctx(usdc_history: Option<String>) -> Ctx {
+    let mut http = MockHttp::new();
+    http = match usdc_history {
+        Some(body) => http.on(
+            Match::primary_contains(format!("/reserves/{USDC_RESERVE}/metrics/history")),
+            body,
+        ),
+        None => http.on_transient(Match::primary_contains(format!(
+            "/reserves/{USDC_RESERVE}/metrics/history"
+        ))),
+    };
+    let http = http
+        // The SOL reserve's history is unavailable: its trailing rates are simply absent.
+        .on_transient(Match::primary_contains(format!(
+            "/reserves/{SOL_RESERVE}/metrics/history"
+        )))
+        .on(
+            Match::primary_contains("/obligations/"),
+            base58_reserves(&live_point(LIVE_TS)),
+        )
+        .on(
+            Match::primary_contains("/reserves/metrics"),
+            base58_reserves(RESERVES),
+        )
+        .on(
+            Match::primary_contains(MAIN_MARKET),
+            base58_reserves(OBLIGATIONS),
+        )
+        .on(Match::primary_contains("kamino-market"), "[]");
+    let rpc = MockChainProvider::new()
+        .on(Match::body_contains("MINT_SOL"), mint_account(9))
+        .on(Match::body_contains("MINT_USDC"), mint_account(6));
+    Ctx::new(Arc::new(http), Arc::new(MockClock(NOW))).with_rpc(Arc::new(rpc))
+}
+
+async fn read_lending(cx: &Ctx) -> gluonscan_core::LendingPosition {
+    let reading = KaminoApi::new()
+        .read(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Detail::Full,
+            cx,
+        )
+        .await
+        .expect("read")
+        .into_inner();
+    let Position::Lending(p) = &reading.positions[0] else {
+        panic!("expected a lending position");
+    };
+    p.clone()
+}
+
+#[tokio::test]
+async fn trailing_means_smooth_the_daily_borrow_spike() {
+    let p = read_lending(&rated_ctx(Some(usdc_rate_history()))).await;
+    let usdc = p.borrowed[0].rates();
+    let w24 = RateWindow::Trailing { hours: 24 };
+    let w168 = RateWindow::Trailing { hours: 168 };
+
+    // The instantaneous rate from reserves/metrics, dated at the read.
+    let instant_rate = usdc.get(RateBasis::Apy, RateWindow::Instant).unwrap();
+    assert_eq!(
+        instant_rate.value,
+        Decimal::from_str_exact("0.089").unwrap()
+    );
+    assert_eq!(instant_rate.as_of, Timestamp(NOW));
+
+    // 24h: 22 points at 6.8% and the two spike hours at 40% -> 2.296 / 24.
+    let day = usdc.get(RateBasis::Apy, w24).expect("24h window covered");
+    assert_eq!(
+        day.value.round_dp(10),
+        Decimal::from_str_exact("0.0956666667").unwrap()
+    );
+    // 7d: 14 spike hours, 22 hours at 6.8%, 132 at 6% -> 15.016 / 168.
+    let week = usdc.get(RateBasis::Apy, w168).expect("7d window covered");
+    assert_eq!(
+        week.value.round_dp(10),
+        Decimal::from_str_exact("0.0893809524").unwrap()
+    );
+    for r in [day, week] {
+        assert_eq!(r.as_of, Timestamp(NOW - 3600), "dated at the newest point");
+        assert_eq!(r.source, Source::Api);
+        assert_eq!(r.basis, RateBasis::Apy);
+    }
+    assert_eq!(usdc.len(), 3);
+
+    // The supplied SOL leg: its history failed, so only the instantaneous rate remains.
+    let sol = p.supplied[0].rates();
+    assert_eq!(sol.len(), 1);
+    assert_eq!(
+        instant(sol),
+        Some(Decimal::from_str_exact("0.045").unwrap())
+    );
+}
+
+#[tokio::test]
+async fn rate_history_failure_never_fails_the_read() {
+    let p = read_lending(&rated_ctx(None)).await;
+    let usdc = p.borrowed[0].rates();
+    assert_eq!(usdc.len(), 1, "only the instantaneous rate");
+    assert_eq!(
+        instant(usdc),
+        Some(Decimal::from_str_exact("0.089").unwrap())
+    );
+    assert_eq!(
+        p.borrowed[0].amount.amount,
+        Decimal::from_str_exact("200.45").unwrap()
+    );
+}
+
+#[tokio::test]
+async fn sparse_rate_history_omits_the_uncovered_window_only() {
+    // Keep only the newest 30 hours: the 24h window is covered, the 7d window is not.
+    let full = usdc_rate_history();
+    let json: serde_json::Value = serde_json::from_str(&full).unwrap();
+    let recent: Vec<serde_json::Value> = json["history"].as_array().unwrap()[..30].to_vec();
+    let sparse = serde_json::json!({ "history": recent }).to_string();
+
+    let p = read_lending(&rated_ctx(Some(sparse))).await;
+    let usdc = p.borrowed[0].rates();
+    assert!(usdc
+        .get(RateBasis::Apy, RateWindow::Trailing { hours: 24 })
+        .is_some());
+    assert!(
+        usdc.get(RateBasis::Apy, RateWindow::Trailing { hours: 168 })
+            .is_none(),
+        "an uncovered window is omitted, never filled from another"
+    );
 }

@@ -8,6 +8,56 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.1] - 2026-10-15
+
+### Changed
+
+- **Breaking: rates carry their basis, window, source and timestamp.** `SuppliedAsset::apy`,
+  `BorrowedAsset::apy`, `YieldPosition::apy`, `StakePosition::apy` and `LiquidityPosition::apr`
+  (`Option<Decimal>`) and their `with_apy` / `with_apr` builders are replaced by `rates: Rates` with
+  `with_rates(Rates)`, `with_rate(Rate)` and a `rates()` accessor. A `Rate` is a fraction plus its
+  `RateBasis` (`Apy` / `Apr`, never converted into each other), its `RateWindow` (`Instant`,
+  `Trailing { hours }`, `Epoch { hours }`, `Implied`), the `Source` that produced it (independent of
+  the reading's own source, so an API rate on an on-chain reading is labelled as such) and `as_of`
+  (the upstream timestamp when the response has one, else the read time). `Rates` holds at most one
+  rate per `(basis, window)`: `insert` replaces and returns a duplicate, ordering is by basis then
+  window, and `get(basis, window)` never substitutes another window. There is no single-number
+  accessor: a consumer picks the window it means.
+- **Morpho collateral is an explicit `0` Instant APY sourced `OnChain`.** Morpho Blue never lends
+  collateral (`supplyCollateral` only credits `position.collateral`, which accrues no interest), so
+  the zero is a contract rule rather than an API value. A yield-bearing collateral token's own yield
+  (the API's `collateralAsset.yield.apr`) is not reported here.
+
+### Fixed
+
+- **Lido and ether.fi rates are APRs.** Both publish simple APRs that were stored as APY. Lido's
+  `apr/last` is now an `Apr` over a 24h `Epoch` dated at the oracle report's `timeUnix`; ether.fi's
+  latest APR is an `Apr` over an `Epoch` of unstated length, dated at the read (the API returns no
+  timestamp).
+- **Ethena's yield is dated at its DeFiLlama point**, not at the read, as an `Apy` over a 24h
+  `Epoch`. Lido, ether.fi and Ethena parse the published number from serde_json's shortest round-trip
+  literal instead of by `f64` arithmetic.
+
+### Added
+
+- **Kamino trailing APYs.** For every reserve a wallet supplies or borrows, the adapter fetches the
+  reserve's hourly `metrics/history` for the last 7 days (at most 4 requests at once) and adds 24h
+  and 168h `Trailing` supply/borrow APYs, the mean of `supplyInterestAPY` / `borrowInterestAPY` over
+  the window ending at the newest point and dated at it. A window is emitted only when it holds at
+  least `MIN_TRAILING_COVERAGE_PCT` (90%) of its clock hours and the newest point is not in the
+  future and at most `MAX_RATE_POINT_AGE_SECS` (3h) old. The instantaneous APY from `reserves/metrics` stays as
+  `Instant`. A failed or malformed history leaves the trailing rates out and never fails the read.
+- **Lido 7-day APR**: `apr/sma`, the mean of the last 7 daily oracle reports, as a 168h `Trailing`
+  `Apr` dated at the newest report. Omitted when the response lists fewer than 7 reports or the
+  newest is more than 48h old.
+- **Ethena 7-day APY**: the mean of the newest 7 distinct UTC days of DeFiLlama points (the newest
+  point of each day), as a 168h `Trailing` `Apy`, emitted when those days span at most 8 days and
+  the newest is at most 48h old.
+- **Morpho trailing APYs**: the market state's `dailySupplyApy` / `dailyBorrowApy`,
+  `weeklySupplyApy` / `weeklyBorrowApy` and `monthlySupplyApy` / `monthlyBorrowApy` (rewards
+  excluded) as 24h, 168h and 720h `Trailing` APYs, dated with the instantaneous ones at the state's
+  `timestamp`. A null field leaves that window out.
+
 ## [0.2.5] - 2026-10-13
 
 ### Fixed
@@ -416,7 +466,9 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.1...HEAD
+[0.3.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.5...v0.3.0-beta.1
+[0.2.5]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.1...v0.2.2

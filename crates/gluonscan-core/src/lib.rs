@@ -21,6 +21,7 @@ pub mod history;
 pub mod hygiene;
 pub mod model;
 pub mod ports;
+pub mod rate;
 
 mod chain;
 pub use chain::{Chain, Ecosystem};
@@ -33,6 +34,7 @@ pub use model::{
     Timestamp, Token, TokenAddress, WalletBalance, YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
+pub use rate::{Rate, RateBasis, RateWindow, Rates};
 
 pub use alloy_primitives::{self, Address, U256};
 

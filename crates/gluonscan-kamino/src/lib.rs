@@ -10,17 +10,24 @@
 //! predates the obligation's last on-chain update, fails the read as retryable. The health factor
 //! is derived (`borrowLiquidationLimit / borrowFactorAdjustedDebt`) since the API does not expose
 //! it directly.
+//!
+//! Each leg carries the reserve's instantaneous supply/borrow APY from `reserves/metrics`, plus the
+//! 24h and 7d trailing means of the reserve's hourly `metrics/history`, each emitted only when the
+//! window holds at least [`MIN_TRAILING_COVERAGE_PCT`] of its hourly points and the newest point is
+//! at most [`MAX_RATE_POINT_AGE_SECS`] old. The instantaneous borrow APY swings with utilization within a
+//! day, so a single sample can sit far from what the debt actually accrued.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 
 use alloy_primitives::U256;
 use async_trait::async_trait;
+use futures_util::stream::{self, StreamExt};
 use gluonscan_core::{
     Amount, BorrowedAsset, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail,
     Error, EventKind, History, HistoryEvent, LendingPosition, Money, Position, Protocol,
-    ProtocolAdapter, Provenance, Reading, Source, Staleness, SuppliedAsset, Timestamp, Token,
-    Wallet,
+    ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading, Source, Staleness,
+    SuppliedAsset, Timestamp, Token, Wallet,
 };
 use gluonscan_solana::get_mint_decimals;
 use rust_decimal::Decimal;
@@ -48,6 +55,17 @@ pub const MAX_POINT_AGE_SECS: i64 = 4 * 3600;
 /// How far back the live-point request looks; wider than [`MAX_POINT_AGE_SECS`] so an aged point
 /// is reported as stale instead of as missing.
 const POINT_LOOKBACK_SECS: i64 = 12 * 3600;
+
+/// Trailing windows, in hours, averaged from a reserve's hourly rate history.
+const TRAILING_WINDOWS: &[u32] = &[24, 168];
+/// Share of a window's hourly points, in percent, that must be present for its mean to be emitted.
+pub const MIN_TRAILING_COVERAGE_PCT: u64 = 90;
+/// Oldest newest-point accepted for a trailing mean; older history yields no trailing rate.
+pub const MAX_RATE_POINT_AGE_SECS: i64 = 3 * 3600;
+/// How far back a reserve's rate history is requested: the longest window plus a margin.
+const RATE_LOOKBACK_SECS: i64 = (168 + 4) * 3600;
+/// Reserve rate histories fetched at once.
+const RATE_HISTORY_CONCURRENCY: usize = 4;
 
 /// Kamino adapter backed by the public HTTP API + on-chain mint decimals.
 #[derive(Debug, Default, Clone)]
@@ -137,6 +155,7 @@ impl ProtocolAdapter for KaminoApi {
                 })?;
             let reserve_map = build_reserve_map(&reserves)?;
 
+            let mut obligations = Vec::with_capacity(items.len());
             for ob in items {
                 // An emptied obligation stays listed but holds no legs: nothing to read live.
                 let live = if holds_legs(ob)? {
@@ -144,9 +163,27 @@ impl ProtocolAdapter for KaminoApi {
                 } else {
                     serde_json::Value::Null
                 };
+                obligations.push((ob, live));
+            }
+
+            let held: BTreeSet<String> = obligations
+                .iter()
+                .flat_map(|(_, live)| {
+                    live_reserves(live, "deposits")
+                        .into_iter()
+                        .chain(live_reserves(live, "borrows"))
+                })
+                .collect();
+            let trailing = trailing_rates(self.base(), market, &held, cx).await;
+            let rates = LegRates {
+                reserves: &reserve_map,
+                trailing: &trailing,
+                read_at: cx.clock.now(),
+            };
+
+            for (ob, live) in &obligations {
                 positions.push(Position::Lending(
-                    parse_obligation(ob, &live, market, &reserve_map, rpc, &mut decimals_cache)
-                        .await?,
+                    parse_obligation(ob, live, market, &rates, rpc, &mut decimals_cache).await?,
                 ));
             }
         }
@@ -383,15 +420,190 @@ fn obligation_address(ob: &serde_json::Value) -> Result<&str, Error> {
             message: "Kamino obligation missing `obligationAddress`".into(),
         })?;
     // It is interpolated into a request path, so only base58 characters are accepted.
-    if !address
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() && !matches!(b, b'0' | b'O' | b'I' | b'l'))
-    {
+    if !is_base58(address) {
         return Err(Error::Integrity {
             message: format!("Kamino obligation address {address:?} is not base58"),
         });
     }
     Ok(address)
+}
+
+/// Trailing supply and borrow rates of one reserve.
+#[derive(Debug, Default)]
+struct ReserveRates {
+    supply: Rates,
+    borrow: Rates,
+}
+
+/// Everything needed to rate a leg: the reserves' instantaneous APYs and their trailing means.
+struct LegRates<'a> {
+    reserves: &'a HashMap<String, ReserveMeta>,
+    trailing: &'a HashMap<String, ReserveRates>,
+    read_at: Timestamp,
+}
+
+impl LegRates<'_> {
+    /// The leg's rates: the trailing means of its reserve, plus the instantaneous APY from
+    /// `reserves/metrics`, which carries no timestamp and is dated at the read.
+    fn for_leg(&self, reserve: &str, borrow: bool) -> Rates {
+        let trailing = self.trailing.get(reserve);
+        let meta = self.reserves.get(reserve);
+        let (mut rates, instant) = if borrow {
+            (
+                trailing.map(|t| t.borrow.clone()).unwrap_or_default(),
+                meta.and_then(|m| m.borrow_apy),
+            )
+        } else {
+            (
+                trailing.map(|t| t.supply.clone()).unwrap_or_default(),
+                meta.and_then(|m| m.supply_apy),
+            )
+        };
+        if let Some(apy) = instant {
+            rates.insert(Rate::new(
+                apy,
+                RateBasis::Apy,
+                RateWindow::Instant,
+                Source::Api,
+                self.read_at,
+            ));
+        }
+        rates
+    }
+}
+
+/// The trailing rates of every `held` reserve, fetched concurrently. Best-effort: a reserve whose
+/// history cannot be fetched or parsed just has no trailing rates; the read never fails over them.
+async fn trailing_rates(
+    base: &str,
+    market: &str,
+    held: &BTreeSet<String>,
+    cx: &Ctx,
+) -> HashMap<String, ReserveRates> {
+    let now = cx.clock.now().0;
+    // Built eagerly from owned values: a lazy `map` over borrowed items makes the future
+    // higher-ranked over their lifetime, which the `Send` bound of the adapter future rejects.
+    let mut fetches = Vec::with_capacity(held.len());
+    for reserve in held {
+        if is_base58(reserve) {
+            fetches.push(reserve_trailing_rates(
+                base,
+                market,
+                reserve.clone(),
+                now,
+                cx,
+            ));
+        }
+    }
+    stream::iter(fetches)
+        .buffered(RATE_HISTORY_CONCURRENCY)
+        .collect()
+        .await
+}
+
+async fn reserve_trailing_rates(
+    base: &str,
+    market: &str,
+    reserve: String,
+    now: i64,
+    cx: &Ctx,
+) -> (String, ReserveRates) {
+    let rates = reserve_history(base, market, &reserve, now, cx)
+        .await
+        .map(|hist| reserve_rates(&hist, now))
+        .unwrap_or_default();
+    (reserve, rates)
+}
+
+async fn reserve_history(
+    base: &str,
+    market: &str,
+    reserve: &str,
+    now: i64,
+    cx: &Ctx,
+) -> Option<serde_json::Value> {
+    let url = format!(
+        "{base}/kamino-market/{market}/reserves/{reserve}/metrics/history?env=mainnet-beta&start={}&end={}&frequency=hour",
+        rfc3339(now - RATE_LOOKBACK_SECS),
+        rfc3339(now + 3600)
+    );
+    let raw = cx.http.get(&url, &[]).await.ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// The trailing APYs of a reserve's hourly history (`{"history":[{"timestamp","metrics":{...}}]}`),
+/// one per [`TRAILING_WINDOWS`] entry that passes [`trailing_mean`]'s coverage rule.
+fn reserve_rates(hist: &serde_json::Value, now: i64) -> ReserveRates {
+    let mut supply = BTreeMap::new();
+    let mut borrow = BTreeMap::new();
+    for point in hist
+        .get("history")
+        .and_then(|h| h.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let ts = snapshot_ts(point);
+        if ts <= 0 {
+            continue;
+        }
+        if let Some(apy) = decimal_at(point, "/metrics/supplyInterestAPY") {
+            supply.insert(ts, apy);
+        }
+        if let Some(apy) = decimal_at(point, "/metrics/borrowInterestAPY") {
+            borrow.insert(ts, apy);
+        }
+    }
+    let windows = |points: &BTreeMap<i64, Decimal>| -> Rates {
+        TRAILING_WINDOWS
+            .iter()
+            .filter_map(|&hours| {
+                let (mean, as_of) = trailing_mean(points, hours, now)?;
+                Some(Rate::new(
+                    mean,
+                    RateBasis::Apy,
+                    RateWindow::Trailing { hours },
+                    Source::Api,
+                    Timestamp(as_of),
+                ))
+            })
+            .collect()
+    };
+    ReserveRates {
+        supply: windows(&supply),
+        borrow: windows(&borrow),
+    }
+}
+
+/// The arithmetic mean of the hourly `points` (unix seconds -> value) in the `hours` window ending
+/// at the newest point, and that point's timestamp. `None` unless the newest point is not after
+/// `now` and at most [`MAX_RATE_POINT_AGE_SECS`] old, and the window's points fall in at least
+/// [`MIN_TRAILING_COVERAGE_PCT`] of its `hours` distinct clock hours.
+fn trailing_mean(points: &BTreeMap<i64, Decimal>, hours: u32, now: i64) -> Option<(Decimal, i64)> {
+    let (&newest, _) = points.last_key_value()?;
+    if hours == 0 || newest > now || now - newest > MAX_RATE_POINT_AGE_SECS {
+        return None;
+    }
+    let start = newest - i64::from(hours) * 3600;
+    let mut count = 0u64;
+    let mut sum = Decimal::ZERO;
+    // Coverage is counted in clock hours, so sub-hourly points cannot pass a few hours off as a day.
+    let mut covered_hours = BTreeSet::new();
+    for (ts, value) in points.range(start + 1..=newest) {
+        count += 1;
+        sum = sum.checked_add(*value)?;
+        covered_hours.insert(ts.div_euclid(3600));
+    }
+    if (covered_hours.len() as u64) * 100 < u64::from(hours) * MIN_TRAILING_COVERAGE_PCT {
+        return None;
+    }
+    Some((sum.checked_div(Decimal::from(count))?, newest))
+}
+
+/// Whether `s` is non-empty base58, so it is safe to interpolate into a request path.
+fn is_base58(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() && !matches!(b, b'0' | b'O' | b'I' | b'l'))
 }
 
 fn rfc3339(secs: i64) -> String {
@@ -540,7 +752,7 @@ async fn parse_obligation(
     ob: &serde_json::Value,
     live: &serde_json::Value,
     market: &str,
-    reserves: &HashMap<String, ReserveMeta>,
+    rates: &LegRates<'_>,
     rpc: &dyn ChainProvider,
     decimals_cache: &mut HashMap<String, u8>,
 ) -> Result<LendingPosition, Error> {
@@ -576,14 +788,15 @@ async fn parse_obligation(
         let Some((raw, reserve, usd)) = live_leg(dep)? else {
             continue;
         };
-        let (amount, meta) = build_leg(reserve, raw, usd, reserves, rpc, decimals_cache).await?;
+        let (amount, meta) =
+            build_leg(reserve, raw, usd, rates.reserves, rpc, decimals_cache).await?;
         // Per-asset liquidation threshold is not exposed by reserves/metrics (only maxLtv);
         // a consumer recomputes it from the reserve config if needed.
         supplied.push(
             SuppliedAsset::new(amount)
                 .with_max_ltv(meta.and_then(|m| m.max_ltv))
                 .with_collateral(true, true)
-                .with_apy(meta.and_then(|m| m.supply_apy)),
+                .with_rates(rates.for_leg(reserve, false)),
         );
     }
 
@@ -592,8 +805,8 @@ async fn parse_obligation(
         let Some((raw, reserve, usd)) = live_leg(bor)? else {
             continue;
         };
-        let (amount, meta) = build_leg(reserve, raw, usd, reserves, rpc, decimals_cache).await?;
-        borrowed.push(BorrowedAsset::new(amount).with_apy(meta.and_then(|m| m.borrow_apy)));
+        let (amount, _) = build_leg(reserve, raw, usd, rates.reserves, rpc, decimals_cache).await?;
+        borrowed.push(BorrowedAsset::new(amount).with_rates(rates.for_leg(reserve, true)));
     }
 
     if !borrowed.is_empty() && health_factor.is_none() {
@@ -805,6 +1018,125 @@ mod tests {
 
     fn d(s: &str) -> Decimal {
         Decimal::from_str(s).unwrap()
+    }
+
+    const H: i64 = 3600;
+
+    /// `n` consecutive hourly points of `value`, the newest at `newest`.
+    fn hourly(newest: i64, n: i64, value: &str) -> BTreeMap<i64, Decimal> {
+        (0..n).map(|i| (newest - i * H, d(value))).collect()
+    }
+
+    #[test]
+    fn trailing_mean_coverage_boundary_is_ninety_percent() {
+        let newest = 1_000 * H;
+        // 10h window: 9 of 10 points is exactly 90% and passes; 8 does not.
+        assert_eq!(
+            trailing_mean(&hourly(newest, 9, "0.05"), 10, newest),
+            Some((d("0.05"), newest))
+        );
+        assert_eq!(trailing_mean(&hourly(newest, 8, "0.05"), 10, newest), None);
+        // 24h: 21.6 points needed, so 22 passes and 21 does not.
+        assert!(trailing_mean(&hourly(newest, 22, "0.05"), 24, newest).is_some());
+        assert_eq!(trailing_mean(&hourly(newest, 21, "0.05"), 24, newest), None);
+        // 168h: 151.2 needed, so 152 passes and 151 does not.
+        assert!(trailing_mean(&hourly(newest, 152, "0.05"), 168, newest).is_some());
+        assert_eq!(
+            trailing_mean(&hourly(newest, 151, "0.05"), 168, newest),
+            None
+        );
+    }
+
+    #[test]
+    fn trailing_mean_counts_only_points_inside_the_window() {
+        let newest = 1_000 * H;
+        // 30 points but a 24h window: only the newest 24 are averaged. The 6 older ones carry a
+        // different value, so including them would move the mean.
+        let mut points = hourly(newest, 24, "0.06");
+        points.extend((24..30).map(|i| (newest - i * H, d("0.90"))));
+        assert_eq!(
+            trailing_mean(&points, 24, newest),
+            Some((d("0.06"), newest))
+        );
+        // A gap inside the window counts against coverage, it is not filled from outside.
+        let gappy: BTreeMap<i64, Decimal> = hourly(newest, 30, "0.06")
+            .into_iter()
+            .filter(|(ts, _)| (newest - ts) / H % 8 != 3)
+            .collect();
+        assert_eq!(trailing_mean(&gappy, 24, newest), None);
+    }
+
+    #[test]
+    fn trailing_mean_rejects_a_stale_newest_point() {
+        let newest = 1_000 * H;
+        let points = hourly(newest, 24, "0.05");
+        assert!(trailing_mean(&points, 24, newest + MAX_RATE_POINT_AGE_SECS).is_some());
+        assert_eq!(
+            trailing_mean(&points, 24, newest + MAX_RATE_POINT_AGE_SECS + 1),
+            None
+        );
+    }
+
+    #[test]
+    fn trailing_mean_counts_distinct_hours_not_points() {
+        let newest = 1_000 * H;
+        // 24 points five minutes apart cover only 2 clock hours of a 24h window.
+        let dense: BTreeMap<i64, Decimal> =
+            (0..24).map(|i| (newest - i * 300, d("0.05"))).collect();
+        assert_eq!(trailing_mean(&dense, 24, newest), None);
+    }
+
+    #[test]
+    fn trailing_mean_rejects_a_newest_point_after_now() {
+        let newest = 1_000 * H;
+        let points = hourly(newest, 24, "0.05");
+        assert!(trailing_mean(&points, 24, newest).is_some());
+        assert_eq!(trailing_mean(&points, 24, newest - 1), None);
+    }
+
+    #[test]
+    fn trailing_mean_of_empty_history_is_none() {
+        assert_eq!(trailing_mean(&BTreeMap::new(), 24, 1_000 * H), None);
+    }
+
+    #[test]
+    fn reserve_rates_skip_unusable_points_and_windows_independently() {
+        let newest = 1_000 * H;
+        // 30 hourly points: enough for 24h, not for 168h. Borrow is missing from one point.
+        let history: Vec<serde_json::Value> = (0..30)
+            .map(|i| {
+                let ts = rfc3339(newest - i * H);
+                if i == 5 {
+                    serde_json::json!({"timestamp": ts, "metrics": {"supplyInterestAPY": 0.05}})
+                } else {
+                    serde_json::json!({"timestamp": ts, "metrics": {"supplyInterestAPY": 0.05, "borrowInterestAPY": 0.07}})
+                }
+            })
+            .chain([serde_json::json!({"timestamp": "garbage", "metrics": {"borrowInterestAPY": 9}})])
+            .collect();
+        let rates = reserve_rates(&serde_json::json!({ "history": history }), newest);
+        let w24 = RateWindow::Trailing { hours: 24 };
+        assert_eq!(
+            rates.supply.get(RateBasis::Apy, w24).unwrap().value,
+            d("0.05")
+        );
+        assert_eq!(
+            rates.borrow.get(RateBasis::Apy, w24).unwrap().value,
+            d("0.07")
+        );
+        assert_eq!(
+            rates.borrow.get(RateBasis::Apy, w24).unwrap().as_of,
+            Timestamp(newest)
+        );
+        assert!(rates
+            .supply
+            .get(RateBasis::Apy, RateWindow::Trailing { hours: 168 })
+            .is_none());
+        assert_eq!(rates.supply.len(), 1);
+        assert_eq!(rates.borrow.len(), 1);
+        assert!(reserve_rates(&serde_json::json!({}), newest)
+            .supply
+            .is_empty());
     }
 
     #[test]
