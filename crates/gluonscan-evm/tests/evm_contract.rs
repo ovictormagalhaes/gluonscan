@@ -6,8 +6,8 @@ use std::str::FromStr;
 use alloy_primitives::{hex, Address, U256};
 use gluonscan_core::{Chain, Error};
 use gluonscan_evm::{
-    decode_two_u256, decode_u256, encode_balance_of, encode_collect, encode_selector_with_address,
-    eth_call, eth_get_balance,
+    convert_amount, decode_two_u256, decode_u256, encode_balance_of, encode_collect,
+    encode_selector_with_address, encode_selector_with_u256, eth_call, eth_get_balance,
 };
 use gluonscan_testing::{Match, MockChainProvider};
 
@@ -256,4 +256,63 @@ async fn eth_get_balance_non_hex_quantity_is_integrity() {
         matches!(err, Error::Integrity { .. }),
         "expected Integrity, got {err:?}"
     );
+}
+
+#[test]
+fn encode_selector_with_u256_exact_calldata() {
+    // Arrange
+    let selector = [0x07, 0xa2, 0xd1, 0x3a];
+    let amount = U256::from(0x0102_0304u64);
+
+    // Act
+    let data = encode_selector_with_u256(selector, amount);
+
+    // Assert
+    let expected = "07a2d13a0000000000000000000000000000000000000000000000000000000001020304";
+    assert_eq!(hex::encode(&data), expected);
+    assert_eq!(data.len(), 4 + 32);
+}
+
+const RATE_REPLY: &str = r#"{"jsonrpc":"2.0","id":1,"result":"0x00000000000000000000000000000000000000000000000000000000000003e8"}"#;
+const ZERO_REPLY: &str = r#"{"jsonrpc":"2.0","id":1,"result":"0x0000000000000000000000000000000000000000000000000000000000000000"}"#;
+const ERROR_REPLY: &str =
+    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"execution reverted"}}"#;
+
+async fn convert_with(reply: &str) -> Option<U256> {
+    let rpc = MockChainProvider::new().on(Match::method("eth_call"), reply);
+    convert_amount(
+        &rpc,
+        Chain::Ethereum,
+        addr(),
+        [0x07, 0xa2, 0xd1, 0x3a],
+        U256::from(800u64),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn convert_amount_returns_the_converted_word() {
+    // Arrange
+    let reply = RATE_REPLY;
+
+    // Act
+    let converted = convert_with(reply).await;
+
+    // Assert
+    assert_eq!(converted, Some(U256::from(1000u64)));
+}
+
+#[tokio::test]
+async fn convert_amount_is_none_on_a_revert_or_a_zero_answer() {
+    // Arrange
+    let replies = [ERROR_REPLY, ZERO_REPLY];
+
+    // Act
+    let mut results = Vec::new();
+    for reply in replies {
+        results.push(convert_with(reply).await);
+    }
+
+    // Assert
+    assert_eq!(results, vec![None, None]);
 }

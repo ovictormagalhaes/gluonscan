@@ -346,3 +346,61 @@ async fn one_gwei_steth_is_kept() {
     };
     assert_eq!(p.staked[0].raw, U256::from(1_000_000_000u64));
 }
+
+// `getStETHByWstETH(773,350.769846533726284562 wstETH)` captured from mainnet at block 26,192,046
+// (2026-10-14): 963,839.838215544083524715 stETH.
+const WSTETH_TO_STETH: &str = "0x00000000000000000000000000000000000000000000cc19dcc166b6b2eb2c6b";
+
+async fn read_with_rate(rate_reply: String) -> gluonscan_core::Reading {
+    let rpc = MockChainProvider::new()
+        .on(eth_call_to("bb2952fc"), rate_reply) // getStETHByWstETH, before the `to` routes
+        .on(eth_call_to("ae7ab96520de3a18"), ok(STETH_BAL))
+        .on(eth_call_to("7f39c581f595b53c"), ok(WSTETH_BAL));
+    let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    Lido::new()
+        .read(
+            &Wallet::Evm(Address::ZERO),
+            Chain::Ethereum,
+            Detail::Full,
+            &cx,
+        )
+        .await
+        .expect("read")
+        .into_inner()
+}
+
+#[tokio::test]
+async fn wsteth_carries_the_steth_it_unwraps_to_and_steth_carries_none() {
+    // Arrange
+    let rate = ok(WSTETH_TO_STETH);
+
+    // Act
+    let reading = read_with_rate(rate).await;
+
+    // Assert
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    assert_eq!(p.underlying.len(), p.staked.len());
+    assert!(p.underlying[0].is_none(), "stETH rebases: no underlying");
+    let steth = p.underlying[1].as_ref().expect("wstETH underlying");
+    assert_eq!(steth.token.symbol, "stETH");
+    assert_eq!(steth.token.address, evm(STETH_ADDR));
+    assert_eq!(steth.amount.to_string(), "963839.838215544083524715");
+}
+
+#[tokio::test]
+async fn a_failed_rate_read_leaves_the_underlying_unknown_and_keeps_the_position() {
+    // Arrange
+    let rate = RPC_ERROR.to_string();
+
+    // Act
+    let reading = read_with_rate(rate).await;
+
+    // Assert
+    let Position::Stake(p) = &reading.positions[0] else {
+        panic!("expected a stake position");
+    };
+    assert_eq!(p.staked.len(), 2);
+    assert_eq!(p.underlying, vec![None, None]);
+}

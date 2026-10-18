@@ -96,6 +96,35 @@ pub fn encode_selector_with_address(selector: [u8; 4], arg: Address) -> Vec<u8> 
     data
 }
 
+/// Encode a 4-byte selector followed by one `uint256` argument (e.g. `convertToAssets(shares)`).
+pub fn encode_selector_with_u256(selector: [u8; 4], arg: U256) -> Vec<u8> {
+    let mut data = selector.to_vec();
+    data.extend_from_slice(&arg.to_be_bytes::<32>());
+    data
+}
+
+/// What `amount` of a wrapper converts to through a `uint256 -> uint256` view, an exchange-rate
+/// read such as `convertToAssets(shares)`. Best-effort: `None` on any failure or a zero answer,
+/// since a rate only decorates a balance and must never fail the read it belongs to.
+pub async fn convert_amount(
+    rpc: &dyn ChainProvider,
+    chain: Chain,
+    contract: Address,
+    selector: [u8; 4],
+    amount: U256,
+) -> Option<U256> {
+    let out = eth_call(
+        rpc,
+        chain,
+        None,
+        contract,
+        encode_selector_with_u256(selector, amount),
+    )
+    .await
+    .ok()?;
+    decode_u256(&out).ok().filter(|v| !v.is_zero())
+}
+
 /// Encode an ERC-20 `balanceOf(owner)` call.
 pub fn encode_balance_of(owner: Address) -> Vec<u8> {
     encode_selector_with_address([0x70, 0xa0, 0x82, 0x31], owner)

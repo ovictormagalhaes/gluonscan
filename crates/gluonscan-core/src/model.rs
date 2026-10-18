@@ -337,6 +337,21 @@ pub struct WalletBalance {
     pub possible_spam: Option<bool>,
     /// The indexer considers the token contract verified, when it says so.
     pub verified_contract: Option<bool>,
+    /// Set when a hygiene gate would hide this balance (no price, or worth less than the dust
+    /// floor). The balance is real and still reported, so a consumer that saw the token held
+    /// before can keep it instead of reading its absence as a transfer; a consumer that never saw
+    /// it can drop it as noise.
+    pub gated: Option<WalletGate>,
+}
+
+/// Why a wallet hygiene gate would hide a balance. See [`WalletBalance::gated`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalletGate {
+    /// No price for an unverified token: its value is unknown, so it carries no USD amount.
+    Unpriced,
+    /// Priced, but worth less than the dust floor.
+    BelowDust,
 }
 
 impl WalletBalance {
@@ -346,7 +361,15 @@ impl WalletBalance {
             amount,
             possible_spam: None,
             verified_contract: None,
+            gated: None,
         }
+    }
+
+    /// Mark the balance as hidden by a hygiene gate (builder-style). See [`WalletBalance::gated`].
+    #[must_use]
+    pub fn with_gated(mut self, gated: Option<WalletGate>) -> Self {
+        self.gated = gated;
+        self
     }
 
     /// Attach the indexer's spam flag (builder-style).
@@ -938,6 +961,13 @@ pub struct StakePosition {
     /// affect a position's value, so a source that can't supply them leaves this empty rather than
     /// failing the read.
     pub rates: Rates,
+    /// What each `staked` amount redeems for, index-aligned with `staked`. `Some` only for a
+    /// wrapper whose exchange rate grows (wstETH → stETH, weETH → eETH, sUSDe → USDe): the change
+    /// in this amount at a constant wrapper balance is the staking yield. `None` for a rebasing
+    /// token (its balance already is the underlying) or when the rate read failed. Like `rates` it
+    /// never changes the position's value, so a failed rate read never fails the balance read.
+    /// Empty when the source exposes no rate at all.
+    pub underlying: Vec<Option<Amount>>,
 }
 
 impl StakePosition {
@@ -947,7 +977,16 @@ impl StakePosition {
             staked,
             rewards: Vec::new(),
             rates: Rates::new(),
+            underlying: Vec::new(),
         }
+    }
+
+    /// Set what each staked amount redeems for, index-aligned with `staked` (builder-style). See
+    /// [`StakePosition::underlying`].
+    #[must_use]
+    pub fn with_underlying(mut self, underlying: Vec<Option<Amount>>) -> Self {
+        self.underlying = underlying;
+        self
     }
 
     /// Set the claimable staking rewards (builder-style).

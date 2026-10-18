@@ -1,9 +1,10 @@
 //! Wallet-token sources backed by Alchemy's Data API, with full wallet hygiene applied and USD
 //! attached from the bundled prices. [`AlchemyWallet`] reads EVM ERC-20 balances; [`AlchemySolanaWallet`]
 //! reads SPL balances (including native SOL). Both are opinionated, batteries-included sources: they
-//! drop disguised (Unicode-spoofed), implausible (value > $1e10 or unit price > $1e12), unpriced, and
-//! sub-$1 dust leaves, and sanitize the surviving display strings — so a scam airdrop can neither
-//! inflate a total nor render a hidden symbol. A non-hex balance from a succeeded response fails
+//! drop disguised (Unicode-spoofed) and implausible (value > $1e10 or unit price > $1e12) leaves,
+//! report unpriced and sub-$1 dust leaves flagged with [`WalletBalance::gated`] (a consumer keeps a
+//! flagged leaf it saw held before and drops the rest as noise), and sanitize the surviving display
+//! strings — so a scam airdrop can neither inflate a total nor render a hidden symbol. A non-hex balance from a succeeded response fails
 //! closed (`Integrity`); an astronomical balance beyond `Decimal` range drops that leaf, not the chain.
 //!
 //! Unlike [`EvmWallet`](crate::EvmWallet) / [`SolanaWallet`](crate::SolanaWallet) (raw readers that
@@ -19,6 +20,7 @@ use gluonscan_core::hygiene::{is_spoofed_token, sanitize_display};
 use gluonscan_core::{
     Amount, Capability, Chain, Complete, Ctx, Detail, Error, Money, Position, Protocol,
     ProtocolAdapter, Provenance, Reading, Source, Staleness, Token, Wallet, WalletBalance,
+    WalletGate,
 };
 use rust_decimal::Decimal;
 
@@ -137,8 +139,9 @@ fn entry_errored(entry: &serde_json::Value) -> bool {
         .is_some_and(|s| !s.is_empty())
 }
 
-/// Apply the value/plausibility/dust gates to a priced amount and build the wallet position, or
-/// `None` if a gate drops it. `price` must be `> 0`.
+/// Apply the plausibility caps and the dust floor to a priced amount and build the wallet position.
+/// An implausible value or price (a scam or mis-decimaled mint) is dropped; a balance under the
+/// dust floor is kept but flagged [`WalletGate::BelowDust`]. A non-positive price is no price.
 fn priced_position(
     token: Token,
     raw: U256,
@@ -146,20 +149,33 @@ fn priced_position(
     price: Decimal,
 ) -> Option<Position> {
     if price <= Decimal::ZERO {
-        return None;
+        return unpriced_position(token, raw);
     }
     let value = price.checked_mul(amount_human)?;
     if value > Decimal::from(MAX_WALLET_TOKEN_VALUE_USD)
         || price > Decimal::from(MAX_WALLET_TOKEN_PRICE_USD)
-        || value < Decimal::from(WALLET_DUST_USD)
     {
         return None;
     }
+    let gated = (value < Decimal::from(WALLET_DUST_USD)).then_some(WalletGate::BelowDust);
     let amount = Amount::from_raw(token, raw)
         .ok()?
         .with_usd(Some(Money::usd(value)));
     Some(Position::Wallet(
-        WalletBalance::new(amount).with_verified_contract(Some(false)),
+        WalletBalance::new(amount)
+            .with_verified_contract(Some(false))
+            .with_gated(gated),
+    ))
+}
+
+/// An unverified token the indexer could not price: reported with no USD amount and flagged
+/// [`WalletGate::Unpriced`], never valued and never silently dropped.
+fn unpriced_position(token: Token, raw: U256) -> Option<Position> {
+    let amount = Amount::from_raw(token, raw).ok()?;
+    Some(Position::Wallet(
+        WalletBalance::new(amount)
+            .with_verified_contract(Some(false))
+            .with_gated(Some(WalletGate::Unpriced)),
     ))
 }
 
@@ -189,7 +205,8 @@ impl AlchemyWallet {
     }
 }
 
-/// One EVM Alchemy token entry -> a clean [`Position::Wallet`], or `None` if a hygiene gate drops it.
+/// One EVM Alchemy token entry -> a clean [`Position::Wallet`] (flagged when gated), or `None` when
+/// it is spoofed or implausible.
 /// `Err` only on data corruption (non-hex balance) so the caller fails closed.
 fn evm_entry_to_position(entry: &serde_json::Value) -> Result<Option<Position>, Error> {
     if entry_errored(entry) {
@@ -237,10 +254,11 @@ fn evm_entry_to_position(entry: &serde_json::Value) -> Result<Option<Position>, 
     let Ok(amount) = Amount::from_raw(token.clone(), raw) else {
         return Ok(None);
     };
-    // Alchemy carries no verified flag, so every token is treated as unverified: it must be priced.
+    // Alchemy carries no verified flag, so every token is treated as unverified: without a price it
+    // is reported flagged, not valued.
     let Some(price) = usd_price(entry.get("tokenPrices").unwrap_or(&serde_json::Value::Null))
     else {
-        return Ok(None);
+        return Ok(unpriced_position(token, raw));
     };
     Ok(priced_position(token, raw, amount.amount, price))
 }
@@ -454,13 +472,14 @@ impl ProtocolAdapter for AlchemySolanaWallet {
             }
         }
 
-        // Pass 2: apply price, plausibility and dust; an unpriced survivor is dropped.
+        // Pass 2: apply price, plausibility and dust; an unpriced survivor is reported flagged.
         let mut positions = Vec::new();
         for s in survivors {
-            let Some(price) = s.price else { continue };
-            if let Some(p) = priced_position(s.token, s.raw, s.amount, price) {
-                positions.push(p);
-            }
+            let position = match s.price {
+                Some(price) => priced_position(s.token, s.raw, s.amount, price),
+                None => unpriced_position(s.token, s.raw),
+            };
+            positions.extend(position);
         }
 
         let reading = Reading::new(

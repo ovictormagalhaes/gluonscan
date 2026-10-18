@@ -8,7 +8,8 @@
 //!
 //! stETH is rebasing (its `balanceOf` already tracks the ETH-equivalent, rewards included) and
 //! wstETH is its non-rebasing wrapper; both are priced directly by contract address downstream, so
-//! valuation stays in the pricing layer and this read never converts or fabricates an amount.
+//! valuation stays in the pricing layer and this read never values or fabricates an amount;
+//! `underlying` is the on-chain redemption amount, unpriced.
 //! Lido staking rewards are auto-compounded into the balance, never separately claimable, so
 //! `rewards` is always empty.
 
@@ -19,12 +20,14 @@ use gluonscan_core::{
     ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading, Source,
     StakePosition, Staleness, Timestamp, Token, Wallet,
 };
-use gluonscan_evm::{decode_u256, encode_balance_of, eth_call};
+use gluonscan_evm::{convert_amount, decode_u256, encode_balance_of, eth_call};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
 const STETH: Address = address!("ae7ab96520DE3A18E5e111B5EaAb095312D7fE84");
 const WSTETH: Address = address!("7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0");
+/// `getStETHByWstETH(uint256)`: the stETH a wstETH amount unwraps to.
+const GET_STETH_BY_WSTETH: [u8; 4] = [0xbb, 0x29, 0x52, 0xfc];
 
 const APR_LAST_URL: &str = "https://eth-api.lido.fi/v1/protocol/steth/apr/last";
 const APR_SMA_URL: &str = "https://eth-api.lido.fi/v1/protocol/steth/apr/sma";
@@ -165,6 +168,7 @@ impl ProtocolAdapter for Lido {
             decode_u256(&eth_call(rpc, chain, None, WSTETH, encode_balance_of(owner)).await?)?;
 
         let mut staked = Vec::new();
+        let mut underlying = Vec::new();
         let mut receipt_tokens = Vec::new();
         if !steth_raw.is_zero() {
             receipt_tokens.push(STETH);
@@ -174,6 +178,8 @@ impl ProtocolAdapter for Lido {
                 Token::evm("stETH", Some(STETH), 18),
                 steth_raw,
             )?);
+            // stETH rebases: its balance already is the underlying.
+            underlying.push(None);
         }
         if !wsteth_raw.is_zero() {
             receipt_tokens.push(WSTETH);
@@ -183,6 +189,12 @@ impl ProtocolAdapter for Lido {
                 Token::evm("wstETH", Some(WSTETH), 18),
                 wsteth_raw,
             )?);
+            let steth = convert_amount(rpc, chain, WSTETH, GET_STETH_BY_WSTETH, wsteth_raw).await;
+            underlying.push(
+                steth.and_then(|raw| {
+                    Amount::from_raw(Token::evm("stETH", Some(STETH), 18), raw).ok()
+                }),
+            );
         }
 
         // Empty balances are a valid "no position" result, not an error.
@@ -191,7 +203,9 @@ impl ProtocolAdapter for Lido {
         } else {
             let rates = fetch_rates(cx).await;
             vec![Position::Stake(
-                StakePosition::new(staked).with_rates(rates),
+                StakePosition::new(staked)
+                    .with_rates(rates)
+                    .with_underlying(underlying),
             )]
         };
 
