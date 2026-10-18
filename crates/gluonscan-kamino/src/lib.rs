@@ -35,10 +35,20 @@
 //!
 //! A daily point (stamped at the day's 00:00 UTC) carries the newest hourly point published inside
 //! that day, so the API revises it until the day's last hourly point (23:00) is published, about
-//! 1-2h after the UTC day closes. A point is final only [`HISTORY_DAY_SECS`] +
-//! [`HISTORY_SETTLE_SECS`] after its timestamp (by the context clock); before that it yields no
-//! events, since its amounts, and with them the event kind and id, could still change. A day's
-//! activity appears a few hours after that day has closed.
+//! 1-2h after the UTC day closes. Its amounts, and with them the event kind and id, can change
+//! until then, so a window yields events only once its newer point is final by both tests:
+//!
+//! - **settled:** at least [`HISTORY_DAY_SECS`] + [`HISTORY_SETTLE_SECS`] after its timestamp, by
+//!   the context clock; and
+//! - **succeeded:** a newer point exists in the series, or the series has been silent for
+//!   [`HISTORY_DAY_SECS`] + [`HISTORY_STALL_SECS`] after the point. Hours are published in order,
+//!   so the next day's point (which appears once that day's 00:00 hour is published) proves this
+//!   day's 23:00 hour was published; the clock alone cannot tell a late publication from a final
+//!   one. The stall bound accepts a point with no successor as final, so an obligation whose
+//!   series stops (closed, or a gap in the API's data) is not held back for good.
+//!
+//! A day's activity therefore appears a few hours after that day has closed, and the newest day
+//! of a series that has stopped appears [`HISTORY_STALL_SECS`] after that day has closed.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
@@ -104,14 +114,18 @@ pub const MAX_ACCRUAL_PER_DAY: Decimal = Decimal::from_parts(2, 0, 0, false, 3);
 /// uncapped bound would cover a real deposit or borrow (about 20% of the balance over 103 days), so
 /// a rise there is interest only within two days' bound.
 pub const MAX_ACCRUAL_GAP_SECS: u64 = 2 * HISTORY_DAY_SECS.unsigned_abs();
-/// Span of one daily history point. A point is final [`HISTORY_DAY_SECS`] +
-/// [`HISTORY_SETTLE_SECS`] after its timestamp.
+/// Span of one daily history point.
 pub const HISTORY_DAY_SECS: i64 = 86_400;
-/// How long after a day closes its daily point may still be revised: the point carries the newest
-/// hourly point published inside the day, and the day's last hourly point (23:00) is published
-/// about 1-2h after the day closes. The same margin as [`MAX_POINT_AGE_SECS`], which bounds how
-/// late an hourly point is published.
-pub const HISTORY_SETTLE_SECS: i64 = MAX_POINT_AGE_SECS;
+/// How long after a day closes its daily point may still be revised. The point carries the newest
+/// hourly point published inside the day; the API publishes each hourly point about an hour after
+/// its hour, so the day's last one (23:00) lands about 1-2h after the day closes. 4h leaves room
+/// for one late publication.
+pub const HISTORY_SETTLE_SECS: i64 = 4 * 3_600;
+/// How long after a day closes its daily point, with no newer point in the series, is accepted as
+/// final. A newer point proves the day's last hour was published; without one, a settled point may
+/// still be missing its last hours if publication stalled. A series silent for this long (a closed
+/// obligation, or a gap in the API's data) is taken as final instead of held back for good.
+pub const HISTORY_STALL_SECS: i64 = 2 * 86_400;
 
 /// Kamino adapter backed by the public HTTP API + on-chain mint decimals.
 #[derive(Debug, Default, Clone)]
@@ -342,6 +356,7 @@ impl ProtocolAdapter for KaminoApi {
         snaps.sort_by_key(|s| s.ts);
 
         let now = cx.clock.now();
+        let newest_ts = snaps.last().map_or(i64::MIN, |s| s.ts);
         let mut decimals_cache: HashMap<String, u8> = HashMap::new();
         let mut events: Vec<HistoryEvent> = Vec::new();
         for window in snaps.windows(2) {
@@ -349,11 +364,13 @@ impl ProtocolAdapter for KaminoApi {
             // A point is revised by the API until the day's last hourly point is published: its
             // delta (and so the event kind and id) is not final before then. A clock before the
             // point is the same case.
-            let settled_at = curr
-                .ts
-                .saturating_add(HISTORY_DAY_SECS)
-                .saturating_add(HISTORY_SETTLE_SECS);
-            if settled_at > now.0 {
+            let closed_at = curr.ts.saturating_add(HISTORY_DAY_SECS);
+            let settled = closed_at.saturating_add(HISTORY_SETTLE_SECS) <= now.0;
+            // Hours publish in order, so a newer point proves the day's last hour was published;
+            // without one, only a series silent past the stall bound is taken as final.
+            let succeeded =
+                newest_ts > curr.ts || closed_at.saturating_add(HISTORY_STALL_SECS) <= now.0;
+            if !(settled && succeeded) {
                 continue;
             }
             // Sorted, so never negative; equal timestamps allow no accrual.
@@ -1464,5 +1481,6 @@ mod tests {
         assert_eq!(HISTORY_DAY_SECS, 86_400);
         assert_eq!(MAX_ACCRUAL_GAP_SECS, 2 * 86_400);
         assert_eq!(HISTORY_SETTLE_SECS, 4 * 3_600);
+        assert_eq!(HISTORY_STALL_SECS, 2 * 86_400);
     }
 }

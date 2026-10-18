@@ -18,8 +18,9 @@ lockstep: one version, one tag, all crates.
 - **`gluonscan_kamino::MAX_ACCRUAL_PER_DAY`** (0.2%/day), the largest daily growth of a held
   balance, as a fraction of the previous balance, that Kamino history reads as interest;
   **`MAX_ACCRUAL_GAP_SECS`** (2 days), the most time between two points credited to accrual;
-  **`HISTORY_DAY_SECS`**, the span of one daily point; and **`HISTORY_SETTLE_SECS`** (4h), how long
-  after its day closes a daily point may still be revised.
+  **`HISTORY_DAY_SECS`**, the span of one daily point; **`HISTORY_SETTLE_SECS`** (4h), how long
+  after its day closes a daily point may still be revised; and **`HISTORY_STALL_SECS`** (2 days),
+  how long after its day closes a point with no newer point is accepted as final.
 
 ### Changed
 
@@ -48,9 +49,16 @@ lockstep: one version, one tag, all crates.
   the newest hourly point published inside its day, so the API revises it until the day's last
   hourly point (23:00) is published, about 1-2h after the UTC day closes. The event kind (so the
   id) now depends on the amount: one read could store a day as `supply_interest` and a later one as
-  `deposit`, or keep a partial amount. A point yields no events until `HISTORY_DAY_SECS` +
-  `HISTORY_SETTLE_SECS` (28h) after its timestamp by the context clock; a day's activity appears a
-  few hours after that day has closed.
+  `deposit`, or keep a partial amount. A point now yields no events until it is settled
+  (`HISTORY_DAY_SECS` + `HISTORY_SETTLE_SECS`, 28h, after its timestamp by the context clock) and
+  either a newer point exists in the series (hours publish in order, so the next day's point proves
+  the day's last hour was published) or the series has been silent for `HISTORY_DAY_SECS` +
+  `HISTORY_STALL_SECS` (3 days) after the point, so a stalled publication is not taken as final
+  and a series that stops is not held back for good. A day's activity appears a few hours after
+  that day has closed; the newest day of a series that has stopped appears two days after it
+  closed. Consumers reading incrementally must checkpoint on the newest returned event's
+  timestamp (as `since`), never on the read time: a day that was not final at one read is
+  returned by a later one with a timestamp older than that read.
 
 ## [0.3.0-beta.3] - 2026-10-18
 

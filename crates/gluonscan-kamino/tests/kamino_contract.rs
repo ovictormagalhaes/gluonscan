@@ -9,7 +9,7 @@ use gluonscan_core::{
     Chain, Ctx, Detail, Error, EventKind, Position, Protocol, ProtocolAdapter, RateBasis,
     RateWindow, Rates, Source, Timestamp, Wallet,
 };
-use gluonscan_kamino::{KaminoApi, HISTORY_DAY_SECS, HISTORY_SETTLE_SECS};
+use gluonscan_kamino::{KaminoApi, HISTORY_DAY_SECS, HISTORY_SETTLE_SECS, HISTORY_STALL_SECS};
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
 use rust_decimal::Decimal;
 
@@ -571,8 +571,8 @@ async fn exponent_form_dust_leg_reads_as_nothing_held() {
 /// legs per side.
 fn accrual_point(day: i64, deposits: &[(&str, &str)], borrows: &[(&str, &str)]) -> String {
     assert!(
-        settled_at(day) <= HISTORY_NOW,
-        "the day must have settled by HISTORY_NOW"
+        stall_at(day) <= HISTORY_NOW,
+        "the day must be final by HISTORY_NOW, even as the newest point"
     );
     let legs = |side: &[(&str, &str)]| {
         side.iter()
@@ -590,9 +590,15 @@ fn accrual_point(day: i64, deposits: &[(&str, &str)], borrows: &[(&str, &str)]) 
     )
 }
 
-/// When `day`'s point is final: its last hourly point is published after the day closes.
+/// When `day`'s point is settled: its last hourly point is published after the day closes. A
+/// point with a newer point after it is final from here.
 fn settled_at(day: i64) -> i64 {
     day_ts(day).0 + HISTORY_DAY_SECS + HISTORY_SETTLE_SECS
+}
+
+/// When `day`'s point, with no newer point after it, is accepted as final.
+fn stall_at(day: i64) -> i64 {
+    day_ts(day).0 + HISTORY_DAY_SECS + HISTORY_STALL_SECS
 }
 
 /// The Unix timestamp of [`accrual_point`]'s `day`.
@@ -608,15 +614,33 @@ async fn accrual_events(points: &[String]) -> Vec<Ev> {
 
 /// The events of a history of `points` read with the clock at `now`.
 async fn accrual_events_at(points: &[String], now: i64) -> Vec<Ev> {
-    let history = format!(r#"{{"history":[{}]}}"#, points.join(","));
-    let (_, cx) = history_ctx_at(OWNED, &history, now);
-    read_history_with(&cx, &explicit())
+    accrual_read(points, None, now)
         .await
-        .expect("read_history")
-        .events
         .into_iter()
         .map(|e| (e.kind, e.amount.token.symbol, e.amount.amount, e.at))
         .collect()
+}
+
+/// The raw events of a history of `points` read from `since` with the clock at `now`.
+async fn accrual_read(
+    points: &[String],
+    since: Option<Timestamp>,
+    now: i64,
+) -> Vec<gluonscan_core::HistoryEvent> {
+    let history = format!(r#"{{"history":[{}]}}"#, points.join(","));
+    let (_, cx) = history_ctx_at(OWNED, &history, now);
+    KaminoApi::new()
+        .read_history(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Some(&explicit()),
+            since,
+            &cx,
+        )
+        .await
+        .expect("read_history")
+        .into_inner()
+        .events
 }
 
 fn ev(kind: EventKind, symbol: &str, amount: &str, day: i64) -> Ev {
@@ -797,33 +821,66 @@ async fn a_long_data_gap_credits_two_days_of_accrual() {
     );
 }
 
-#[tokio::test]
-async fn a_day_yields_no_events_until_its_point_settles() {
-    let points = [
+/// Days 0-3 of an obligation with two reserves supplied (SOL, USDC) and one borrowed (USDC): day
+/// 1 accrues on every leg, day 2 deposits 2 SOL and 500 USDC on top of the accrual, day 3 accrues
+/// again and is day 2's successor.
+fn two_reserve_days() -> [String; 4] {
+    [
         accrual_point(
             0,
-            &[("MINT_SOL", "5000000000")],
+            &[("MINT_SOL", "5000000000"), ("MINT_USDC", "1000000000")],
             &[("MINT_USDC", "100000000")],
         ),
         accrual_point(
             1,
-            &[("MINT_SOL", "5000400000")],
+            &[("MINT_SOL", "5000400000"), ("MINT_USDC", "1000100000")],
             &[("MINT_USDC", "100030000")],
         ),
-        // Day 2's point: the accrual so far plus a 2 SOL deposit. The API revises it until day 2's
-        // 23:00 hourly point is published, after day 2 closes.
         accrual_point(
             2,
-            &[("MINT_SOL", "7000800000")],
+            &[("MINT_SOL", "7000800000"), ("MINT_USDC", "1500200000")],
             &[("MINT_USDC", "100060000")],
         ),
-    ];
-    let settled = vec![
+        accrual_point(
+            3,
+            &[("MINT_SOL", "7002000000"), ("MINT_USDC", "1501000000")],
+            &[("MINT_USDC", "100090000")],
+        ),
+    ]
+}
+
+fn two_reserve_day1() -> Vec<Ev> {
+    vec![
         ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+        ev(EventKind::SupplyInterest, "USDC", "0.1", 1),
         ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
-    ];
+    ]
+}
+
+fn two_reserve_day2() -> Vec<Ev> {
+    vec![
+        ev(EventKind::Deposit, "SOL", "2.0004", 2),
+        ev(EventKind::Deposit, "USDC", "500.1", 2),
+        ev(EventKind::BorrowInterest, "USDC", "0.03", 2),
+    ]
+}
+
+fn day_txs(events: &[gluonscan_core::HistoryEvent], day: i64) -> Vec<String> {
+    events
+        .iter()
+        .filter(|e| e.at == day_ts(day))
+        .map(|e| e.tx.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_day_yields_no_events_until_its_point_settles() {
+    // Day 2's point is revised by the API until day 2's 23:00 hourly point is published, after
+    // day 2 closes. Day 3's point follows it, so only the clock holds day 2 back. Every leg of the
+    // held window (two supplied reserves and the borrow) is held and released together.
+    let points = two_reserve_days();
     let day3 = day_ts(3).0;
-    // From day 1's settlement until one second before day 2's; including day 3 00:00, when day 2
+    // From day 1's settlement until one second before day 2's, including day 3 00:00, when day 2
     // has closed but its last hourly point is not published yet.
     for now in [
         settled_at(1),
@@ -833,26 +890,97 @@ async fn a_day_yields_no_events_until_its_point_settles() {
     ] {
         assert_eq!(
             accrual_events_at(&points, now).await,
-            settled,
+            two_reserve_day1(),
             "day 2's point is not final at {now}: only the settled days' windows"
         );
     }
 
-    let mut all = settled;
-    all.extend([
-        ev(EventKind::Deposit, "SOL", "2.0004", 2),
-        ev(EventKind::BorrowInterest, "USDC", "0.03", 2),
-    ]);
+    let mut all = two_reserve_day1();
+    all.extend(two_reserve_day2());
     assert_eq!(
         accrual_events_at(&points, settled_at(2)).await,
         all,
-        "once day 2's point settles its window is emitted"
+        "once day 2's point settles (with a successor) its window is emitted"
     );
     assert_eq!(
         settled_at(2),
         day3 + 4 * 3_600,
         "settles 4h after the day closes"
     );
+
+    // A day released early keeps its ids in every later read.
+    let early = accrual_read(&points, None, settled_at(1)).await;
+    let later = accrual_read(&points, None, settled_at(2)).await;
+    assert_eq!(day_txs(&early, 1).len(), 3);
+    assert_eq!(day_txs(&early, 1), day_txs(&later, 1));
+}
+
+#[tokio::test]
+async fn the_newest_point_waits_for_a_successor_or_the_stall_bound() {
+    let day0 = accrual_point(
+        0,
+        &[("MINT_SOL", "5000000000")],
+        &[("MINT_USDC", "100000000")],
+    );
+    let day1 = accrual_point(
+        1,
+        &[("MINT_SOL", "5000400000")],
+        &[("MINT_USDC", "100030000")],
+    );
+    let day2 = accrual_point(
+        2,
+        &[("MINT_SOL", "5000800000")],
+        &[("MINT_USDC", "100060000")],
+    );
+    let day1_events = vec![
+        ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+        ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+    ];
+
+    // Day 1 is the newest point: settled, it may still miss its last hours if publication
+    // stalled, so it waits for the series to stay silent past the stall bound.
+    let newest = [day0.clone(), day1.clone()];
+    for now in [settled_at(1), day_ts(2).0 + 36 * 3_600, stall_at(1) - 1] {
+        assert_eq!(
+            accrual_events_at(&newest, now).await,
+            vec![],
+            "day 1 has no successor and the series is not stalled at {now}"
+        );
+    }
+    assert_eq!(
+        accrual_events_at(&newest, stall_at(1)).await,
+        day1_events,
+        "a series silent past the stall bound is final"
+    );
+    assert_eq!(stall_at(1), day_ts(2).0 + 2 * 86_400);
+
+    // With day 2's point after it, day 1 is final at plain settlement.
+    let succeeded = [day0, day1, day2];
+    assert_eq!(
+        accrual_events_at(&succeeded, settled_at(1) - 1).await,
+        vec![]
+    );
+    assert_eq!(
+        accrual_events_at(&succeeded, settled_at(1)).await,
+        day1_events
+    );
+}
+
+#[tokio::test]
+async fn since_and_the_settle_gate_return_a_held_day_exactly_once() {
+    // A consumer checkpointed on day 1's events (since = day 1) reads again: day 2 is absent until
+    // it settles, then comes back alone, older than the read that was missing it.
+    let points = two_reserve_days();
+    let since = Some(day_ts(1));
+    assert!(accrual_read(&points, since, settled_at(2) - 1)
+        .await
+        .is_empty());
+    let released: Vec<Ev> = accrual_read(&points, since, settled_at(2))
+        .await
+        .into_iter()
+        .map(|e| (e.kind, e.amount.token.symbol, e.amount.amount, e.at))
+        .collect();
+    assert_eq!(released, two_reserve_day2());
 }
 
 #[tokio::test]
