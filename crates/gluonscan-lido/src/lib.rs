@@ -8,7 +8,8 @@
 //!
 //! stETH is rebasing (its `balanceOf` already tracks the ETH-equivalent, rewards included) and
 //! wstETH is its non-rebasing wrapper; both are priced directly by contract address downstream, so
-//! valuation stays in the pricing layer and this read never converts or fabricates an amount.
+//! valuation stays in the pricing layer and this read never values or fabricates an amount;
+//! `underlying` is the on-chain redemption amount, unpriced.
 //! Lido staking rewards are auto-compounded into the balance, never separately claimable, so
 //! `rewards` is always empty.
 

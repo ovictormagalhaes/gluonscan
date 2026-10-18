@@ -19,8 +19,8 @@ lockstep: one version, one tag, all crates.
   does a wrapper whose rate read failed: like `rates`, the rate never fails the balance read.
 - **`gluonscan_evm::convert_amount` and `encode_selector_with_u256`**, the best-effort
   `uint256 -> uint256` view read behind it.
-- **`gluonscan_morpho::holds_market`.** Asks the Morpho Blue singleton (`position(id, user)`)
-  whether a wallet still holds anything in a market, so a consumer can confirm a market that
+- **`gluonscan_morpho::holds_market`.** Asks the Morpho Blue singleton (`position(id, user)`,
+  and `market(id)` when only supply shares remain) whether a wallet still holds anything in a market, so a consumer can confirm a market that
   vanished from the API before accepting it as closed. Any failure is an error, never `false`.
   The facade exposes it over the engine's RPC as `Gluonscan::morpho_holds_market` (behind the
   `morpho` feature). A chain outside Ethereum and Base is refused as `Error::Permanent`. Supply

@@ -9,7 +9,8 @@
 //! USDe held directly is the plain (unstaked) stablecoin, not a protocol position, so it is left to
 //! the idle-wallet reader. Yield accrues inside the sUSDe share price (`convertToAssets`), not as a
 //! separate claimable, so `rewards` is always empty. Valuation is left to the pricing layer (sUSDe
-//! is priced by contract address), so the read never converts or fabricates an amount.
+//! is priced by contract address), so the read never values or fabricates an amount;
+//! `underlying` is the on-chain redemption amount, unpriced.
 
 use alloy_primitives::{address, Address};
 use async_trait::async_trait;
