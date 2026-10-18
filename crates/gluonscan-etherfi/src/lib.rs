@@ -8,7 +8,8 @@
 //!
 //! eETH is rebasing (its `balanceOf` already tracks the ETH-equivalent, restaking yield included)
 //! and weETH is its non-rebasing wrapper; both are priced directly by contract address downstream,
-//! so valuation stays in the pricing layer and this read never converts or fabricates an amount.
+//! so valuation stays in the pricing layer and this read never values or fabricates an amount;
+//! `underlying` is the on-chain redemption amount, unpriced.
 //! Restaking yield accrues inside the balance (eETH rebase) or the weETH exchange rate, and the
 //! ether.fi points / ETHFI / EIGEN rewards are off-chain season-gated Merkle claims rather than a
 //! continuously-accruing on-chain balance, so `rewards` is always empty.
