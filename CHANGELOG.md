@@ -16,7 +16,9 @@ lockstep: one version, one tag, all crates.
   the interest it earned, and a borrowed balance that grew by the interest owed, between two
   readings. Neither is an action of the owner; the amount is the growth of the balance.
 - **`gluonscan_kamino::MAX_ACCRUAL_PER_DAY`** (0.2%/day), the largest daily growth of a held
-  balance, as a fraction of the previous balance, that Kamino history reads as interest.
+  balance, as a fraction of the previous balance, that Kamino history reads as interest;
+  **`MAX_ACCRUAL_GAP_SECS`** (2 days), the most time between two points credited to accrual; and
+  **`HISTORY_DAY_SECS`**, the span of one daily point.
 
 ### Changed
 
@@ -24,13 +26,27 @@ lockstep: one version, one tag, all crates.
   per-mint delta between consecutive `metrics/history` points, so a supplied or borrowed balance
   produced a Deposit or Borrow event at every point for its accrued interest (on a live obligation,
   about 300 of each next to a handful of real actions). A rise of a held balance at or under
-  `MAX_ACCRUAL_PER_DAY` times the exact time between the two points is now `SupplyInterest`
-  (deposits) or `BorrowInterest` (borrows) of the growth, with a synthetic id of its own
-  (`kamino:{obligation}:{ts}:supply_interest|borrow_interest:{mint}`). A rise above that bound
-  stays a Deposit / Borrow of the whole delta (the period's accrual included), as does a rise from
-  a zero balance; every fall stays a Withdraw / Repay. Amounts are unchanged. Consumers matching
-  `EventKind` must handle the two new kinds (the enum is `#[non_exhaustive]`, so a wildcard arm
-  already compiles, but would now see accrual there instead of under Deposit / Borrow).
+  `MAX_ACCRUAL_PER_DAY` times the time between the two points, credited for at most
+  `MAX_ACCRUAL_GAP_SECS` (two days, so a top-up across a data gap is not read as months of
+  interest), is now `SupplyInterest` (deposits) or `BorrowInterest` (borrows) of the growth. A rise
+  above that bound stays a Deposit / Borrow of the whole delta (the period's accrual included), as
+  does a rise from a zero balance; every fall stays a Withdraw / Repay. Amounts are unchanged. A
+  reserve accruing faster than 0.2%/day (FDUSD paid about 159% APY for weeks) still reads as
+  Deposit / Borrow, and an action small enough to fit under the bound reads as interest.
+  Consumers matching `EventKind` must handle the two new kinds (the enum is `#[non_exhaustive]`, so
+  a wildcard arm already compiles, but would now see accrual there instead of under Deposit /
+  Borrow).
+- **Breaking (behaviour): accrual events change id; rebuild stored Kamino history.** The synthetic
+  id carries the kind, so an accrual event stored as `kamino:{obligation}:{ts}:deposit:{mint}` or
+  `...:borrow:{mint}` now comes back as `...:supply_interest:{mint}` or
+  `...:borrow_interest:{mint}`. A consumer that keeps stored events and inserts new ones by id
+  (`ON CONFLICT DO NOTHING`) keeps both and double counts: drop the stored Kamino history and read
+  it again.
+- **Breaking (behaviour): Kamino history waits for the day to close.** The newest daily point is a
+  live reading the API revises until the UTC day closes, and the event kind (so the id) now depends
+  on the amount: one read could store a day as `supply_interest` and a later one as `deposit`. A
+  point less than `HISTORY_DAY_SECS` old by the context clock now yields no events; a day's
+  activity appears once that day has closed.
 
 ## [0.3.0-beta.3] - 2026-10-18
 

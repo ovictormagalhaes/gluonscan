@@ -26,11 +26,17 @@
 //! [`Error::Integrity`] instead of reading as a zero balance.
 //!
 //! A balance grows between points by its interest alone, so each rise of a held balance is first
-//! checked against [`MAX_ACCRUAL_PER_DAY`], scaled by the time between the two points: a rise
-//! within it is [`EventKind::SupplyInterest`] (deposits) or [`EventKind::BorrowInterest`]
-//! (borrows), not an action. A rise above it is a [`EventKind::Deposit`] / [`EventKind::Borrow`]
-//! of the whole delta (that period's accrual included), as is a rise from a zero balance; every fall
-//! is a [`EventKind::Withdraw`] / [`EventKind::Repay`] (net of that period's accrual).
+//! checked against [`MAX_ACCRUAL_PER_DAY`], scaled by the time between the two points (at most
+//! [`MAX_ACCRUAL_GAP_SECS`]): a rise within it is [`EventKind::SupplyInterest`] (deposits) or
+//! [`EventKind::BorrowInterest`] (borrows), not an action. A rise above it is a
+//! [`EventKind::Deposit`] / [`EventKind::Borrow`] of the whole delta (that period's accrual
+//! included), as is a rise from a zero balance; every fall is a [`EventKind::Withdraw`] /
+//! [`EventKind::Repay`] (net of that period's accrual).
+//!
+//! The newest daily point (stamped at the day's 00:00 UTC) is a live reading the API revises until
+//! the day closes, so a point less than [`HISTORY_DAY_SECS`] old (by the context clock) yields no
+//! events: its amounts, and with them the event kind and id, could still change. A day's activity
+//! appears once that day has closed.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
@@ -86,9 +92,17 @@ const RATE_HISTORY_CONCURRENCY: usize = 4;
 /// reads as interest accrual (0.2%/day, about 73% APR). Scaled by the exact time between two
 /// points; a growth at or under the scaled bound is [`EventKind::SupplyInterest`] /
 /// [`EventKind::BorrowInterest`], one above it a [`EventKind::Deposit`] / [`EventKind::Borrow`].
-/// A rate above the bound therefore reads as an action, and an action small enough to fit under
-/// it as interest.
+/// A reserve whose daily accrual exceeds the bound (FDUSD paid about 159% APY for weeks) therefore
+/// reads as [`EventKind::Deposit`] / [`EventKind::Borrow`] every day, and an action small enough to
+/// fit under the bound reads as interest.
 pub const MAX_ACCRUAL_PER_DAY: Decimal = Decimal::from_parts(2, 0, 0, false, 3);
+/// Most time between two history points credited to accrual (2 days). Across a longer data gap the
+/// uncapped bound would cover a real deposit or borrow (about 20% of the balance over 103 days), so
+/// a rise there is interest only within two days' bound.
+pub const MAX_ACCRUAL_GAP_SECS: u64 = 2 * HISTORY_DAY_SECS as u64;
+/// Span of one daily history point: a point younger than this, by the context clock, is the
+/// still-open day and yields no events.
+pub const HISTORY_DAY_SECS: i64 = 86_400;
 
 /// Kamino adapter backed by the public HTTP API + on-chain mint decimals.
 #[derive(Debug, Default, Clone)]
@@ -318,10 +332,16 @@ impl ProtocolAdapter for KaminoApi {
             .collect::<Result<Vec<_>, Error>>()?;
         snaps.sort_by_key(|s| s.ts);
 
+        let now = cx.clock.now();
         let mut decimals_cache: HashMap<String, u8> = HashMap::new();
         let mut events: Vec<HistoryEvent> = Vec::new();
         for window in snaps.windows(2) {
             let (prev, curr) = (&window[0], &window[1]);
+            // The open day's point is still revised by the API: its delta (and so the event kind and
+            // id) is not final until the day closes.
+            if curr.ts.saturating_add(HISTORY_DAY_SECS) > now.0 {
+                continue;
+            }
             // Sorted, so never negative; equal timestamps allow no accrual.
             let gap_secs = u64::try_from(curr.ts - prev.ts).unwrap_or(0);
             let sides = [
@@ -367,7 +387,7 @@ impl ProtocolAdapter for KaminoApi {
             Protocol::Kamino,
             Chain::Solana,
             events,
-            Provenance::new(Source::Api, Chain::Solana, cx.clock.now(), Staleness::Live),
+            Provenance::new(Source::Api, Chain::Solana, now, Staleness::Live),
         );
         Ok(Complete::new(history))
     }
@@ -777,18 +797,19 @@ struct SideKinds {
     accrual: EventKind,
 }
 
-/// Whether `growth` of a `prev` balance over `gap_secs` fits [`MAX_ACCRUAL_PER_DAY`]: exactly
-/// `growth <= prev * MAX_ACCRUAL_PER_DAY * gap_secs / 86_400`, compared as
-/// `growth * 10^scale * 86_400 <= prev * mantissa * gap_secs` in 512 bits, where no operand can
-/// overflow. A zero `prev` or `gap_secs` allows no accrual.
+/// Whether `growth` of a `prev` balance over `gap_secs` fits [`MAX_ACCRUAL_PER_DAY`]: with
+/// `t = min(gap_secs, MAX_ACCRUAL_GAP_SECS)`, exactly `growth <= prev * MAX_ACCRUAL_PER_DAY * t /
+/// 86_400`, compared as `growth * 10^scale * 86_400 <= prev * mantissa * t` in 512 bits, where no
+/// operand can overflow. A zero `prev` or `gap_secs` allows no accrual.
 fn within_accrual_bound(prev: U256, growth: U256, gap_secs: u64) -> bool {
     const SECS_PER_DAY: u64 = 86_400;
+    let credited_secs = gap_secs.min(MAX_ACCRUAL_GAP_SECS);
     let mantissa = MAX_ACCRUAL_PER_DAY.mantissa().unsigned_abs();
     let denominator = 10u128.pow(MAX_ACCRUAL_PER_DAY.scale());
     // A `Decimal` mantissa is under 2^96 and its scale at most 28 (10^28 < 2^94): both products
     // stay under 2^256 * 2^96 * 2^64, well inside 512 bits.
     let lhs = widen(growth) * U512::from(denominator) * U512::from(SECS_PER_DAY);
-    let rhs = widen(prev) * U512::from(mantissa) * U512::from(gap_secs);
+    let rhs = widen(prev) * U512::from(mantissa) * U512::from(credited_secs);
     lhs <= rhs
 }
 
@@ -1384,9 +1405,13 @@ mod tests {
         // 0.2% of 1e9 is 2e6 per day: at the bound is accrual, one base unit over is not.
         assert!(within_accrual_bound(prev, u(2_000_000u64), DAY));
         assert!(!within_accrual_bound(prev, u(2_000_001u64), DAY));
-        // Three days: three times the bound.
-        assert!(within_accrual_bound(prev, u(6_000_000u64), 3 * DAY));
-        assert!(!within_accrual_bound(prev, u(6_000_001u64), 3 * DAY));
+        // Two days: twice the bound.
+        assert!(within_accrual_bound(prev, u(4_000_000u64), 2 * DAY));
+        assert!(!within_accrual_bound(prev, u(4_000_001u64), 2 * DAY));
+        // A longer gap is credited two days at most: 103 days would allow 2.06e8.
+        assert!(within_accrual_bound(prev, u(4_000_000u64), 103 * DAY));
+        assert!(!within_accrual_bound(prev, u(4_000_001u64), 103 * DAY));
+        assert!(!within_accrual_bound(prev, u(200_000_000u64), 103 * DAY));
         // Half a day is half the bound, never rounded up to a whole day.
         assert!(within_accrual_bound(prev, u(1_000_000u64), DAY / 2));
         assert!(!within_accrual_bound(prev, u(1_000_001u64), DAY / 2));
@@ -1410,12 +1435,18 @@ mod tests {
             max / U256::from(500u64) + U256::from(1u64),
             DAY
         ));
-        // The longest gap scales the bound past any growth.
-        assert!(within_accrual_bound(max, max, u64::MAX));
+        // The longest gap is credited two days: twice the one-day bound, never the whole balance.
+        assert!(within_accrual_bound(
+            max,
+            max / U256::from(250u64),
+            u64::MAX
+        ));
+        assert!(!within_accrual_bound(max, max, u64::MAX));
     }
 
     #[test]
     fn max_accrual_per_day_is_two_tenths_of_a_percent() {
         assert_eq!(MAX_ACCRUAL_PER_DAY, d("0.002"));
+        assert_eq!(MAX_ACCRUAL_GAP_SECS, 172_800);
     }
 }
