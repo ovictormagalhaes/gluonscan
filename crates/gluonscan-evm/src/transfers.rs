@@ -53,18 +53,32 @@ pub struct ReceiptTransfer {
     pub token_decimals: Option<u8>,
 }
 
-/// A mined transaction as a cost-basis read sees it: who sent it, the native coin it carried and
-/// its ERC-20 `Transfer` logs. A purchase paid in the native coin has no outbound ERC-20 leg from
-/// the wallet (the router wraps it, and WETH emits `Deposit`, not `Transfer`), so `from` and
-/// `value_wei` are what tell it apart from a plain transfer in.
+/// A mined transaction as a cost-basis read sees it: whether it succeeded, who sent it, the native
+/// coin it carried and its ERC-20 `Transfer` logs. A purchase paid in the native coin has no
+/// outbound ERC-20 leg from the wallet (the router wraps it, and WETH emits `Deposit`, not
+/// `Transfer`), so `from` and `value_wei` are what can show it.
+///
+/// `from`, `to` and `value_wei` describe the outer transaction only. A purchase made through a
+/// contract wallet (a Safe, an ERC-4337 account), a relayed or meta transaction, or any native coin
+/// moved internally (a router refunding unused native coin included) is invisible here without
+/// call traces. So `value_wei` is the gross value attached, the wallet's payment only when `from`
+/// is the wallet, and a position token that arrives with no visible payment has an unknown cost,
+/// not a zero one.
+///
+/// `from` and `to` are [`Address`]es (EIP-55 checksummed when displayed), while
+/// [`ReceiptTransfer`]'s `from` and `to` are lowercased strings: compare them as addresses.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiptRead {
-    /// The transaction's sender, from the receipt.
+    /// Whether the transaction succeeded (receipt `status` 1). A failed one moved no value and its
+    /// state changes, logs included, were reverted.
+    pub succeeded: bool,
+    /// The outer transaction's sender, from the receipt.
     pub from: Address,
-    /// The called address, from the receipt; `None` for a contract creation.
+    /// The outer transaction's called address, from the receipt; `None` for a contract creation.
     pub to: Option<Address>,
-    /// The native coin the transaction carried, in wei (`eth_getTransactionByHash`).
+    /// The native coin the outer transaction attached, in wei (`eth_getTransactionByHash`): moved
+    /// only if `succeeded`, and gross of any refund made inside the transaction.
     pub value_wei: U256,
     /// The ERC-20 `Transfer` logs, in log order.
     pub transfers: Vec<ReceiptTransfer>,
@@ -240,6 +254,12 @@ fn mined<'a>(
     Ok(res)
 }
 
+/// A `0x`-prefixed hex quantity with at least one digit.
+fn hex_quantity(v: Option<&serde_json::Value>) -> Option<U256> {
+    let digits = v?.as_str()?.strip_prefix("0x").filter(|d| !d.is_empty())?;
+    U256::from_str_radix(digits, 16).ok()
+}
+
 /// An optional address field of a receipt: absent or `null` is `None`, anything unparseable an error.
 fn address_field(v: &serde_json::Value, key: &str, tx: &str) -> Result<Option<Address>, Error> {
     match v.get(key) {
@@ -254,9 +274,11 @@ fn address_field(v: &serde_json::Value, key: &str, tx: &str) -> Result<Option<Ad
     }
 }
 
-/// Transaction `tx`'s sender, native value and ERC-20 `Transfer` logs, each with its token's
-/// decimals, read once per distinct token. A receipt or transaction the node does not return is a
-/// retryable error, never an empty read.
+/// Transaction `tx`'s outcome, sender, native value and ERC-20 `Transfer` logs, each with its
+/// token's decimals, read once per distinct token (see [`ReceiptRead`] for what the outer
+/// transaction cannot show). A receipt or transaction the node does not return is a retryable
+/// error, never an empty read; a receipt without a parseable `status`, `from` or `logs`, an
+/// unparseable `to`, or a transaction without a parseable `value` is an integrity error.
 pub async fn read_receipt(
     rpc: &dyn ChainProvider,
     chain: Chain,
@@ -268,6 +290,15 @@ pub async fn read_receipt(
         .await?;
     let json = parse_json(&raw, "getTransactionReceipt")?;
     let receipt = mined(&json, "getTransactionReceipt", tx)?;
+    let succeeded = match hex_quantity(receipt.get("status")) {
+        Some(s) if s == U256::from(1u8) => true,
+        Some(s) if s.is_zero() => false,
+        _ => {
+            return Err(Error::Integrity {
+                message: format!("receipt of {tx} has no parseable `status`"),
+            })
+        }
+    };
     let from = address_field(receipt, "from", tx)?.ok_or_else(|| Error::Integrity {
         message: format!("receipt of {tx} has no `from`"),
     })?;
@@ -281,10 +312,7 @@ pub async fn read_receipt(
 
     let raw = rpc.call(chain, "eth_getTransactionByHash", params).await?;
     let json = parse_json(&raw, "getTransactionByHash")?;
-    let value_wei = mined(&json, "getTransactionByHash", tx)?
-        .get("value")
-        .and_then(|v| v.as_str())
-        .and_then(|s| U256::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+    let value_wei = hex_quantity(mined(&json, "getTransactionByHash", tx)?.get("value"))
         .ok_or_else(|| Error::Integrity {
             message: format!("transaction {tx} has no parseable `value`"),
         })?;
@@ -326,6 +354,7 @@ pub async fn read_receipt(
         });
     }
     Ok(ReceiptRead {
+        succeeded,
         from,
         to,
         value_wei,

@@ -188,7 +188,7 @@ async fn a_market_without_an_accounting_asset_names_none() {
 #[tokio::test]
 async fn an_incomplete_or_ambiguous_accounting_asset_names_none() {
     // Arrange
-    let cases: [(&str, &str, Edit); 5] = [
+    let cases: [(&str, &str, Edit); 7] = [
         ("unparseable address", PT_SUSDE, |a| {
             a["address"] = "0xnot-an-address".into()
         }),
@@ -196,6 +196,10 @@ async fn an_incomplete_or_ambiguous_accounting_asset_names_none() {
             a.as_object_mut().unwrap().remove("decimals");
         }),
         ("empty symbol", PT_SUSDE, |a| a["symbol"] = "".into()),
+        ("whitespace symbol", PT_SUSDE, |a| a["symbol"] = "  ".into()),
+        ("no symbol", PT_SUSDE, |a| {
+            a.as_object_mut().unwrap().remove("symbol");
+        }),
         ("no chain id", PT_SUSDE, |a| {
             a.as_object_mut().unwrap().remove("chainId");
         }),

@@ -28,12 +28,19 @@ lockstep: one version, one tag, all crates.
   markets in Ethereum's stETH or ETH) and it has a parseable address, decimals and a non-empty
   symbol. The zero address becomes the native coin, never an ERC-20 at `0x0`, only with base type
   `NATIVE`; any other zero-address entry is `None`. It never falls back to `underlyingAsset`.
-- **`transfers::read_receipt` / `Gluonscan::read_receipt`** return a **`ReceiptRead`**: the
-  transaction's sender (`from`) and called address (`to`, `None` for a contract creation) from the
-  receipt, the native coin it carried (`value_wei`, from `eth_getTransactionByHash`) and its
-  ERC-20 `Transfer` logs. A purchase paid in the native coin leaves no outbound ERC-20 leg (the
-  router wraps it, and WETH emits `Deposit`, not `Transfer`), so without the sender and value it
-  could not be told apart from a plain transfer in.
+- **`transfers::read_receipt` / `Gluonscan::read_receipt`** return a **`ReceiptRead`**: whether
+  the transaction succeeded (`succeeded`, receipt `status` 1), its sender (`from`) and called
+  address (`to`, `None` for a contract creation) from the receipt, the native coin it attached
+  (`value_wei`, from `eth_getTransactionByHash`, moved only if `succeeded`) and its ERC-20
+  `Transfer` logs. A purchase paid in the native coin leaves no outbound ERC-20 leg (the router
+  wraps it, and WETH emits `Deposit`, not `Transfer`), so without the sender and value it could
+  not be told apart from a plain transfer in. `from`, `to` and `value_wei` describe the outer
+  transaction only: a contract wallet (a Safe, an ERC-4337 account), a relayed or meta transaction,
+  or a native move inside the transaction (a router refunding unused native coin included) is
+  invisible without call traces. `value_wei` is the gross value attached, the wallet's payment only
+  when `from` is the wallet, and a position token that arrives with no visible payment has an
+  unknown cost, not a zero one. `from` and `to` are `Address`es (EIP-55 when displayed) while
+  `ReceiptTransfer`'s are lowercased strings: compare them as addresses.
 - **`ReceiptTransfer::token_decimals`** (`Option<u8>`): each Transfer log carries its token's
   `decimals()`, read at the latest block once per distinct token, so a consumer scaling what was
   paid no longer keeps its own decimals table. `None` when the token gives a definitive non-answer:
@@ -51,8 +58,9 @@ lockstep: one version, one tag, all crates.
 - **Breaking (behaviour): a receipt or transaction the node does not return is a retryable error.**
   `receipt_transfers` read a `result: null` receipt (a node lagging the indexer that surfaced the
   tx) as a transaction with no transfers, which a cost-basis caller took for a plain transfer in
-  and moved past for good. A receipt without `from` or `logs`, or a transaction without a
-  parseable `value`, is an integrity error.
+  and moved past for good. A receipt without a `status` of 0 or 1, without `from` or `logs`, or
+  with an unparseable `to` (which would otherwise read as a contract creation), and a transaction
+  without a parseable `value` (`0x` with no digits included), is an integrity error.
 - **Breaking (signature): `ReceiptTransfer` is `#[non_exhaustive]` and gains the public field
   `token_decimals`.** It can no longer be built with a struct literal, nor destructured
   exhaustively, outside `gluonscan-evm`; `ReceiptRead` is `#[non_exhaustive]` too.
