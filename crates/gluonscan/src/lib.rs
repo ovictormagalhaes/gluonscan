@@ -26,8 +26,8 @@ pub use gluonscan_core::*;
 /// reach it through the one facade, without a second version pin.
 pub use gluonscan_math as math;
 
-/// Cost-basis chain reads (ERC-20 transfer history + receipt logs + latest block). The consumer owns
-/// the cost-basis math; the chain reads live here.
+/// Cost-basis chain reads (ERC-20 transfer history + a transaction's receipt + latest block). The
+/// consumer owns the cost-basis math; the chain reads live here.
 pub use gluonscan_evm::transfers;
 
 // Protocol adapters are re-exported only when their feature is enabled, so a consumer that opts out
@@ -390,14 +390,23 @@ impl Gluonscan {
             .await
     }
 
-    /// The ERC-20 `Transfer` logs of transaction `tx` — e.g. to find what a wallet paid in the same
-    /// transaction that delivered a position token.
-    pub async fn receipt_transfers(
+    /// Transaction `tx`'s outcome, sender, native value and ERC-20 `Transfer` logs — e.g. to find
+    /// what a wallet paid in the same transaction that delivered a position token, including a
+    /// payment in the native coin, which leaves no outbound ERC-20 leg. The sender and value are
+    /// the outer transaction's only: a contract wallet, a relayed transaction or an internal native
+    /// move (a refund included) is invisible without traces, the value is the wallet's payment only
+    /// when the sender is the wallet, and a token that arrives with no visible payment has an
+    /// unknown cost, not a zero one. Each log carries its token's
+    /// `decimals()` read at the latest block (`None` when the token gives no usable answer). A
+    /// receipt or transaction the node does not return yet, or a token whose decimals read fails
+    /// without a definitive answer, fails the whole read retryably; see
+    /// [`transfers::read_receipt`].
+    pub async fn read_receipt(
         &self,
         chain: Chain,
         tx: &str,
-    ) -> Result<Vec<transfers::ReceiptTransfer>, Error> {
-        transfers::receipt_transfers(self.cx.rpc()?.as_ref(), chain, tx).await
+    ) -> Result<transfers::ReceiptRead, Error> {
+        transfers::read_receipt(self.cx.rpc()?.as_ref(), chain, tx).await
     }
 
     /// The latest block number on `chain`.

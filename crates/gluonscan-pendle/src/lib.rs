@@ -2,7 +2,9 @@
 //!
 //! Pendle adapter. Discovery is the Pendle market catalog over HTTP ([`Source::Api`]) — the full
 //! set of PT/YT tokens (address, decimals, price, maturity) for the chain — followed by an on-chain
-//! `balanceOf` per token. Any non-zero balance is a held [`YieldPosition`], priced from the catalog.
+//! `balanceOf` per token. Any non-zero balance is a held [`YieldPosition`], priced from the catalog
+//! and carrying the market's accounting asset (the unit a PT is nominally worth one of at
+//! maturity), when the catalog names one on the market's own chain.
 //!
 //! On Ethereum it also reads the vePENDLE lock ([`Position::Lock`] — locked PENDLE + governance
 //! power + unlock time).
@@ -55,6 +57,7 @@ struct Candidate {
     expiry: Option<Timestamp>,
     rates: Rates,
     kind: YieldKind,
+    accounting_asset: Option<Token>,
 }
 
 #[async_trait]
@@ -156,6 +159,9 @@ impl ProtocolAdapter for PendleApi {
                 })
                 .into_iter()
                 .collect();
+            let accounting_asset = m
+                .get("accountingAsset")
+                .and_then(|a| parse_accounting_asset(a, chain_id));
             for (key, kind) in [
                 ("pt", YieldKind::PrincipalToken),
                 ("yt", YieldKind::YieldToken),
@@ -167,6 +173,7 @@ impl ProtocolAdapter for PendleApi {
                         expiry,
                         rates: rates.clone(),
                         kind,
+                        accounting_asset: accounting_asset.clone(),
                     });
                 }
             }
@@ -199,7 +206,8 @@ impl ProtocolAdapter for PendleApi {
             positions.push(Position::Yield(
                 YieldPosition::new(priced_amount(c.token, balance, c.price_usd)?, c.kind)
                     .with_expiry(c.expiry)
-                    .with_rates(c.rates),
+                    .with_rates(c.rates)
+                    .with_accounting_asset(c.accounting_asset),
             ));
         }
 
@@ -287,6 +295,31 @@ fn parse_token(v: &serde_json::Value) -> Result<Token, Error> {
     Ok(Token::evm(symbol, address, decimals)
         .with_name(name)
         .with_logo(logo))
+}
+
+/// The market's accounting asset, or `None` unless the catalog entry names it on the market's own
+/// chain with a parseable address, decimals and a symbol. It is never guessed, nor taken from
+/// `underlyingAsset` (sUSDe for a PT nominally worth one USDe). Pendle lists some markets' asset on
+/// another chain (an Arbitrum PT-wstETH accounted in Ethereum's stETH), which is not a token on the
+/// market's chain, so it is `None`. Pendle names a native coin with the zero address and base type
+/// `NATIVE`; that becomes a token without an address, never an ERC-20 at `0x0`, and a zero address
+/// of any other base type is `None`.
+fn parse_accounting_asset(v: &serde_json::Value, market_chain_id: u64) -> Option<Token> {
+    if v.get("chainId").and_then(json_u64)? != market_chain_id {
+        return None;
+    }
+    let address = Address::from_str(v.get("address")?.as_str()?).ok()?;
+    let token = parse_token(v).ok()?;
+    if token.symbol.trim().is_empty() {
+        return None;
+    }
+    if address != Address::ZERO {
+        return Some(token);
+    }
+    (v.get("baseType").and_then(|b| b.as_str()) == Some("NATIVE")).then_some(Token {
+        address: None,
+        ..token
+    })
 }
 
 fn priced_amount(token: Token, raw: U256, price_usd: Option<Decimal>) -> Result<Amount, Error> {

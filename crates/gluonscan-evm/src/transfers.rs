@@ -1,8 +1,19 @@
 //! Cost-basis chain reads over the injected [`ChainProvider`]: a wallet's inbound ERC-20 transfers
-//! (`alchemy_getAssetTransfers`), the ERC-20 `Transfer` logs of a transaction receipt, and the latest
-//! block number. The RPC URL carries the provider key — no API key is handled here. The consumer owns
-//! the cost-basis math (pairing the inbound leg with what was paid, pricing, averaging).
+//! (`alchemy_getAssetTransfers`), a transaction's sender, native value and ERC-20 `Transfer` logs
+//! ([`read_receipt`]), and the latest block number. The RPC URL carries the provider key — no API key
+//! is handled here. The consumer owns the cost-basis math (pairing the inbound leg with what was paid,
+//! pricing, averaging).
+//!
+//! [`read_receipt`] reads each distinct token's `decimals()` at the latest block. A token that gives
+//! no usable answer (no code, a revert, an invalid opcode, a return that is not one word or exceeds
+//! `u8`, or a log address that is not an address) has `None`. Any other failure of one token's read
+//! fails the whole read, retryably: a node that keeps failing that way means the receipt never
+//! resolves, which the caller should bound rather than read as "nothing was paid".
 
+use std::collections::HashMap;
+use std::str::FromStr;
+
+use alloy_primitives::{hex, Address, U256};
 use chrono::DateTime;
 use gluonscan_core::{Chain, ChainProvider, Error};
 
@@ -25,6 +36,7 @@ pub struct AssetTransfer {
 }
 
 /// One ERC-20 `Transfer` log decoded from a transaction receipt.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiptTransfer {
     /// The ERC-20 contract address (lowercased `0x…`).
@@ -35,6 +47,41 @@ pub struct ReceiptTransfer {
     pub to: String,
     /// Raw amount as hex (`0x…`).
     pub value_raw: String,
+    /// The token's `decimals()` at the latest block, or `None` when the contract gives no usable
+    /// answer (no code at the address, a revert, an invalid opcode, a return that is not one word or
+    /// does not fit a `u8`) or the log's address is not an address. Never guessed.
+    pub token_decimals: Option<u8>,
+}
+
+/// A mined transaction as a cost-basis read sees it: whether it succeeded, who sent it, the native
+/// coin it carried and its ERC-20 `Transfer` logs. A purchase paid in the native coin has no
+/// outbound ERC-20 leg from the wallet (the router wraps it, and WETH emits `Deposit`, not
+/// `Transfer`), so `from` and `value_wei` are what can show it.
+///
+/// `from`, `to` and `value_wei` describe the outer transaction only. A purchase made through a
+/// contract wallet (a Safe, an ERC-4337 account), a relayed or meta transaction, or any native coin
+/// moved internally (a router refunding unused native coin included) is invisible here without
+/// call traces. So `value_wei` is the gross value attached, the wallet's payment only when `from`
+/// is the wallet, and a position token that arrives with no visible payment has an unknown cost,
+/// not a zero one.
+///
+/// `from` and `to` are [`Address`]es (EIP-55 checksummed when displayed), while
+/// [`ReceiptTransfer`]'s `from` and `to` are lowercased strings: compare them as addresses.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiptRead {
+    /// Whether the transaction succeeded (receipt `status` 1). A failed one moved no value and its
+    /// state changes, logs included, were reverted.
+    pub succeeded: bool,
+    /// The outer transaction's sender, from the receipt.
+    pub from: Address,
+    /// The outer transaction's called address, from the receipt; `None` for a contract creation.
+    pub to: Option<Address>,
+    /// The native coin the outer transaction attached, in wei (`eth_getTransactionByHash`): moved
+    /// only if `succeeded`, and gross of any refund made inside the transaction.
+    pub value_wei: U256,
+    /// The ERC-20 `Transfer` logs, in log order.
+    pub transfers: Vec<ReceiptTransfer>,
 }
 
 /// Extract `result`, mapping an RPC `error` to a retryable [`Error::Transient`] and a missing result
@@ -132,20 +179,146 @@ pub async fn asset_transfers_in(
     Ok(out)
 }
 
-/// The ERC-20 `Transfer` logs of transaction `tx` (empty if the tx is unknown or has none).
-pub async fn receipt_transfers(
+/// ERC-20 `decimals()` calldata.
+const DECIMALS_CALL: &str = "0x313ce567";
+
+/// Whether a JSON-RPC `error` from an `eth_call` is the contract's own answer (a revert, code 3 or
+/// named in the message or `data`, or an invalid opcode) rather than the node failing to answer.
+fn is_contract_failure(error: &serde_json::Value) -> bool {
+    if error.get("code").and_then(|c| c.as_i64()) == Some(3) {
+        return true;
+    }
+    let text = |k: &str| {
+        error
+            .get(k)
+            .map(|v| match v.as_str() {
+                Some(s) => s.to_lowercase(),
+                None => v.to_string().to_lowercase(),
+            })
+            .unwrap_or_default()
+    };
+    [text("message"), text("data")]
+        .iter()
+        .any(|t| t.contains("revert") || t.contains("invalid opcode"))
+}
+
+/// `token`'s `decimals()` at the latest block: `None` on a definitive non-answer, an error when the
+/// node did not answer, so the caller retries rather than reading the token as one without decimals.
+async fn token_decimals(
+    rpc: &dyn ChainProvider,
+    chain: Chain,
+    token: &str,
+) -> Result<Option<u8>, Error> {
+    if Address::from_str(token).is_err() {
+        return Ok(None);
+    }
+    let params = serde_json::json!([{ "to": token, "data": DECIMALS_CALL }, "latest"]).to_string();
+    let raw = rpc.call(chain, "eth_call", params).await?;
+    let json = parse_json(&raw, "decimals")?;
+    if let Some(e) = json.get("error").filter(|e| !e.is_null()) {
+        if is_contract_failure(e) {
+            return Ok(None);
+        }
+        return Err(Error::Transient {
+            message: format!("decimals of {token} RPC error: {e}"),
+            retry_after: None,
+        });
+    }
+    let out = rpc_result(&json, "decimals")?
+        .as_str()
+        .and_then(|r| hex::decode(r.trim_start_matches("0x")).ok())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("decimals of {token} result not hex"),
+        })?;
+    if out.len() != 32 {
+        return Ok(None);
+    }
+    let decimals = U256::from_be_slice(&out);
+    Ok((decimals <= U256::from(u8::MAX)).then(|| decimals.to::<u8>()))
+}
+
+/// The `result` of a by-hash read, where `null` means the node has not seen the transaction yet
+/// (a load-balanced node lagging the indexer that surfaced it): retryable, never "nothing there".
+fn mined<'a>(
+    json: &'a serde_json::Value,
+    ctx: &str,
+    tx: &str,
+) -> Result<&'a serde_json::Value, Error> {
+    let res = rpc_result(json, ctx)?;
+    if res.is_null() {
+        return Err(Error::Transient {
+            message: format!("{ctx}: no result for tx {tx}"),
+            retry_after: None,
+        });
+    }
+    Ok(res)
+}
+
+/// A `0x`-prefixed hex quantity with at least one digit.
+fn hex_quantity(v: Option<&serde_json::Value>) -> Option<U256> {
+    let digits = v?.as_str()?.strip_prefix("0x").filter(|d| !d.is_empty())?;
+    U256::from_str_radix(digits, 16).ok()
+}
+
+/// An optional address field of a receipt: absent or `null` is `None`, anything unparseable an error.
+fn address_field(v: &serde_json::Value, key: &str, tx: &str) -> Result<Option<Address>, Error> {
+    match v.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(a) => a
+            .as_str()
+            .and_then(|s| Address::from_str(s).ok())
+            .map(Some)
+            .ok_or_else(|| Error::Integrity {
+                message: format!("receipt of {tx} has an unparseable `{key}`"),
+            }),
+    }
+}
+
+/// Transaction `tx`'s outcome, sender, native value and ERC-20 `Transfer` logs, each with its
+/// token's decimals, read once per distinct token (see [`ReceiptRead`] for what the outer
+/// transaction cannot show). A receipt or transaction the node does not return is a retryable
+/// error, never an empty read; a receipt without a parseable `status`, `from` or `logs`, an
+/// unparseable `to`, or a transaction without a parseable `value` is an integrity error.
+pub async fn read_receipt(
     rpc: &dyn ChainProvider,
     chain: Chain,
     tx: &str,
-) -> Result<Vec<ReceiptTransfer>, Error> {
+) -> Result<ReceiptRead, Error> {
     let params = serde_json::json!([tx]).to_string();
-    let raw = rpc.call(chain, "eth_getTransactionReceipt", params).await?;
+    let raw = rpc
+        .call(chain, "eth_getTransactionReceipt", params.clone())
+        .await?;
     let json = parse_json(&raw, "getTransactionReceipt")?;
-    let res = rpc_result(&json, "getTransactionReceipt")?;
-    let Some(logs) = res.get("logs").and_then(|v| v.as_array()) else {
-        return Ok(Vec::new());
+    let receipt = mined(&json, "getTransactionReceipt", tx)?;
+    let succeeded = match hex_quantity(receipt.get("status")) {
+        Some(s) if s == U256::from(1u8) => true,
+        Some(s) if s.is_zero() => false,
+        _ => {
+            return Err(Error::Integrity {
+                message: format!("receipt of {tx} has no parseable `status`"),
+            })
+        }
     };
-    let mut out = Vec::new();
+    let from = address_field(receipt, "from", tx)?.ok_or_else(|| Error::Integrity {
+        message: format!("receipt of {tx} has no `from`"),
+    })?;
+    let to = address_field(receipt, "to", tx)?;
+    let logs = receipt
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("receipt of {tx} has no `logs`"),
+        })?;
+
+    let raw = rpc.call(chain, "eth_getTransactionByHash", params).await?;
+    let json = parse_json(&raw, "getTransactionByHash")?;
+    let value_wei = hex_quantity(mined(&json, "getTransactionByHash", tx)?.get("value"))
+        .ok_or_else(|| Error::Integrity {
+            message: format!("transaction {tx} has no parseable `value`"),
+        })?;
+
+    let mut transfers = Vec::new();
+    let mut decimals: HashMap<String, Option<u8>> = HashMap::new();
     for log in logs {
         let topics: Vec<&str> = log
             .get("topics")
@@ -155,12 +328,21 @@ pub async fn receipt_transfers(
         if topics.len() < 3 || topics[0] != TRANSFER_TOPIC {
             continue;
         }
-        out.push(ReceiptTransfer {
-            token: log
-                .get("address")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_lowercase(),
+        let token = log
+            .get("address")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let token_decimals = match decimals.get(&token) {
+            Some(d) => *d,
+            None => {
+                let d = token_decimals(rpc, chain, &token).await?;
+                decimals.insert(token.clone(), d);
+                d
+            }
+        };
+        transfers.push(ReceiptTransfer {
+            token,
             from: topic_address(topics[1]),
             to: topic_address(topics[2]),
             value_raw: log
@@ -168,9 +350,16 @@ pub async fn receipt_transfers(
                 .and_then(|v| v.as_str())
                 .unwrap_or("0x0")
                 .to_string(),
+            token_decimals,
         });
     }
-    Ok(out)
+    Ok(ReceiptRead {
+        succeeded,
+        from,
+        to,
+        value_wei,
+        transfers,
+    })
 }
 
 /// One log of a mined transaction receipt, as returned by the node.
@@ -184,8 +373,8 @@ pub struct ReceiptLog {
     pub data: String,
 }
 
-/// Every log of transaction `tx`. Unlike [`receipt_transfers`], a receipt the node does not return
-/// is an error, never an empty list: a caller rebuilding amounts from these logs must not read a
+/// Every log of transaction `tx`. As in [`read_receipt`], a receipt the node does not return is an
+/// error, never an empty list: a caller rebuilding amounts from these logs must not read a
 /// missing receipt as a tx that emitted nothing. It is retryable, since a load-balanced node lagging
 /// behind the indexer that surfaced the tx is the usual cause.
 pub async fn receipt_logs(
