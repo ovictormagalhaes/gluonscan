@@ -3,6 +3,10 @@
 //! block number. The RPC URL carries the provider key — no API key is handled here. The consumer owns
 //! the cost-basis math (pairing the inbound leg with what was paid, pricing, averaging).
 
+use std::collections::HashMap;
+use std::str::FromStr;
+
+use alloy_primitives::{hex, Address, U256};
 use chrono::DateTime;
 use gluonscan_core::{Chain, ChainProvider, Error};
 
@@ -35,6 +39,9 @@ pub struct ReceiptTransfer {
     pub to: String,
     /// Raw amount as hex (`0x…`).
     pub value_raw: String,
+    /// The token's `decimals()`, or `None` when the contract gives no usable answer (no code at the
+    /// address, a revert, a return that is not one word or does not fit a `u8`). Never guessed.
+    pub token_decimals: Option<u8>,
 }
 
 /// Extract `result`, mapping an RPC `error` to a retryable [`Error::Transient`] and a missing result
@@ -132,7 +139,57 @@ pub async fn asset_transfers_in(
     Ok(out)
 }
 
-/// The ERC-20 `Transfer` logs of transaction `tx` (empty if the tx is unknown or has none).
+/// ERC-20 `decimals()` calldata.
+const DECIMALS_CALL: &str = "0x313ce567";
+
+/// Whether a JSON-RPC `error` is the contract reverting, a definitive answer, rather than the node
+/// failing to answer.
+fn is_revert(error: &serde_json::Value) -> bool {
+    error.get("code").and_then(|c| c.as_i64()) == Some(3)
+        || error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .is_some_and(|m| m.to_lowercase().contains("revert"))
+}
+
+/// `token`'s `decimals()`: `None` on a definitive non-answer (no code, a revert, a short or
+/// out-of-range return), an error when the node did not answer, so the caller retries rather than
+/// reading the token as one without decimals.
+async fn token_decimals(
+    rpc: &dyn ChainProvider,
+    chain: Chain,
+    token: &str,
+) -> Result<Option<u8>, Error> {
+    if Address::from_str(token).is_err() {
+        return Ok(None);
+    }
+    let params = serde_json::json!([{ "to": token, "data": DECIMALS_CALL }, "latest"]).to_string();
+    let raw = rpc.call(chain, "eth_call", params).await?;
+    let json = parse_json(&raw, "decimals")?;
+    if let Some(e) = json.get("error").filter(|e| !e.is_null()) {
+        if is_revert(e) {
+            return Ok(None);
+        }
+        return Err(Error::Transient {
+            message: format!("decimals of {token} RPC error: {e}"),
+            retry_after: None,
+        });
+    }
+    let out = rpc_result(&json, "decimals")?
+        .as_str()
+        .and_then(|r| hex::decode(r.trim_start_matches("0x")).ok())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("decimals of {token} result not hex"),
+        })?;
+    if out.len() != 32 {
+        return Ok(None);
+    }
+    let decimals = U256::from_be_slice(&out);
+    Ok((decimals <= U256::from(u8::MAX)).then(|| decimals.to::<u8>()))
+}
+
+/// The ERC-20 `Transfer` logs of transaction `tx` (empty if the tx is unknown or has none), each
+/// with its token's decimals, read once per distinct token.
 pub async fn receipt_transfers(
     rpc: &dyn ChainProvider,
     chain: Chain,
@@ -146,6 +203,7 @@ pub async fn receipt_transfers(
         return Ok(Vec::new());
     };
     let mut out = Vec::new();
+    let mut decimals: HashMap<String, Option<u8>> = HashMap::new();
     for log in logs {
         let topics: Vec<&str> = log
             .get("topics")
@@ -155,12 +213,21 @@ pub async fn receipt_transfers(
         if topics.len() < 3 || topics[0] != TRANSFER_TOPIC {
             continue;
         }
+        let token = log
+            .get("address")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let token_decimals = match decimals.get(&token) {
+            Some(d) => *d,
+            None => {
+                let d = token_decimals(rpc, chain, &token).await?;
+                decimals.insert(token.clone(), d);
+                d
+            }
+        };
         out.push(ReceiptTransfer {
-            token: log
-                .get("address")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_lowercase(),
+            token,
             from: topic_address(topics[1]),
             to: topic_address(topics[2]),
             value_raw: log
@@ -168,6 +235,7 @@ pub async fn receipt_transfers(
                 .and_then(|v| v.as_str())
                 .unwrap_or("0x0")
                 .to_string(),
+            token_decimals,
         });
     }
     Ok(out)

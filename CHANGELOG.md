@@ -8,6 +8,31 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.5] - 2026-10-18
+
+### Added
+
+- **`YieldPosition::accounting_asset`** (`Option<Token>`) and **`with_accounting_asset`**: the
+  asset a principal token redeems to at maturity, one unit per PT. For PT-sUSDe that is USDe, not
+  the sUSDe the market wraps (worth about 1.25 USDe), so a consumer checking a PT purchase against
+  its redemption value no longer has to treat the token paid as the redemption asset. A token
+  without an address is the chain's native coin. `None` when the source does not name it.
+- **Pendle reads each market's `accountingAsset`** into the held PT's and YT's `accounting_asset`.
+  Pendle's zero address (ETH-accounted markets such as PT-pufETH) becomes the native coin, never
+  an ERC-20 at `0x0`. A missing entry, or one without a parseable address or decimals, is `None`;
+  it never falls back to `underlyingAsset`.
+- **`ReceiptTransfer::token_decimals`** (`Option<u8>`): each Transfer log of a receipt carries its
+  token's `decimals()`, read once per distinct token, so a consumer scaling what was paid no longer
+  keeps its own decimals table. `None` when the token gives no usable answer (no code, a revert, a
+  return that is not one word or does not fit a `u8`); a node that does not answer fails the read
+  with a retryable error instead.
+
+### Changed
+
+- **Breaking (signature): `ReceiptTransfer` gains the public field `token_decimals`.** A consumer
+  that builds one with a struct literal must set it. `receipt_transfers` now makes one `eth_call`
+  per distinct token in the receipt.
+
 ## [0.3.0-beta.4] - 2026-10-18
 
 ### Added
@@ -600,7 +625,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.4...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.5...HEAD
+[0.3.0-beta.5]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.2...v0.3.0-beta.3
 [0.3.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.1...v0.3.0-beta.2

@@ -832,17 +832,30 @@ pub struct YieldPosition {
     pub expiry: Option<Timestamp>,
     /// Yield rates, e.g. the market-implied APY (empty when the source reports none).
     pub rates: Rates,
+    /// The asset a principal token redeems to at maturity, one unit per PT (Pendle's accounting
+    /// asset: USDe for PT-sUSDe, ETH for PT-weETH). It is not the token the market's SY wraps, which
+    /// can be worth more than one accounting unit (sUSDe). A token without an address is the chain's
+    /// native coin. `None` when the source does not name it; never substituted with another asset.
+    pub accounting_asset: Option<Token>,
 }
 
 impl YieldPosition {
-    /// A yield holding of `kind` for `amount` (no maturity or rates yet).
+    /// A yield holding of `kind` for `amount` (no maturity, rates or accounting asset yet).
     pub fn new(amount: Amount, kind: YieldKind) -> Self {
         YieldPosition {
             amount,
             kind,
             expiry: None,
             rates: Rates::new(),
+            accounting_asset: None,
         }
+    }
+
+    /// Set the accounting asset (builder-style).
+    #[must_use]
+    pub fn with_accounting_asset(mut self, accounting_asset: Option<Token>) -> Self {
+        self.accounting_asset = accounting_asset;
+        self
     }
 
     /// Set the maturity (builder-style).
