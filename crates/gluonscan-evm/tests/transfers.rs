@@ -52,8 +52,12 @@ const BAD_OPCODE: &str = "9999999999999999999999999999999999999999";
 const WALLET: &str = "1111111111111111111111111111111111111111";
 const ROUTER: &str = "2222222222222222222222222222222222222222";
 
-/// A receipt sent by `WALLET` to `ROUTER` with `(token, from, to)` Transfer logs.
+/// A successful receipt sent by `WALLET` to `ROUTER` with `(token, from, to)` Transfer logs.
 fn receipt(logs: &[(&str, &str, &str)]) -> String {
+    receipt_with_status("0x1", logs)
+}
+
+fn receipt_with_status(status: &str, logs: &[(&str, &str, &str)]) -> String {
     let logs: Vec<String> = logs
         .iter()
         .map(|(token, from, to)| {
@@ -65,7 +69,7 @@ fn receipt(logs: &[(&str, &str, &str)]) -> String {
         })
         .collect();
     format!(
-        r#"{{"jsonrpc":"2.0","id":1,"result":{{"from":"0x{WALLET}","to":"0x{ROUTER}","logs":[{}]}}}}"#,
+        r#"{{"jsonrpc":"2.0","id":1,"result":{{"status":"{status}","from":"0x{WALLET}","to":"0x{ROUTER}","logs":[{}]}}}}"#,
         logs.join(",")
     )
 }
@@ -97,7 +101,7 @@ async fn read_receipt_decodes_transfer_logs_and_skips_others() {
     let from = topic(WALLET);
     let to = topic(ROUTER);
     let body = format!(
-        r#"{{"jsonrpc":"2.0","id":1,"result":{{"from":"0x{WALLET}","to":null,"logs":[
+        r#"{{"jsonrpc":"2.0","id":1,"result":{{"status":"0x1","from":"0x{WALLET}","to":null,"logs":[
           {{"address":"0xToKeN","topics":["{TRANSFER_TOPIC}","{from}","{to}"],"data":"0xff"}},
           {{"address":"0xother","topics":["0xdeadbeef"],"data":"0x01"}}
         ]}}}}"#
@@ -110,6 +114,7 @@ async fn read_receipt_decodes_transfer_logs_and_skips_others() {
         .expect("receipt");
 
     // Assert
+    assert!(out.succeeded);
     assert_eq!(out.from, format!("0x{WALLET}").parse::<Address>().unwrap());
     assert_eq!(out.to, None, "a contract creation calls no address");
     assert_eq!(out.value_wei, U256::ZERO);
@@ -277,22 +282,73 @@ async fn an_unseen_receipt_or_transaction_fails_the_read_retryably() {
 }
 
 #[tokio::test]
-async fn a_receipt_without_a_sender_or_logs_is_an_integrity_error() {
+async fn a_failed_transaction_reads_as_not_succeeded() {
     // Arrange
+    let rpc = node(
+        receipt_with_status("0x0", &[]),
+        transaction("0xde0b6b3a7640000"),
+    );
+
+    // Act
+    let out = read_receipt(&rpc, Chain::Ethereum, "0xtx")
+        .await
+        .expect("receipt");
+
+    // Assert
+    assert!(!out.succeeded, "status 0x0");
+    assert_eq!(out.value_wei, U256::from(1_000_000_000_000_000_000u64));
+}
+
+#[tokio::test]
+async fn a_malformed_receipt_or_transaction_is_an_integrity_error() {
+    // Arrange
+    let receipt_body =
+        |fields: &str| format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{{fields}}}}}"#);
+    let tx_body =
+        |fields: &str| format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"hash":"0xtx"{fields}}}}}"#);
+    let ok_receipt = format!(r#""status":"0x1","from":"0x{WALLET}","to":"0x{ROUTER}","logs":[]"#);
     let cases = [
         (
             "no from",
-            r#"{"jsonrpc":"2.0","id":1,"result":{"to":null,"logs":[]}}"#,
+            receipt_body(r#""status":"0x1","to":null,"logs":[]"#),
+            transaction("0x0"),
         ),
         (
             "no logs",
-            r#"{"jsonrpc":"2.0","id":1,"result":{"from":"0x1111111111111111111111111111111111111111"}}"#,
+            receipt_body(&format!(r#""status":"0x1","from":"0x{WALLET}""#)),
+            transaction("0x0"),
+        ),
+        (
+            "unparseable to (None would mean a contract creation)",
+            receipt_body(&format!(
+                r#""status":"0x1","from":"0x{WALLET}","to":"0xnope","logs":[]"#
+            )),
+            transaction("0x0"),
+        ),
+        (
+            "no status",
+            receipt_body(&format!(r#""from":"0x{WALLET}","to":null,"logs":[]"#)),
+            transaction("0x0"),
+        ),
+        (
+            "status neither 0 nor 1",
+            receipt_body(&format!(
+                r#""status":"0x2","from":"0x{WALLET}","to":null,"logs":[]"#
+            )),
+            transaction("0x0"),
+        ),
+        ("no value", receipt_body(&ok_receipt), tx_body("")),
+        ("value 0xzz", receipt_body(&ok_receipt), transaction("0xzz")),
+        (
+            "value without digits",
+            receipt_body(&ok_receipt),
+            transaction("0x"),
         ),
     ];
 
-    for (label, body) in cases {
+    for (label, receipt_reply, tx_reply) in cases {
         // Act
-        let err = read_receipt(&node(body, transaction("0x0")), Chain::Ethereum, "0xtx")
+        let err = read_receipt(&node(receipt_reply, tx_reply), Chain::Ethereum, "0xtx")
             .await
             .expect_err(label);
 
