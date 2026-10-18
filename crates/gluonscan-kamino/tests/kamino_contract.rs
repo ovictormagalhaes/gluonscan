@@ -9,7 +9,7 @@ use gluonscan_core::{
     Chain, Ctx, Detail, Error, EventKind, Position, Protocol, ProtocolAdapter, RateBasis,
     RateWindow, Rates, Source, Timestamp, Wallet,
 };
-use gluonscan_kamino::KaminoApi;
+use gluonscan_kamino::{KaminoApi, HISTORY_DAY_SECS, HISTORY_SETTLE_SECS, HISTORY_STALL_SECS};
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
 use rust_decimal::Decimal;
 
@@ -311,10 +311,20 @@ const OWNED: &str = r#"[{"obligationAddress":"ob1"}]"#;
 /// A second Kamino market (JLP), where the owner holds nothing.
 const OTHER_MARKET: &str = "ByVuX9fRdEHsZomwLVryQQHRhQi3yMXZ6uz6DA4gutja";
 
+/// The clock of a history read: 2026-06-01, after the last day of every history fixture has
+/// settled. A point yields no events until it settles, so a clock inside (or just after) a
+/// fixture's last day would silently drop its last window.
+const HISTORY_NOW: i64 = 1_780_272_000;
+
 /// A history read against `history`, with `owned` as `WALLET`'s obligation list in the main
 /// market; every other market or wallet holds nothing. The mock is returned too, so a test can
 /// inspect the requests made.
 fn history_ctx_with(owned: &str, history: &str) -> (Arc<MockHttp>, Ctx) {
+    history_ctx_at(owned, history, HISTORY_NOW)
+}
+
+/// [`history_ctx_with`] with the clock at `now`.
+fn history_ctx_at(owned: &str, history: &str, now: i64) -> (Arc<MockHttp>, Ctx) {
     let http = Arc::new(
         MockHttp::new()
             .on(
@@ -330,7 +340,7 @@ fn history_ctx_with(owned: &str, history: &str) -> (Arc<MockHttp>, Ctx) {
     let rpc = MockChainProvider::new()
         .on(Match::body_contains("MINT_SOL"), mint_account(9))
         .on(Match::body_contains("MINT_USDC"), mint_account(6));
-    let cx = Ctx::new(http.clone(), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let cx = Ctx::new(http.clone(), Arc::new(MockClock(now))).with_rpc(Arc::new(rpc));
     (http, cx)
 }
 
@@ -420,7 +430,7 @@ async fn resolves_market_from_owner_obligations_when_selector_omits_it() {
     let rpc = MockChainProvider::new()
         .on(Match::body_contains("MINT_SOL"), mint_account(9))
         .on(Match::body_contains("MINT_USDC"), mint_account(6));
-    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(HISTORY_NOW))).with_rpc(Arc::new(rpc));
 
     let history = KaminoApi::new()
         .read_history(
@@ -553,6 +563,570 @@ async fn exponent_form_dust_leg_reads_as_nothing_held() {
     );
 }
 
+// Accrual: a held balance grows between points by its interest alone. Base units: SOL has 9
+// decimals and USDC 6; at 0.2%/day a 5 SOL supply may grow 0.01 SOL (10_000_000) per day and a
+// 100 USDC debt 0.2 USDC (200_000).
+
+/// One obligation point at midnight UTC `day` days after 2026-01-01, with `(mint, base units)`
+/// legs per side.
+fn accrual_point(day: i64, deposits: &[(&str, &str)], borrows: &[(&str, &str)]) -> String {
+    assert!(
+        stall_at(day) <= HISTORY_NOW,
+        "the day must be final by HISTORY_NOW, even as the newest point"
+    );
+    let legs = |side: &[(&str, &str)]| {
+        side.iter()
+            .map(|(mint, amount)| format!(r#"{{"mintAddress":"{mint}","amount":"{amount}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let ts = chrono::DateTime::from_timestamp(day_ts(day).0, 0)
+        .expect("a valid day")
+        .format("%Y-%m-%dT%H:%M:%SZ");
+    format!(
+        r#"{{"timestamp":"{ts}","deposits":[{}],"borrows":[{}]}}"#,
+        legs(deposits),
+        legs(borrows)
+    )
+}
+
+/// When `day`'s point is settled: its last hourly point is published after the day closes. A
+/// point with a newer point after it is final from here.
+fn settled_at(day: i64) -> i64 {
+    day_ts(day).0 + HISTORY_DAY_SECS + HISTORY_SETTLE_SECS
+}
+
+/// When `day`'s point, with no newer point after it, is accepted as final.
+fn stall_at(day: i64) -> i64 {
+    day_ts(day).0 + HISTORY_DAY_SECS + HISTORY_STALL_SECS
+}
+
+/// The Unix timestamp of [`accrual_point`]'s `day`.
+fn day_ts(day: i64) -> Timestamp {
+    Timestamp(1_767_225_600 + day * 86_400)
+}
+
+type Ev = (EventKind, String, Decimal, Timestamp);
+
+async fn accrual_events(points: &[String]) -> Vec<Ev> {
+    accrual_events_at(points, HISTORY_NOW).await
+}
+
+/// The events of a history of `points` read with the clock at `now`.
+async fn accrual_events_at(points: &[String], now: i64) -> Vec<Ev> {
+    accrual_read(points, None, now)
+        .await
+        .into_iter()
+        .map(|e| (e.kind, e.amount.token.symbol, e.amount.amount, e.at))
+        .collect()
+}
+
+/// The raw events of a history of `points` read from `since` with the clock at `now`.
+async fn accrual_read(
+    points: &[String],
+    since: Option<Timestamp>,
+    now: i64,
+) -> Vec<gluonscan_core::HistoryEvent> {
+    let history = format!(r#"{{"history":[{}]}}"#, points.join(","));
+    let (_, cx) = history_ctx_at(OWNED, &history, now);
+    KaminoApi::new()
+        .read_history(
+            &Wallet::Solana(WALLET.to_string()),
+            Chain::Solana,
+            Some(&explicit()),
+            since,
+            &cx,
+        )
+        .await
+        .expect("read_history")
+        .into_inner()
+        .events
+}
+
+fn ev(kind: EventKind, symbol: &str, amount: &str, day: i64) -> Ev {
+    (
+        kind,
+        symbol.to_string(),
+        Decimal::from_str_exact(amount).unwrap(),
+        day_ts(day),
+    )
+}
+
+#[tokio::test]
+async fn daily_accrual_is_reported_as_interest() {
+    let points = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+        accrual_point(
+            2,
+            &[("MINT_SOL", "5000800000")],
+            &[("MINT_USDC", "100060000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&points).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 2),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 2),
+        ],
+        "growth within the daily bound is interest, not a deposit or a borrow"
+    );
+
+    // The synthetic id names the interest kind, so it never collides with a Deposit/Borrow id.
+    let history = format!(r#"{{"history":[{},{}]}}"#, points[0], points[1]);
+    let history = read_history_with(&history_ctx(&history), &explicit())
+        .await
+        .expect("read_history");
+    let ids: Vec<_> = history.events.iter().map(|e| e.tx.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![
+            "kamino:ob1:1767312000:supply_interest:MINT_SOL",
+            "kamino:ob1:1767312000:borrow_interest:MINT_USDC",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn growth_far_above_the_bound_is_a_deposit_or_borrow_of_the_whole_delta() {
+    let points = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+        // A 2 SOL deposit and a 50 USDC borrow, each on top of the day's accrual.
+        accrual_point(
+            2,
+            &[("MINT_SOL", "7000800000")],
+            &[("MINT_USDC", "150060000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&points).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+            ev(EventKind::Deposit, "SOL", "2.0004", 2),
+            ev(EventKind::Borrow, "USDC", "50.03", 2),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_bound_scales_with_the_time_between_points() {
+    // 0.015 SOL and 0.3 USDC: over one day's bound (0.01 / 0.2), within two days' (0.02 / 0.4).
+    let two_days = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            2,
+            &[("MINT_SOL", "5015000000")],
+            &[("MINT_USDC", "100300000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&two_days).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.015", 2),
+            ev(EventKind::BorrowInterest, "USDC", "0.3", 2),
+        ],
+        "a two-day gap allows two days of accrual"
+    );
+
+    let one_day = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5015000000")],
+            &[("MINT_USDC", "100300000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&one_day).await,
+        vec![
+            ev(EventKind::Deposit, "SOL", "0.015", 1),
+            ev(EventKind::Borrow, "USDC", "0.3", 1),
+        ],
+        "the same growth over one day is over the bound"
+    );
+}
+
+#[tokio::test]
+async fn a_long_data_gap_credits_two_days_of_accrual() {
+    // 103 days between points (a real gap in the API's data): uncapped, the bound would allow
+    // 20.6% of the balance. A 1% top-up (0.05 SOL, 1 USDC) is over two days' bound (0.02 / 0.4).
+    let top_up = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            103,
+            &[("MINT_SOL", "5050000000")],
+            &[("MINT_USDC", "101000000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&top_up).await,
+        vec![
+            ev(EventKind::Deposit, "SOL", "0.05", 103),
+            ev(EventKind::Borrow, "USDC", "1", 103),
+        ],
+        "growth over two days' bound across a long gap is an action"
+    );
+
+    // Exactly two days' bound across the same gap is still interest.
+    let accrued = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            103,
+            &[("MINT_SOL", "5020000000")],
+            &[("MINT_USDC", "100400000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&accrued).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.02", 103),
+            ev(EventKind::BorrowInterest, "USDC", "0.4", 103),
+        ]
+    );
+}
+
+/// Days 0-3 of an obligation with two reserves supplied (SOL, USDC) and one borrowed (USDC): day
+/// 1 accrues on every leg, day 2 deposits 2 SOL and 500 USDC on top of the accrual, day 3 accrues
+/// again and is day 2's successor.
+fn two_reserve_days() -> [String; 4] {
+    [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000"), ("MINT_USDC", "1000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000"), ("MINT_USDC", "1000100000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+        accrual_point(
+            2,
+            &[("MINT_SOL", "7000800000"), ("MINT_USDC", "1500200000")],
+            &[("MINT_USDC", "100060000")],
+        ),
+        accrual_point(
+            3,
+            &[("MINT_SOL", "7002000000"), ("MINT_USDC", "1501000000")],
+            &[("MINT_USDC", "100090000")],
+        ),
+    ]
+}
+
+fn two_reserve_day1() -> Vec<Ev> {
+    vec![
+        ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+        ev(EventKind::SupplyInterest, "USDC", "0.1", 1),
+        ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+    ]
+}
+
+fn two_reserve_day2() -> Vec<Ev> {
+    vec![
+        ev(EventKind::Deposit, "SOL", "2.0004", 2),
+        ev(EventKind::Deposit, "USDC", "500.1", 2),
+        ev(EventKind::BorrowInterest, "USDC", "0.03", 2),
+    ]
+}
+
+fn day_txs(events: &[gluonscan_core::HistoryEvent], day: i64) -> Vec<String> {
+    events
+        .iter()
+        .filter(|e| e.at == day_ts(day))
+        .map(|e| e.tx.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_day_yields_no_events_until_its_point_settles() {
+    // Day 2's point is revised by the API until day 2's 23:00 hourly point is published, after
+    // day 2 closes. Day 3's point follows it, so only the clock holds day 2 back. Every leg of the
+    // held window (two supplied reserves and the borrow) is held and released together.
+    let points = two_reserve_days();
+    let day3 = day_ts(3).0;
+    // From day 1's settlement until one second before day 2's, including day 3 00:00, when day 2
+    // has closed but its last hourly point is not published yet.
+    for now in [
+        settled_at(1),
+        day_ts(2).0 + 12 * 3_600,
+        day3,
+        settled_at(2) - 1,
+    ] {
+        assert_eq!(
+            accrual_events_at(&points, now).await,
+            two_reserve_day1(),
+            "day 2's point is not final at {now}: only the settled days' windows"
+        );
+    }
+
+    let mut all = two_reserve_day1();
+    all.extend(two_reserve_day2());
+    assert_eq!(
+        accrual_events_at(&points, settled_at(2)).await,
+        all,
+        "once day 2's point settles (with a successor) its window is emitted"
+    );
+    assert_eq!(
+        settled_at(2),
+        day3 + 4 * 3_600,
+        "settles 4h after the day closes"
+    );
+
+    // A day released early keeps its ids in every later read.
+    let early = accrual_read(&points, None, settled_at(1)).await;
+    let later = accrual_read(&points, None, settled_at(2)).await;
+    assert_eq!(day_txs(&early, 1).len(), 3);
+    assert_eq!(day_txs(&early, 1), day_txs(&later, 1));
+}
+
+#[tokio::test]
+async fn the_newest_point_waits_for_a_successor_or_the_stall_bound() {
+    let day0 = accrual_point(
+        0,
+        &[("MINT_SOL", "5000000000")],
+        &[("MINT_USDC", "100000000")],
+    );
+    let day1 = accrual_point(
+        1,
+        &[("MINT_SOL", "5000400000")],
+        &[("MINT_USDC", "100030000")],
+    );
+    let day2 = accrual_point(
+        2,
+        &[("MINT_SOL", "5000800000")],
+        &[("MINT_USDC", "100060000")],
+    );
+    let day1_events = vec![
+        ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+        ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+    ];
+
+    // Day 1 is the newest point: settled, it may still miss its last hours if publication
+    // stalled, so it waits for the series to stay silent past the stall bound.
+    let newest = [day0.clone(), day1.clone()];
+    for now in [settled_at(1), day_ts(2).0 + 36 * 3_600, stall_at(1) - 1] {
+        assert_eq!(
+            accrual_events_at(&newest, now).await,
+            vec![],
+            "day 1 has no successor and the series is not stalled at {now}"
+        );
+    }
+    assert_eq!(
+        accrual_events_at(&newest, stall_at(1)).await,
+        day1_events,
+        "a series silent past the stall bound is final"
+    );
+    assert_eq!(stall_at(1), day_ts(2).0 + 2 * 86_400);
+
+    // With day 2's point after it, day 1 is final at plain settlement.
+    let succeeded = [day0, day1, day2];
+    assert_eq!(
+        accrual_events_at(&succeeded, settled_at(1) - 1).await,
+        vec![]
+    );
+    assert_eq!(
+        accrual_events_at(&succeeded, settled_at(1)).await,
+        day1_events
+    );
+}
+
+#[tokio::test]
+async fn since_and_the_settle_gate_return_a_held_day_exactly_once() {
+    // A consumer checkpointed on day 1's events (since = day 1) reads again: day 2 is absent until
+    // it settles, then comes back alone, older than the read that was missing it.
+    let points = two_reserve_days();
+    let since = Some(day_ts(1));
+    assert!(accrual_read(&points, since, settled_at(2) - 1)
+        .await
+        .is_empty());
+    let released: Vec<Ev> = accrual_read(&points, since, settled_at(2))
+        .await
+        .into_iter()
+        .map(|e| (e.kind, e.amount.token.symbol, e.amount.amount, e.at))
+        .collect();
+    assert_eq!(released, two_reserve_day2());
+}
+
+#[tokio::test]
+async fn a_clock_before_the_points_yields_no_events() {
+    let points = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+    ];
+    for now in [
+        i64::MIN,
+        0,
+        day_ts(0).0 - 1,
+        day_ts(1).0 - 1,
+        settled_at(1) - 1,
+    ] {
+        assert_eq!(
+            accrual_events_at(&points, now).await,
+            vec![],
+            "no settled point at {now}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn growth_at_the_bound_is_interest_and_just_above_is_an_action() {
+    let at = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5010000000")],
+            &[("MINT_USDC", "100200000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&at).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.01", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.2", 1),
+        ],
+        "exactly 0.2% in one day is still interest"
+    );
+
+    // One base unit over the bound on each side.
+    let above = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5010000001")],
+            &[("MINT_USDC", "100200001")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&above).await,
+        vec![
+            ev(EventKind::Deposit, "SOL", "0.010000001", 1),
+            ev(EventKind::Borrow, "USDC", "0.200001", 1),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn decreases_stay_withdraw_and_repay() {
+    let points = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+        // 1 SOL withdrawn and 40 USDC repaid.
+        accrual_point(
+            2,
+            &[("MINT_SOL", "4000400000")],
+            &[("MINT_USDC", "60030000")],
+        ),
+        // A fall far smaller than a day's accrual is still a withdrawal / repayment.
+        accrual_point(
+            3,
+            &[("MINT_SOL", "4000300000")],
+            &[("MINT_USDC", "60020000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&points).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+            ev(EventKind::Withdraw, "SOL", "1", 2),
+            ev(EventKind::Repay, "USDC", "40", 2),
+            ev(EventKind::Withdraw, "SOL", "0.0001", 3),
+            ev(EventKind::Repay, "USDC", "0.01", 3),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn growth_from_zero_is_a_deposit_or_borrow() {
+    let points = [
+        accrual_point(0, &[("MINT_SOL", "5000000000")], &[]),
+        // A first borrow opens the debt, however small.
+        accrual_point(1, &[("MINT_SOL", "5000400000")], &[("MINT_USDC", "10000")]),
+        accrual_point(2, &[("MINT_SOL", "5000800000")], &[("MINT_USDC", "10000")]),
+    ];
+    assert_eq!(
+        accrual_events(&points).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+            ev(EventKind::Borrow, "USDC", "0.01", 1),
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 2),
+        ]
+    );
+
+    // A supply opened from nothing is a deposit, however small.
+    let opened = [
+        accrual_point(0, &[], &[("MINT_USDC", "100000000")]),
+        accrual_point(1, &[("MINT_SOL", "1000")], &[("MINT_USDC", "100030000")]),
+    ];
+    assert_eq!(
+        accrual_events(&opened).await,
+        vec![
+            ev(EventKind::Deposit, "SOL", "0.000001", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn non_base58_selector_is_refused_before_any_request() {
     for selector in [
@@ -660,7 +1234,7 @@ async fn ownership_read_failure_is_retryable_never_ok() {
     let rpc = MockChainProvider::new()
         .on(Match::body_contains("MINT_SOL"), mint_account(9))
         .on(Match::body_contains("MINT_USDC"), mint_account(6));
-    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(HISTORY_NOW))).with_rpc(Arc::new(rpc));
     let err = read_history_with(&cx, &explicit())
         .await
         .expect_err("an unverified ownership is not a history");

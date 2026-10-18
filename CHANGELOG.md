@@ -8,6 +8,58 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.4] - 2026-10-18
+
+### Added
+
+- **`EventKind::SupplyInterest` and `EventKind::BorrowInterest`.** A supplied balance that grew by
+  the interest it earned, and a borrowed balance that grew by the interest owed, between two
+  readings. Neither is an action of the owner; the amount is the growth of the balance.
+- **`gluonscan_kamino::MAX_ACCRUAL_PER_DAY`** (0.2%/day), the largest daily growth of a held
+  balance, as a fraction of the previous balance, that Kamino history reads as interest;
+  **`MAX_ACCRUAL_GAP_SECS`** (2 days), the most time between two points credited to accrual;
+  **`HISTORY_DAY_SECS`**, the span of one daily point; **`HISTORY_SETTLE_SECS`** (4h), how long
+  after its day closes a daily point may still be revised; and **`HISTORY_STALL_SECS`** (2 days),
+  how long after its day closes a point with no newer point is accepted as final.
+
+### Changed
+
+- **Breaking (behaviour): Kamino history reports interest accrual as interest.** History is the
+  per-mint delta between consecutive `metrics/history` points, so a supplied or borrowed balance
+  produced a Deposit or Borrow event at every point for its accrued interest (on a live obligation,
+  about 300 of each next to a handful of real actions). A rise of a held balance at or under
+  `MAX_ACCRUAL_PER_DAY` times the time between the two points, credited for at most
+  `MAX_ACCRUAL_GAP_SECS` (two days, so a top-up across a data gap is not read as months of
+  interest), is now `SupplyInterest` (deposits) or `BorrowInterest` (borrows) of the growth. A rise
+  above that bound stays a Deposit / Borrow of the whole delta (the period's accrual included), as
+  does a rise from a zero balance; every fall stays a Withdraw / Repay. Amounts are unchanged. A
+  reserve accruing faster than 0.2%/day (FDUSD paid about 159% APY for weeks) still reads as
+  Deposit / Borrow, as does accrual across a real multi-day gap in the API's data that exceeds the
+  capped (two-day) bound; an action small enough to fit under the bound reads as interest.
+  Consumers matching `EventKind` must handle the two new kinds (the enum is `#[non_exhaustive]`, so
+  a wildcard arm already compiles, but would now see accrual there instead of under Deposit /
+  Borrow).
+- **Breaking (behaviour): accrual events change id; rebuild stored Kamino history.** The synthetic
+  id carries the kind, so an accrual event stored as `kamino:{obligation}:{ts}:deposit:{mint}` or
+  `...:borrow:{mint}` now comes back as `...:supply_interest:{mint}` or
+  `...:borrow_interest:{mint}`. A consumer that keeps stored events and inserts new ones by id
+  (`ON CONFLICT DO NOTHING`) keeps both and double counts: drop the stored Kamino history and read
+  it again.
+- **Breaking (behaviour): Kamino history waits for each day to settle.** A daily point carries
+  the newest hourly point published inside its day, so the API revises it until the day's last
+  hourly point (23:00) is published, about 1-2h after the UTC day closes. The event kind (so the
+  id) now depends on the amount: one read could store a day as `supply_interest` and a later one as
+  `deposit`, or keep a partial amount. A point now yields no events until it is settled
+  (`HISTORY_DAY_SECS` + `HISTORY_SETTLE_SECS`, 28h, after its timestamp by the context clock) and
+  either a newer point exists in the series (hours publish in order, so the next day's point proves
+  the day's last hour was published) or the series has been silent for `HISTORY_DAY_SECS` +
+  `HISTORY_STALL_SECS` (3 days) after the point, so a stalled publication is not taken as final
+  and a series that stops is not held back for good. A day's activity appears a few hours after
+  that day has closed; the newest day of a series that has stopped appears two days after it
+  closed. Consumers reading incrementally must checkpoint on the newest returned event's
+  timestamp (as `since`), never on the read time: a day that was not final at one read is
+  returned by a later one with a timestamp older than that read.
+
 ## [0.3.0-beta.3] - 2026-10-18
 
 ### Added
@@ -548,7 +600,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.3...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.4...HEAD
+[0.3.0-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.2...v0.3.0-beta.3
 [0.3.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.1...v0.3.0-beta.2
 [0.3.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.5...v0.3.0-beta.1
