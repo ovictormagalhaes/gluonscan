@@ -1,0 +1,798 @@
+{
+ "total": 3,
+ "limit": 100,
+ "skip": 0,
+ "results": [
+  {
+   "id": "42161-0xf78452e0f5c0b95fc5dc8353b8cd1e06e53fa25b",
+   "chainId": 42161,
+   "address": "0xf78452e0f5c0b95fc5dc8353b8cd1e06e53fa25b",
+   "symbol": "PENDLE-LPT",
+   "expiry": "2026-06-25T00:00:00.000Z",
+   "pt": {
+    "id": "42161-0x71fbf40651e9d4278a74586afc99f307f369ce9a",
+    "chainId": 42161,
+    "address": "0x71fbf40651e9d4278a74586afc99f307f369ce9a",
+    "symbol": "PT-wstETH-25JUN2026",
+    "decimals": 18,
+    "expiry": "2026-06-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 2361.986729830242
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "PT-wstETH-25JUN2026",
+    "baseType": "PT",
+    "types": [
+     "PT"
+    ],
+    "underlyingPool": "",
+    "proSymbol": "PT wstETH (stETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/ae07850a-421b-4fe1-87ec-5ba8fa65da68.svg",
+    "zappable": false,
+    "simpleName": "PT wstETH (stETH)",
+    "simpleSymbol": "PT wstETH (stETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/ae07850a-421b-4fe1-87ec-5ba8fa65da68.svg",
+    "proName": "PT wstETH (stETH)"
+   },
+   "yt": {
+    "id": "42161-0x25bda1edd6af17c61399aa0eb84b93daa3069764",
+    "chainId": 42161,
+    "address": "0x25bda1edd6af17c61399aa0eb84b93daa3069764",
+    "symbol": "YT-wstETH-25JUN2026",
+    "decimals": 18,
+    "expiry": "2026-06-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 0
+    },
+    "priceUpdatedAt": "2026-10-18T18:18:00.000Z",
+    "name": "YT-wstETH-25JUN2026",
+    "baseType": "YT",
+    "types": [
+     "YT"
+    ],
+    "underlyingPool": "",
+    "proSymbol": "YT wstETH (stETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/11cf9031-51a3-44e2-8981-efd74815570f.svg",
+    "zappable": false,
+    "simpleName": "YT wstETH (stETH)",
+    "simpleSymbol": "YT wstETH (stETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/11cf9031-51a3-44e2-8981-efd74815570f.svg",
+    "proName": "YT wstETH (stETH)"
+   },
+   "sy": {
+    "id": "42161-0x80c12d5b6cc494632bf11b03f09436c8b61cc5df",
+    "chainId": 42161,
+    "address": "0x80c12d5b6cc494632bf11b03f09436c8b61cc5df",
+    "symbol": "SY-wstETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "#00A3FF",
+    "price": {
+     "usd": 2944.50011874
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "SY-wstETH",
+    "baseType": "SY",
+    "types": [
+     "SY"
+    ],
+    "protocol": "Lido",
+    "underlyingPool": "",
+    "proSymbol": "wstETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/a61868a5-a5c7-42ec-88ee-6fff212300a6.svg",
+    "zappable": false,
+    "simpleName": "wstETH",
+    "simpleSymbol": "wstETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/a61868a5-a5c7-42ec-88ee-6fff212300a6.svg",
+    "proName": "wstETH"
+   },
+   "lp": {
+    "id": "42161-0xf78452e0f5c0b95fc5dc8353b8cd1e06e53fa25b",
+    "chainId": 42161,
+    "address": "0xf78452e0f5c0b95fc5dc8353b8cd1e06e53fa25b",
+    "symbol": "PENDLE-LPT",
+    "decimals": 18,
+    "expiry": "2026-06-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 6532.032487205662
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "PENDLE-LPT",
+    "baseType": "PENDLE_LP",
+    "types": [
+     "PENDLE_LP"
+    ],
+    "underlyingPool": "",
+    "proSymbol": "LP wstETH (stETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/e7fe9cd9-42f4-4f0a-9f68-5f15e9e03e93.svg",
+    "zappable": false,
+    "simpleName": "LP wstETH (stETH)",
+    "simpleSymbol": "LP wstETH (stETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/e7fe9cd9-42f4-4f0a-9f68-5f15e9e03e93.svg",
+    "proName": "LP wstETH (stETH)"
+   },
+   "accountingAsset": {
+    "id": "1-0xae7ab96520de3a18e5e111b5eaab095312d7fe84",
+    "chainId": 1,
+    "address": "0xae7ab96520de3a18e5e111b5eaab095312d7fe84",
+    "symbol": "stETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "",
+    "price": {
+     "usd": 2364.5725
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "stETH",
+    "baseType": "GENERIC",
+    "types": [
+     "GENERIC"
+    ],
+    "protocol": "Lido",
+    "proSymbol": "stETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/f9772f47-87b1-4af4-942f-5ff7e2bfc4e4.svg",
+    "zappable": true,
+    "simpleName": "stETH",
+    "simpleSymbol": "stETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/f9772f47-87b1-4af4-942f-5ff7e2bfc4e4.svg",
+    "proName": "stETH"
+   },
+   "underlyingAsset": {
+    "id": "42161-0x5979d7b546e38e414f7e9822514be443a4800529",
+    "chainId": 42161,
+    "address": "0x5979d7b546e38e414f7e9822514be443a4800529",
+    "symbol": "wstETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "",
+    "price": {
+     "usd": 2944.50011874
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "wstETH",
+    "baseType": "IB",
+    "types": [
+     "IB"
+    ],
+    "protocol": "Lido",
+    "proSymbol": "wstETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/d2c97460-71a2-43c8-a049-1ed9ca4b85f2.svg",
+    "zappable": true,
+    "simpleName": "wstETH",
+    "simpleSymbol": "wstETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/d2c97460-71a2-43c8-a049-1ed9ca4b85f2.svg",
+    "proName": "wstETH"
+   },
+   "basePricingAsset": {
+    "id": "1-0xae7ab96520de3a18e5e111b5eaab095312d7fe84",
+    "chainId": 1,
+    "address": "0xae7ab96520de3a18e5e111b5eaab095312d7fe84",
+    "symbol": "stETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "",
+    "price": {
+     "usd": 2364.5725
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "stETH",
+    "baseType": "GENERIC",
+    "types": [
+     "GENERIC"
+    ],
+    "protocol": "Lido",
+    "proSymbol": "stETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/f9772f47-87b1-4af4-942f-5ff7e2bfc4e4.svg",
+    "zappable": true,
+    "simpleName": "stETH",
+    "simpleSymbol": "stETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/f9772f47-87b1-4af4-942f-5ff7e2bfc4e4.svg",
+    "proName": "stETH"
+   },
+   "protocol": "Lido",
+   "underlyingPool": "",
+   "proSymbol": "wstETH",
+   "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/924c2346-a39b-4a9a-b19f-43ed862ae7d6.svg",
+   "assetRepresentation": "Unknown",
+   "isWhitelistedPro": true,
+   "isWhitelistedSimple": false,
+   "votable": true,
+   "isActive": true,
+   "isWhitelistedLimitOrder": true,
+   "accentColor": "#00A3FF",
+   "totalPt": 63.50404771302446,
+   "totalSy": 101.76020332994118,
+   "totalLp": 68.83441710637224,
+   "liquidity": {
+    "usd": 104634.04563294986,
+    "acc": 44.29734846908151
+   },
+   "tradingVolume": {
+    "usd": 0
+   },
+   "underlyingInterestApy": 0.023609624838089482,
+   "underlyingRewardApy": 0,
+   "underlyingApy": 0.023609624838089482,
+   "impliedApy": 0,
+   "ytFloatingApy": 0,
+   "ptDiscount": 1.118156457424746e-07,
+   "swapFeeApy": 7.301712947604955e-07,
+   "pendleApy": 0,
+   "aggregatedApy": 0.015696947472297672,
+   "maxBoostedApy": 0.015696947472297672,
+   "lpRewardApy": 0,
+   "voterApy": -0.0002317456201230131,
+   "ytRoi": -1,
+   "ptRoi": 3.606956511248427e-09,
+   "dataUpdatedAt": "2026-10-18T18:18:00.000Z",
+   "categoryIds": [
+    "eth",
+    "lido"
+   ],
+   "timestamp": "2025-06-11T11:23:30.000Z",
+   "whitelistedProAt": "2025-06-25T15:59:20.991Z",
+   "scalarRoot": 175.56991838558798,
+   "initialAnchor": 1.0337273098523712,
+   "extendedInfo": {
+    "floatingPt": 55.42722285077418,
+    "floatingSy": 430.5956697891357,
+    "pyUnit": "stETH",
+    "ptEqualsPyUnit": false,
+    "underlyingAssetWorthMore": "wstETH",
+    "feeRate": 0.0005849966654678518,
+    "yieldRange": {
+     "min": 0.02,
+     "max": 0.045
+    }
+   },
+   "isFeatured": false,
+   "isPopular": false,
+   "tvlThresholdTimestamp": "2025-06-25T16:00:00.000Z",
+   "isNew": false,
+   "name": "PENDLE-LPT",
+   "simpleName": "wstETH",
+   "simpleSymbol": "wstETH",
+   "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/924c2346-a39b-4a9a-b19f-43ed862ae7d6.svg",
+   "proName": "wstETH",
+   "farmName": "wstETH",
+   "farmSymbol": "wstETH",
+   "farmSimpleName": "wstETH",
+   "farmSimpleSymbol": "wstETH",
+   "farmSimpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/924c2346-a39b-4a9a-b19f-43ed862ae7d6.svg",
+   "farmProName": "wstETH",
+   "farmProSymbol": "wstETH",
+   "farmProIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/924c2346-a39b-4a9a-b19f-43ed862ae7d6.svg"
+  },
+  {
+   "id": "42161-0x6f02c88650837c8dfe89f66723c4743e9cf833cd",
+   "chainId": 42161,
+   "address": "0x6f02c88650837c8dfe89f66723c4743e9cf833cd",
+   "symbol": "PENDLE-LPT",
+   "expiry": "2024-04-25T00:00:00.000Z",
+   "pt": {
+    "id": "42161-0x8d164e0c662c9e199baac9e97b6a8664c75700ea",
+    "chainId": 42161,
+    "address": "0x8d164e0c662c9e199baac9e97b6a8664c75700ea",
+    "symbol": "PT-rsETH-25APR2024",
+    "decimals": 18,
+    "expiry": "2024-04-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 2377.9193697847672
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "PT-rsETH-25APR2024",
+    "baseType": "PT",
+    "types": [
+     "PT"
+    ],
+    "protocol": "Kelp",
+    "underlyingPool": "",
+    "proSymbol": "PT rsETH (ETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/4851785c-d3a9-4a26-994b-b34549645063.svg",
+    "zappable": false,
+    "simpleName": "PT rsETH (ETH)",
+    "simpleSymbol": "PT rsETH (ETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/4851785c-d3a9-4a26-994b-b34549645063.svg",
+    "proName": "PT rsETH (ETH)"
+   },
+   "yt": {
+    "id": "42161-0x28df0f193d8e45073bc1db6f2347812c031ba818",
+    "chainId": 42161,
+    "address": "0x28df0f193d8e45073bc1db6f2347812c031ba818",
+    "symbol": "YT-rsETH-25APR2024",
+    "decimals": 18,
+    "expiry": "2024-04-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 0
+    },
+    "priceUpdatedAt": "2026-10-18T16:33:00.000Z",
+    "name": "YT-rsETH-25APR2024",
+    "baseType": "YT",
+    "types": [
+     "YT"
+    ],
+    "protocol": "Kelp",
+    "underlyingPool": "",
+    "proSymbol": "YT rsETH (ETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/800fcf6f-dfc4-42ce-a4fa-c15dd5665fec.svg",
+    "zappable": false,
+    "simpleName": "YT rsETH (ETH)",
+    "simpleSymbol": "YT rsETH (ETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/800fcf6f-dfc4-42ce-a4fa-c15dd5665fec.svg",
+    "proName": "YT rsETH (ETH)"
+   },
+   "sy": {
+    "id": "42161-0xf176fb51f4eb826136a54fdc71c50fcd2202e272",
+    "chainId": 42161,
+    "address": "0xf176fb51f4eb826136a54fdc71c50fcd2202e272",
+    "symbol": "SY-rsETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "#30A0A0",
+    "price": {
+     "usd": 2573.41276031
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "SY-rsETH",
+    "baseType": "SY",
+    "types": [
+     "SY"
+    ],
+    "protocol": "Kelp",
+    "underlyingPool": "",
+    "proSymbol": "rsETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/2a4cb4b4-8d8d-4425-8d45-597635b71b44.svg",
+    "zappable": false,
+    "simpleName": "rsETH",
+    "simpleSymbol": "rsETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/2a4cb4b4-8d8d-4425-8d45-597635b71b44.svg",
+    "proName": "rsETH"
+   },
+   "lp": {
+    "id": "42161-0x6f02c88650837c8dfe89f66723c4743e9cf833cd",
+    "chainId": 42161,
+    "address": "0x6f02c88650837c8dfe89f66723c4743e9cf833cd",
+    "symbol": "PENDLE-LPT",
+    "decimals": 18,
+    "expiry": "2024-04-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 4931.2370501257
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "PENDLE-LPT",
+    "baseType": "PENDLE_LP",
+    "types": [
+     "PENDLE_LP"
+    ],
+    "protocol": "Kelp",
+    "underlyingPool": "",
+    "proSymbol": "LP rsETH (ETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/52184e6a-06a1-4837-a58a-bf2957fd9a2c.svg",
+    "zappable": false,
+    "simpleName": "LP rsETH (ETH)",
+    "simpleSymbol": "LP rsETH (ETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/52184e6a-06a1-4837-a58a-bf2957fd9a2c.svg",
+    "proName": "LP rsETH (ETH)"
+   },
+   "accountingAsset": {
+    "id": "1-0x0000000000000000000000000000000000000000",
+    "chainId": 1,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "ETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": null,
+    "price": {
+     "usd": 2362.81857196
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "ETH",
+    "baseType": "NATIVE",
+    "types": [
+     "NATIVE"
+    ],
+    "protocol": null,
+    "proSymbol": "ETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/3e9c6be7-0a20-4b5f-8c34-f49c223fc689.svg",
+    "zappable": true,
+    "simpleName": "ETH",
+    "simpleSymbol": "ETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/3e9c6be7-0a20-4b5f-8c34-f49c223fc689.svg",
+    "proName": "ETH"
+   },
+   "underlyingAsset": {
+    "id": "42161-0x4186bfc76e2e237523cbc30fd220fe055156b41f",
+    "chainId": 42161,
+    "address": "0x4186bfc76e2e237523cbc30fd220fe055156b41f",
+    "symbol": "rsETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "",
+    "price": {
+     "usd": 2573.41276031
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "rsETH",
+    "baseType": "IB",
+    "types": [
+     "IB"
+    ],
+    "protocol": "Kelp",
+    "proSymbol": "rsETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/fac8e166-0562-45a2-b151-9d7b9d24f995.svg",
+    "zappable": true,
+    "simpleName": "rsETH",
+    "simpleSymbol": "rsETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/fac8e166-0562-45a2-b151-9d7b9d24f995.svg",
+    "proName": "rsETH"
+   },
+   "basePricingAsset": {
+    "id": "1-0x0000000000000000000000000000000000000000",
+    "chainId": 1,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "ETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": null,
+    "price": {
+     "usd": 2362.81857196
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "ETH",
+    "baseType": "NATIVE",
+    "types": [
+     "NATIVE"
+    ],
+    "protocol": null,
+    "proSymbol": "ETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/3e9c6be7-0a20-4b5f-8c34-f49c223fc689.svg",
+    "zappable": true,
+    "simpleName": "ETH",
+    "simpleSymbol": "ETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/3e9c6be7-0a20-4b5f-8c34-f49c223fc689.svg",
+    "proName": "ETH"
+   },
+   "protocol": "Kelp",
+   "underlyingPool": "",
+   "proSymbol": "rsETH",
+   "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/d2f3004a-9b9f-45f5-b920-0fc98917a232.svg",
+   "assetRepresentation": "ETH",
+   "isWhitelistedPro": true,
+   "isWhitelistedSimple": true,
+   "votable": false,
+   "isActive": true,
+   "isWhitelistedLimitOrder": true,
+   "accentColor": "#30A0A0",
+   "totalPt": 176.6230388257814,
+   "totalSy": 7.278728840943041,
+   "totalLp": 88.96885596708606,
+   "liquidity": {
+    "usd": 39374.02008444461,
+    "acc": 16.564836619352633
+   },
+   "tradingVolume": {
+    "usd": 0
+   },
+   "underlyingInterestApy": 0.025134153345142574,
+   "underlyingRewardApy": 0,
+   "underlyingApy": 0.025134153345142574,
+   "impliedApy": 0,
+   "ytFloatingApy": 0,
+   "ptDiscount": 0,
+   "swapFeeApy": 0,
+   "pendleApy": 0,
+   "arbApy": 0,
+   "aggregatedApy": 0.0010256495952011475,
+   "maxBoostedApy": 0.0010256495952011475,
+   "lpRewardApy": 0,
+   "voterApy": 0,
+   "ytRoi": -1,
+   "ptRoi": 0,
+   "dataUpdatedAt": "2026-10-18T16:33:00.000Z",
+   "categoryIds": [
+    "points",
+    "eth"
+   ],
+   "timestamp": "2024-02-13T08:29:58.000Z",
+   "whitelistedProAt": "2024-02-14T11:42:30.043Z",
+   "scalarRoot": 13.486943734,
+   "initialAnchor": 1.05086354,
+   "extendedInfo": {
+    "floatingPt": 20.168342269921563,
+    "floatingSy": 3878.532922880212,
+    "pyUnit": "ETH on Kelp",
+    "ptEqualsPyUnit": true,
+    "feeRate": 0.000999999999916401,
+    "yieldRange": {
+     "min": 0.10000235476107079,
+     "max": 0.5000032089286078
+    }
+   },
+   "isFeatured": false,
+   "isPopular": false,
+   "tvlThresholdTimestamp": "2024-02-14T01:40:00.000Z",
+   "isNew": false,
+   "name": "PENDLE-LPT",
+   "simpleName": "rsETH",
+   "simpleSymbol": "rsETH",
+   "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/d2f3004a-9b9f-45f5-b920-0fc98917a232.svg",
+   "proName": "rsETH",
+   "farmName": "rsETH",
+   "farmSymbol": "rsETH",
+   "farmSimpleName": "rsETH",
+   "farmSimpleSymbol": "rsETH",
+   "farmSimpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/d2f3004a-9b9f-45f5-b920-0fc98917a232.svg",
+   "farmProName": "rsETH",
+   "farmProSymbol": "rsETH",
+   "farmProIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/d2f3004a-9b9f-45f5-b920-0fc98917a232.svg"
+  },
+  {
+   "id": "42161-0xd7eac6c9109d8c3977ebce4e7dbf0a5a9532e240",
+   "chainId": 42161,
+   "address": "0xd7eac6c9109d8c3977ebce4e7dbf0a5a9532e240",
+   "symbol": "PENDLE-LPT",
+   "expiry": "2026-06-25T00:00:00.000Z",
+   "pt": {
+    "id": "42161-0x3362c1265a0522f321253708c9fb176f2274fa8d",
+    "chainId": 42161,
+    "address": "0x3362c1265a0522f321253708c9fb176f2274fa8d",
+    "symbol": "PT-rETH-25JUN2026",
+    "decimals": 18,
+    "expiry": "2026-06-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 2364.6531475030733
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "PT-rETH-25JUN2026",
+    "baseType": "PT",
+    "types": [
+     "PT"
+    ],
+    "underlyingPool": "",
+    "proSymbol": "PT rETH (ETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/dca97a36-3121-46db-a22f-154d68e4b466.svg",
+    "zappable": false,
+    "simpleName": "PT rETH (ETH)",
+    "simpleSymbol": "PT rETH (ETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/dca97a36-3121-46db-a22f-154d68e4b466.svg",
+    "proName": "PT rETH (ETH)"
+   },
+   "yt": {
+    "id": "42161-0xe03c236ca6f07755ad631a42dd5d60e293b1bf71",
+    "chainId": 42161,
+    "address": "0xe03c236ca6f07755ad631a42dd5d60e293b1bf71",
+    "symbol": "YT-rETH-25JUN2026",
+    "decimals": 18,
+    "expiry": "2026-06-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 0
+    },
+    "priceUpdatedAt": "2026-10-18T18:18:00.000Z",
+    "name": "YT-rETH-25JUN2026",
+    "baseType": "YT",
+    "types": [
+     "YT"
+    ],
+    "underlyingPool": "",
+    "proSymbol": "YT rETH (ETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/dbf39f9e-ee43-483d-8996-bee7e5c1114e.svg",
+    "zappable": false,
+    "simpleName": "YT rETH (ETH)",
+    "simpleSymbol": "YT rETH (ETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/dbf39f9e-ee43-483d-8996-bee7e5c1114e.svg",
+    "proName": "YT rETH (ETH)"
+   },
+   "sy": {
+    "id": "42161-0xc0cf4b266be5b3229c49590b59e67a09c15b22f4",
+    "chainId": 42161,
+    "address": "0xc0cf4b266be5b3229c49590b59e67a09c15b22f4",
+    "symbol": "SY-rETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "#FF9757",
+    "price": {
+     "usd": 2776.0139303951564
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "SY-rETH",
+    "baseType": "SY",
+    "types": [
+     "SY"
+    ],
+    "protocol": "Rocket Pool",
+    "underlyingPool": "",
+    "proSymbol": "rETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/60d36a08-0b9b-4f74-9c4b-f838ad740ce9.svg",
+    "zappable": false,
+    "simpleName": "rETH",
+    "simpleSymbol": "rETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/60d36a08-0b9b-4f74-9c4b-f838ad740ce9.svg",
+    "proName": "rETH"
+   },
+   "lp": {
+    "id": "42161-0xd7eac6c9109d8c3977ebce4e7dbf0a5a9532e240",
+    "chainId": 42161,
+    "address": "0xd7eac6c9109d8c3977ebce4e7dbf0a5a9532e240",
+    "symbol": "PENDLE-LPT",
+    "decimals": 18,
+    "expiry": "2026-06-25T00:00:00.000Z",
+    "accentColor": "",
+    "price": {
+     "usd": 6632.399515717657
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "PENDLE-LPT",
+    "baseType": "PENDLE_LP",
+    "types": [
+     "PENDLE_LP"
+    ],
+    "underlyingPool": "",
+    "proSymbol": "LP rETH (ETH)",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/30b19927-f685-4996-a071-6e14a3d23961.svg",
+    "zappable": false,
+    "simpleName": "LP rETH (ETH)",
+    "simpleSymbol": "LP rETH (ETH)",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/30b19927-f685-4996-a071-6e14a3d23961.svg",
+    "proName": "LP rETH (ETH)"
+   },
+   "accountingAsset": {
+    "id": "42161-0x0000000000000000000000000000000000000000",
+    "chainId": 42161,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "ETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "",
+    "price": {
+     "usd": 2362.81857196
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "ETH",
+    "baseType": "NATIVE",
+    "types": [
+     "NATIVE"
+    ],
+    "protocol": "",
+    "proSymbol": "ETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/7aac2e28-3929-4b0f-8b1f-d86f7150a09a.svg",
+    "zappable": true,
+    "simpleName": "ETH",
+    "simpleSymbol": "ETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/7aac2e28-3929-4b0f-8b1f-d86f7150a09a.svg",
+    "proName": "ETH"
+   },
+   "underlyingAsset": {
+    "id": "42161-0xec70dcb4a1efa46b8f2d97c310c9c4790ba5ffa8",
+    "chainId": 42161,
+    "address": "0xec70dcb4a1efa46b8f2d97c310c9c4790ba5ffa8",
+    "symbol": "rETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "",
+    "price": {
+     "usd": 2776.0139303951564
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "rETH",
+    "baseType": "IB",
+    "types": [
+     "IB"
+    ],
+    "protocol": "Rocket Pool",
+    "proSymbol": "rETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/7e1f0c86-9d8e-461c-ba3f-6b70c084ff8d.svg",
+    "zappable": true,
+    "simpleName": "rETH",
+    "simpleSymbol": "rETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/7e1f0c86-9d8e-461c-ba3f-6b70c084ff8d.svg",
+    "proName": "rETH"
+   },
+   "basePricingAsset": {
+    "id": "42161-0x0000000000000000000000000000000000000000",
+    "chainId": 42161,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "ETH",
+    "decimals": 18,
+    "expiry": null,
+    "accentColor": "",
+    "price": {
+     "usd": 2362.81857196
+    },
+    "priceUpdatedAt": "2026-10-18T18:19:15.009Z",
+    "name": "ETH",
+    "baseType": "NATIVE",
+    "types": [
+     "NATIVE"
+    ],
+    "protocol": "",
+    "proSymbol": "ETH",
+    "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/7aac2e28-3929-4b0f-8b1f-d86f7150a09a.svg",
+    "zappable": true,
+    "simpleName": "ETH",
+    "simpleSymbol": "ETH",
+    "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/assets/pro/7aac2e28-3929-4b0f-8b1f-d86f7150a09a.svg",
+    "proName": "ETH"
+   },
+   "protocol": "Rocket Pool",
+   "underlyingPool": "",
+   "proSymbol": "rETH",
+   "proIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/188e8f9d-675f-4dde-b7ca-70d4d21c0c11.svg",
+   "assetRepresentation": "ETH",
+   "isWhitelistedPro": true,
+   "isWhitelistedSimple": false,
+   "votable": true,
+   "isActive": true,
+   "isWhitelistedLimitOrder": true,
+   "accentColor": "#FF9757",
+   "totalPt": 129.90358648578464,
+   "totalSy": 567.9973482711309,
+   "totalLp": 284.0518686214675,
+   "liquidity": {
+    "usd": 1366442.6192939556,
+    "acc": 577.6913008158244
+   },
+   "tradingVolume": {
+    "usd": 0
+   },
+   "underlyingInterestApy": 0.01968243093395139,
+   "underlyingRewardApy": 0,
+   "underlyingApy": 0.01968243093395139,
+   "impliedApy": 0,
+   "ytFloatingApy": 0,
+   "ptDiscount": 9.349017038307039e-08,
+   "swapFeeApy": 0.0002381877534141097,
+   "pendleApy": 0,
+   "aggregatedApy": 0.01669304935669299,
+   "maxBoostedApy": 0.01669304935669299,
+   "lpRewardApy": 0,
+   "voterApy": 0.0019240442477011562,
+   "ytRoi": -1,
+   "ptRoi": 3.0158120445378245e-09,
+   "dataUpdatedAt": "2026-10-18T18:18:00.000Z",
+   "categoryIds": [
+    "eth"
+   ],
+   "timestamp": "2025-06-11T11:33:23.000Z",
+   "whitelistedProAt": "2025-06-25T15:59:32.422Z",
+   "scalarRoot": 146.29530428193775,
+   "initialAnchor": 1.036323738749338,
+   "extendedInfo": {
+    "floatingPt": 4.7891647312067676,
+    "floatingSy": 23.670035528944908,
+    "pyUnit": "ETH on Rocket Pool",
+    "ptEqualsPyUnit": false,
+    "underlyingAssetWorthMore": "rETH",
+    "feeRate": 0.000515107298190598,
+    "yieldRange": {
+     "min": 0.019999999999999997,
+     "max": 0.049999999999999996
+    }
+   },
+   "isFeatured": false,
+   "isPopular": false,
+   "tvlThresholdTimestamp": "2025-06-26T00:55:00.000Z",
+   "isNew": false,
+   "name": "PENDLE-LPT",
+   "simpleName": "rETH",
+   "simpleSymbol": "rETH",
+   "simpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/188e8f9d-675f-4dde-b7ca-70d4d21c0c11.svg",
+   "proName": "rETH",
+   "farmName": "rETH",
+   "farmSymbol": "rETH",
+   "farmSimpleName": "rETH",
+   "farmSimpleSymbol": "rETH",
+   "farmSimpleIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/188e8f9d-675f-4dde-b7ca-70d4d21c0c11.svg",
+   "farmProName": "rETH",
+   "farmProSymbol": "rETH",
+   "farmProIcon": "https://storage.googleapis.com/prod-pendle-bucket-a/images/uploads/188e8f9d-675f-4dde-b7ca-70d4d21c0c11.svg"
+  }
+ ]
+}

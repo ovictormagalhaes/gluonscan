@@ -390,14 +390,19 @@ impl Gluonscan {
             .await
     }
 
-    /// The ERC-20 `Transfer` logs of transaction `tx` — e.g. to find what a wallet paid in the same
-    /// transaction that delivered a position token.
-    pub async fn receipt_transfers(
+    /// Transaction `tx`'s sender, native value and ERC-20 `Transfer` logs — e.g. to find what a
+    /// wallet paid in the same transaction that delivered a position token, including a payment in
+    /// the native coin, which leaves no outbound ERC-20 leg. Each log carries its token's
+    /// `decimals()` read at the latest block (`None` when the token gives no usable answer). A
+    /// receipt or transaction the node does not return yet, or a token whose decimals read fails
+    /// without a definitive answer, fails the whole read retryably; see
+    /// [`transfers::read_receipt`].
+    pub async fn read_receipt(
         &self,
         chain: Chain,
         tx: &str,
-    ) -> Result<Vec<transfers::ReceiptTransfer>, Error> {
-        transfers::receipt_transfers(self.cx.rpc()?.as_ref(), chain, tx).await
+    ) -> Result<transfers::ReceiptRead, Error> {
+        transfers::read_receipt(self.cx.rpc()?.as_ref(), chain, tx).await
     }
 
     /// The latest block number on `chain`.

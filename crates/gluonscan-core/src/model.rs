@@ -832,10 +832,20 @@ pub struct YieldPosition {
     pub expiry: Option<Timestamp>,
     /// Yield rates, e.g. the market-implied APY (empty when the source reports none).
     pub rates: Rates,
-    /// The asset a principal token redeems to at maturity, one unit per PT (Pendle's accounting
-    /// asset: USDe for PT-sUSDe, ETH for PT-weETH). It is not the token the market's SY wraps, which
-    /// can be worth more than one accounting unit (sUSDe). A token without an address is the chain's
-    /// native coin. `None` when the source does not name it; never substituted with another asset.
+    /// The unit a principal token is nominally worth one of at maturity (Pendle's accounting asset:
+    /// USDe for PT-sUSDe, ETH for PT-weETH), on the position's own chain. It is not the token the
+    /// market's SY wraps, which can be worth more than one unit (sUSDe), and a PT does not redeem
+    /// into it: it redeems to SY / underlying worth one unit, or less after a loss in the SY (the
+    /// index it redeems by is a high-water mark).
+    ///
+    /// On a YT it is only the market's unit of account: a YT is not worth one of it at any time, so
+    /// it must never be used to cost one.
+    ///
+    /// Within this field only, a token without an address is the chain's native coin (elsewhere a
+    /// missing address means other things, e.g. Hyperliquid's USDC); price it as that chain's native
+    /// coin, never by symbol. Some accounting assets have no market price of their own (Pendle's
+    /// `-scaled18` wrappers, for one), so a consumer pricing it must expect none. `None` when the
+    /// source does not name one on this chain; never substituted with another asset.
     pub accounting_asset: Option<Token>,
 }
 
