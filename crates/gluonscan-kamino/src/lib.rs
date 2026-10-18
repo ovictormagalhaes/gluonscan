@@ -1012,13 +1012,32 @@ fn live_leg(leg: &serde_json::Value) -> Result<Option<(U256, &str, Decimal)>, Er
     Ok(Some((raw, reserve, usd)))
 }
 
-/// The integer part of a non-negative decimal string, as base units.
+/// The whole base units of a non-negative amount as the API prints it, the fraction dropped: a
+/// decimal (`5200000000.42793513`), or exponent form with a negative exponent, which the API uses
+/// for values under 1e-7 (`4e-7` is under one base unit, so 0). A positive or zero exponent, a
+/// sign, or anything but digits around one `.` is not an amount the API prints, so it is `None`.
 fn base_units(s: &str) -> Option<U256> {
-    let int = s.split('.').next()?;
-    if int.is_empty() || !int.bytes().all(|b| b.is_ascii_digit()) {
+    let (mantissa, exp) = match s.split_once(['e', 'E']) {
+        Some((m, e)) => {
+            let e = e.parse::<i64>().ok()?;
+            if e >= 0 {
+                return None;
+            }
+            (m, e)
+        }
+        None => (s, 0),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if int.is_empty() || !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
         return None;
     }
-    U256::from_str(int).ok()
+    // Shifting the point left by -exp keeps the leading `int.len() + exp` digits of int+frac.
+    let keep = (int.len() as i64).saturating_add(exp);
+    if keep <= 0 {
+        return Some(U256::ZERO);
+    }
+    let whole = &int[..usize::try_from(keep).ok()?.min(int.len())];
+    U256::from_str_radix(whole, 10).ok()
 }
 
 /// Parse a non-negative number as the Kamino API prints it: a decimal whose fraction can exceed
@@ -1229,6 +1248,41 @@ mod tests {
         assert!(reserve_rates(&serde_json::json!({}), newest)
             .supply
             .is_empty());
+    }
+
+    #[test]
+    fn base_units_keeps_whole_units_and_refuses_malformed_amounts() {
+        let u = |n: u64| Some(U256::from(n));
+        assert_eq!(base_units("5200000000"), u(5_200_000_000));
+        assert_eq!(base_units("5200000000.42793513"), u(5_200_000_000));
+        assert_eq!(base_units("0.4"), u(0));
+        assert_eq!(base_units("5."), u(5));
+        // Exponent form with a negative exponent: under one base unit reads as 0, a larger
+        // mantissa keeps its whole units.
+        assert_eq!(base_units("4e-7"), u(0));
+        assert_eq!(base_units("5E-8"), u(0));
+        assert_eq!(base_units("1.5e-9"), u(0));
+        assert_eq!(base_units("12345e-2"), u(123));
+        assert_eq!(base_units("12345.678e-5"), u(0));
+        assert_eq!(base_units("1e-400000"), u(0));
+        for bad in [
+            "5000000000.junk",
+            "5.3.2",
+            "7e9",
+            "7e+9",
+            "7e0",
+            "7e-",
+            "e-7",
+            "-5",
+            "-4e-7",
+            "+5",
+            ".5",
+            "",
+            " 5",
+            "5 ",
+        ] {
+            assert_eq!(base_units(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
