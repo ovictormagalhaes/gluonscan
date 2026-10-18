@@ -42,7 +42,7 @@ const MARKET_SELECTOR: [u8; 4] = [0x5c, 0x60, 0xe3, 0x9a];
 const VIRTUAL_SHARES: u64 = 1_000_000;
 const VIRTUAL_ASSETS: u64 = 1;
 
-/// Whether `owner` still holds anything (supply worth at least one unit of the loan asset, any
+/// Whether `owner` still holds anything (supply worth at least one base unit of the loan asset, any
 /// borrow shares or any collateral) in the market `market_id` (the 32-byte id as `0x…` hex), read
 /// from the Morpho Blue contract. Any failure is an error, never `false`: a disappearance is only
 /// accepted once the chain confirms it.
@@ -81,7 +81,19 @@ pub async fn holds_market(
     data.extend_from_slice(&id);
     let market = eth_call(rpc, chain, None, MORPHO_BLUE, data).await?;
     let [total_assets, total_shares] = words(&market, "market()")?;
-    let assets = supply_shares.saturating_mul(total_assets + U256::from(VIRTUAL_ASSETS))
+    // The contract stores both totals as uint128 and no position holds more shares than exist, so
+    // anything else is a corrupt answer, never a zero holding.
+    let max = U256::from(u128::MAX);
+    if total_assets > max || total_shares > max || supply_shares > total_shares {
+        return Err(Error::Integrity {
+            message: format!(
+                "Morpho market() totals {total_assets}/{total_shares} cannot hold {supply_shares} supply shares"
+            ),
+        });
+    }
+    // Stored totals lag accrual, which only grows a share's value: the check can undervalue a
+    // position by its unaccrued interest, never hold a closed one.
+    let assets = supply_shares * (total_assets + U256::from(VIRTUAL_ASSETS))
         / (total_shares + U256::from(VIRTUAL_SHARES));
     Ok(!assets.is_zero())
 }

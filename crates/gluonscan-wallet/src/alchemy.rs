@@ -2,9 +2,9 @@
 //! attached from the bundled prices. [`AlchemyWallet`] reads EVM ERC-20 balances; [`AlchemySolanaWallet`]
 //! reads SPL balances (including native SOL). Both are opinionated, batteries-included sources: they
 //! drop disguised (Unicode-spoofed) and implausible (value > $1e10 or unit price > $1e12) leaves,
-//! report unpriced and sub-$1 dust leaves flagged with [`WalletBalance::gated`] (a consumer that
-//! sums values drops every flagged leaf), and sanitize the surviving display strings — so a scam
-//! airdrop can neither inflate a total nor render a hidden symbol. A non-hex balance from a succeeded response fails
+//! report unpriced and sub-$1 dust leaves flagged with [`WalletBalance::gated`] (a consumer keeps a
+//! flagged leaf it saw held before and drops the rest as noise), and sanitize the surviving display
+//! strings — so a scam airdrop can neither inflate a total nor render a hidden symbol. A non-hex balance from a succeeded response fails
 //! closed (`Integrity`); an astronomical balance beyond `Decimal` range drops that leaf, not the chain.
 //!
 //! Unlike [`EvmWallet`](crate::EvmWallet) / [`SolanaWallet`](crate::SolanaWallet) (raw readers that

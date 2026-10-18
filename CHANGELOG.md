@@ -24,16 +24,15 @@ lockstep: one version, one tag, all crates.
   vanished from the API before accepting it as closed. Any failure is an error, never `false`.
   The facade exposes it over the engine's RPC as `Gluonscan::morpho_holds_market` (behind the
   `morpho` feature). A chain outside Ethereum and Base is refused as `Error::Permanent`. Supply
-  shares worth less than one unit of the loan asset (what withdrawing by assets can leave) are not
+  shares worth less than one base unit of the loan asset (what withdrawing by assets can leave) are not
   a holding, matching the API, which reports that market as empty.
 - **`WalletBalance::gated` and `WalletGate`.** Marks a balance a hygiene gate would hide.
 
 ### Changed
 
 - **Breaking (behaviour): Alchemy wallet readers report gated balances instead of dropping them.**
-  An unpriced
-  unverified token is reported with no USD amount and `gated: Some(Unpriced)`; a balance worth less
-  than the $1 dust floor keeps its value and `gated: Some(BelowDust)`. A held token whose quote
+  An unpriced unverified token is reported with no USD amount and `gated: Some(Unpriced)`; a balance
+  worth less than the $1 dust floor keeps its value and `gated: Some(BelowDust)`. A held token whose quote
   dipped under the floor or went missing for a day used to vanish and come back, which read as a
   transfer out and in. Spoofed symbols and implausible values or prices are still dropped.
   Consumers that want the old behaviour drop every leaf with `gated.is_some()`.
