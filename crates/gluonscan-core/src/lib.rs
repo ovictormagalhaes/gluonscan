@@ -31,7 +31,7 @@ pub use model::{
     is_dust, scaled, to_raw, Amount, BorrowedAsset, Complete, Currency, LendingPosition,
     LiquidityPosition, LockPosition, MarginMode, Money, NftPosition, PerpPosition, PerpSide,
     Position, PositionStatus, Provenance, Reading, StakePosition, Staleness, SuppliedAsset,
-    Timestamp, Token, TokenAddress, WalletBalance, YieldKind, YieldPosition,
+    Timestamp, Token, TokenAddress, WalletBalance, WalletGate, YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
 pub use rate::{Rate, RateBasis, RateWindow, Rates};

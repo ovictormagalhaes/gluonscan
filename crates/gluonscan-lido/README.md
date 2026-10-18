@@ -13,7 +13,8 @@ idle wallet balances drops them and does not double-count the stake.
 
 Rewards accrue through the daily rebase (stETH `balanceOf` grows; wstETH's stETH value grows) and
 are never separately claimable, so `rewards` is always empty. Valuation is left to the pricing layer
-(stETH and wstETH are both priced by contract address), so the read never converts or fabricates an
-amount.
+(stETH and wstETH are both priced by contract address), so the read never values or fabricates an
+amount;
+`underlying` is the on-chain redemption amount, unpriced.
 
 Licensed under MIT OR Apache-2.0.

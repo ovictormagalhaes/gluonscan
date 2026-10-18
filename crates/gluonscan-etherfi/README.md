@@ -14,7 +14,8 @@ idle wallet balances drops them and does not double-count the stake.
 Restaking yield accrues inside the balance (eETH rebases; weETH's exchange rate rises), and the
 ether.fi points / ETHFI / EIGEN rewards are off-chain season-gated Merkle claims rather than a
 continuously-accruing on-chain balance, so `rewards` is always empty. Valuation is left to the
-pricing layer (weETH and eETH are both priced by contract address), so the read never converts or
-fabricates an amount.
+pricing layer (weETH and eETH are both priced by contract address), so the read never values or
+fabricates an amount;
+`underlying` is the on-chain redemption amount, unpriced.
 
 Licensed under MIT OR Apache-2.0.

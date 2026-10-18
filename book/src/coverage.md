@@ -79,3 +79,11 @@ converted into an APY. A window whose data does not cover it is omitted, not fil
 | `Ethena` | APY | `Epoch` 24h (newest DeFiLlama point), `Trailing` 168h (mean of the newest 7 daily points; emitted when they span at most 8 days and the newest is at most 48h old) |
 
 Rates are informational: a failed rate request leaves that rate out and never fails the read.
+
+## Stake underlying
+
+`StakePosition::underlying` is index-aligned with `staked`: what each wrapped stake redeems for, read
+on-chain (wstETH → stETH via `getStETHByWstETH`, weETH → eETH via `getEETHByWeETH`, sUSDe → USDe via
+`convertToAssets`). The underlying growing at a constant wrapper balance is the staking yield, told
+apart from a price move. A rebasing token (stETH, eETH) carries `None`, and so does a wrapper whose
+rate read failed: like rates, it is best-effort and never fails the balance read.
