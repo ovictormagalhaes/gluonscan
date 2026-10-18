@@ -8,6 +8,30 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.4] - 2026-10-18
+
+### Added
+
+- **`EventKind::SupplyInterest` and `EventKind::BorrowInterest`.** A supplied balance that grew by
+  the interest it earned, and a borrowed balance that grew by the interest owed, between two
+  readings. Neither is an action of the owner; the amount is the growth of the balance.
+- **`gluonscan_kamino::MAX_ACCRUAL_PER_DAY`** (0.2%/day), the largest daily growth of a held
+  balance, as a fraction of the previous balance, that Kamino history reads as interest.
+
+### Changed
+
+- **Breaking (behaviour): Kamino history reports interest accrual as interest.** History is the
+  per-mint delta between consecutive `metrics/history` points, so a supplied or borrowed balance
+  produced a Deposit or Borrow event at every point for its accrued interest (on a live obligation,
+  about 300 of each next to a handful of real actions). A rise of a held balance at or under
+  `MAX_ACCRUAL_PER_DAY` times the exact time between the two points is now `SupplyInterest`
+  (deposits) or `BorrowInterest` (borrows) of the growth, with a synthetic id of its own
+  (`kamino:{obligation}:{ts}:supply_interest|borrow_interest:{mint}`). A rise above that bound
+  stays a Deposit / Borrow of the whole delta (the period's accrual included), as does a rise from
+  a zero balance; every fall stays a Withdraw / Repay. Amounts are unchanged. Consumers matching
+  `EventKind` must handle the two new kinds (the enum is `#[non_exhaustive]`, so a wildcard arm
+  already compiles, but would now see accrual there instead of under Deposit / Borrow).
+
 ## [0.3.0-beta.3] - 2026-10-18
 
 ### Added
@@ -548,7 +572,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.3...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.4...HEAD
+[0.3.0-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.2...v0.3.0-beta.3
 [0.3.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.1...v0.3.0-beta.2
 [0.3.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.5...v0.3.0-beta.1

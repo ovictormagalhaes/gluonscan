@@ -24,11 +24,18 @@
 //! foreign obligation is refused as [`Error::Permanent`]. A missing `history` array, a point without
 //! its timestamp, side arrays or mints, or an amount that does not parse fails the read as
 //! [`Error::Integrity`] instead of reading as a zero balance.
+//!
+//! A balance grows between points by its interest alone, so each rise of a held balance is first
+//! checked against [`MAX_ACCRUAL_PER_DAY`], scaled by the time between the two points: a rise
+//! within it is [`EventKind::SupplyInterest`] (deposits) or [`EventKind::BorrowInterest`]
+//! (borrows), not an action. A rise above it is a [`EventKind::Deposit`] / [`EventKind::Borrow`]
+//! of the whole delta (that period's accrual included), as is a rise from a zero balance; every fall
+//! is a [`EventKind::Withdraw`] / [`EventKind::Repay`] (net of that period's accrual).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 
-use alloy_primitives::U256;
+use alloy_primitives::{U256, U512};
 use async_trait::async_trait;
 use futures_util::stream::{self, StreamExt};
 use gluonscan_core::{
@@ -74,6 +81,14 @@ pub const MAX_RATE_POINT_AGE_SECS: i64 = 3 * 3600;
 const RATE_LOOKBACK_SECS: i64 = (168 + 4) * 3600;
 /// Reserve rate histories fetched at once.
 const RATE_HISTORY_CONCURRENCY: usize = 4;
+
+/// Largest growth of a held balance per day, as a fraction of the previous balance, that history
+/// reads as interest accrual (0.2%/day, about 73% APR). Scaled by the exact time between two
+/// points; a growth at or under the scaled bound is [`EventKind::SupplyInterest`] /
+/// [`EventKind::BorrowInterest`], one above it a [`EventKind::Deposit`] / [`EventKind::Borrow`].
+/// A rate above the bound therefore reads as an action, and an action small enough to fit under
+/// it as interest.
+pub const MAX_ACCRUAL_PER_DAY: Decimal = Decimal::from_parts(2, 0, 0, false, 3);
 
 /// Kamino adapter backed by the public HTTP API + on-chain mint decimals.
 #[derive(Debug, Default, Clone)]
@@ -307,16 +322,26 @@ impl ProtocolAdapter for KaminoApi {
         let mut events: Vec<HistoryEvent> = Vec::new();
         for window in snaps.windows(2) {
             let (prev, curr) = (&window[0], &window[1]);
+            // Sorted, so never negative; equal timestamps allow no accrual.
+            let gap_secs = u64::try_from(curr.ts - prev.ts).unwrap_or(0);
             let sides = [
                 (
                     &prev.deposits,
                     &curr.deposits,
-                    (EventKind::Deposit, EventKind::Withdraw),
+                    SideKinds {
+                        rise: EventKind::Deposit,
+                        fall: EventKind::Withdraw,
+                        accrual: EventKind::SupplyInterest,
+                    },
                 ),
                 (
                     &prev.borrows,
                     &curr.borrows,
-                    (EventKind::Borrow, EventKind::Repay),
+                    SideKinds {
+                        rise: EventKind::Borrow,
+                        fall: EventKind::Repay,
+                        accrual: EventKind::BorrowInterest,
+                    },
                 ),
             ];
             for (before, after, kinds) in sides {
@@ -324,6 +349,7 @@ impl ProtocolAdapter for KaminoApi {
                     before,
                     after,
                     kinds,
+                    gap_secs,
                     obligation,
                     curr.ts,
                     &mint_symbol,
@@ -740,9 +766,41 @@ fn side_amounts(
     Ok(out)
 }
 
-/// Diff one side between two consecutive points, pushing an event per mint whose balance changed:
-/// a rise is the first of `kinds` (deposit/borrow), a fall the second (withdraw/repay). Sub-dust
-/// deltas are skipped.
+/// The event kinds of one obligation side.
+#[derive(Clone, Copy)]
+struct SideKinds {
+    /// A rise above the accrual bound, or from zero (deposit / borrow).
+    rise: EventKind,
+    /// A fall (withdraw / repay).
+    fall: EventKind,
+    /// A rise of a held balance within the accrual bound (supply / borrow interest).
+    accrual: EventKind,
+}
+
+/// Whether `growth` of a `prev` balance over `gap_secs` fits [`MAX_ACCRUAL_PER_DAY`]: exactly
+/// `growth <= prev * MAX_ACCRUAL_PER_DAY * gap_secs / 86_400`, compared as
+/// `growth * 10^scale * 86_400 <= prev * mantissa * gap_secs` in 512 bits, where no operand can
+/// overflow. A zero `prev` or `gap_secs` allows no accrual.
+fn within_accrual_bound(prev: U256, growth: U256, gap_secs: u64) -> bool {
+    const SECS_PER_DAY: u64 = 86_400;
+    let mantissa = MAX_ACCRUAL_PER_DAY.mantissa().unsigned_abs();
+    let denominator = 10u128.pow(MAX_ACCRUAL_PER_DAY.scale());
+    // A `Decimal` mantissa is under 2^96 and its scale at most 28 (10^28 < 2^94): both products
+    // stay under 2^256 * 2^96 * 2^64, well inside 512 bits.
+    let lhs = widen(growth) * U512::from(denominator) * U512::from(SECS_PER_DAY);
+    let rhs = widen(prev) * U512::from(mantissa) * U512::from(gap_secs);
+    lhs <= rhs
+}
+
+fn widen(v: U256) -> U512 {
+    let mut limbs = [0u64; 8];
+    limbs[..4].copy_from_slice(v.as_limbs());
+    U512::from_limbs(limbs)
+}
+
+/// Diff one side between two consecutive points `gap_secs` apart, pushing an event per mint whose
+/// balance changed: a rise of a held balance within [`MAX_ACCRUAL_PER_DAY`] is `kinds.accrual`,
+/// any other rise `kinds.rise`, a fall `kinds.fall`. Sub-dust deltas are skipped.
 #[allow(
     clippy::too_many_arguments,
     reason = "internal side-diff helper threading prev/curr state, injected rpc + decimals cache, and an output event sink — not a data cluster"
@@ -750,7 +808,8 @@ fn side_amounts(
 async fn diff_side(
     prev: &HashMap<String, U256>,
     curr: &HashMap<String, U256>,
-    (inc_kind, dec_kind): (EventKind, EventKind),
+    kinds: SideKinds,
+    gap_secs: u64,
     obligation: &str,
     ts: i64,
     mint_symbol: &HashMap<String, String>,
@@ -766,8 +825,15 @@ async fn diff_side(
         let after = curr.get(mint).copied().unwrap_or(U256::ZERO);
         let (kind, delta) = match after.cmp(&before) {
             std::cmp::Ordering::Equal => continue,
-            std::cmp::Ordering::Greater => (inc_kind, after - before),
-            std::cmp::Ordering::Less => (dec_kind, before - after),
+            std::cmp::Ordering::Greater => {
+                let growth = after - before;
+                if !before.is_zero() && within_accrual_bound(before, growth, gap_secs) {
+                    (kinds.accrual, growth)
+                } else {
+                    (kinds.rise, growth)
+                }
+            }
+            std::cmp::Ordering::Less => (kinds.fall, before - after),
         };
         let decimals = match decimals_cache.get(mint) {
             Some(d) => *d,
@@ -779,7 +845,7 @@ async fn diff_side(
         };
         let symbol = mint_symbol.get(mint).cloned().unwrap_or_default();
         let amount = Amount::from_raw(Token::solana(symbol, Some(mint.clone()), decimals), delta)?;
-        // Sub-dust snapshot deltas are rounding noise, not real deposits/withdrawals.
+        // Sub-dust snapshot deltas are rounding noise, not real deposits/withdrawals or interest.
         if amount.amount < Decimal::new(1, 6) {
             continue;
         }
@@ -796,6 +862,8 @@ fn kind_tag(kind: EventKind) -> &'static str {
         EventKind::Withdraw => "withdraw",
         EventKind::Borrow => "borrow",
         EventKind::Repay => "repay",
+        EventKind::SupplyInterest => "supply_interest",
+        EventKind::BorrowInterest => "borrow_interest",
         _ => "event",
     }
 }
@@ -1306,5 +1374,48 @@ mod tests {
         assert_eq!(api_decimal("1e400"), None);
         assert_eq!(api_decimal("12a"), None);
         assert_eq!(api_decimal(""), None);
+    }
+
+    #[test]
+    fn accrual_bound_is_exact_and_scales_with_the_gap() {
+        const DAY: u64 = 86_400;
+        let u = U256::from;
+        let prev = u(1_000_000_000u64);
+        // 0.2% of 1e9 is 2e6 per day: at the bound is accrual, one base unit over is not.
+        assert!(within_accrual_bound(prev, u(2_000_000u64), DAY));
+        assert!(!within_accrual_bound(prev, u(2_000_001u64), DAY));
+        // Three days: three times the bound.
+        assert!(within_accrual_bound(prev, u(6_000_000u64), 3 * DAY));
+        assert!(!within_accrual_bound(prev, u(6_000_001u64), 3 * DAY));
+        // Half a day is half the bound, never rounded up to a whole day.
+        assert!(within_accrual_bound(prev, u(1_000_000u64), DAY / 2));
+        assert!(!within_accrual_bound(prev, u(1_000_001u64), DAY / 2));
+        // One hour: 2e6 / 24 = 83_333.33, so 83_333 fits and 83_334 does not.
+        assert!(within_accrual_bound(prev, u(83_333u64), 3_600));
+        assert!(!within_accrual_bound(prev, u(83_334u64), 3_600));
+        // No balance or no elapsed time allows no accrual.
+        assert!(!within_accrual_bound(U256::ZERO, u(1u64), DAY));
+        assert!(!within_accrual_bound(prev, u(1u64), 0));
+    }
+
+    #[test]
+    fn accrual_bound_never_overflows() {
+        const DAY: u64 = 86_400;
+        let max = U256::MAX;
+        assert!(!within_accrual_bound(max, max, DAY));
+        // MAX / 500 is 0.2% of MAX rounded down: inside one day's bound.
+        assert!(within_accrual_bound(max, max / U256::from(500u64), DAY));
+        assert!(!within_accrual_bound(
+            max,
+            max / U256::from(500u64) + U256::from(1u64),
+            DAY
+        ));
+        // The longest gap scales the bound past any growth.
+        assert!(within_accrual_bound(max, max, u64::MAX));
+    }
+
+    #[test]
+    fn max_accrual_per_day_is_two_tenths_of_a_percent() {
+        assert_eq!(MAX_ACCRUAL_PER_DAY, d("0.002"));
     }
 }
