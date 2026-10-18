@@ -553,6 +553,292 @@ async fn exponent_form_dust_leg_reads_as_nothing_held() {
     );
 }
 
+// Accrual: a held balance grows between points by its interest alone. Base units: SOL has 9
+// decimals and USDC 6; at 0.2%/day a 5 SOL supply may grow 0.01 SOL (10_000_000) per day and a
+// 100 USDC debt 0.2 USDC (200_000).
+
+/// One obligation point at midnight UTC `day` days after 2026-01-01, with `(mint, base units)`
+/// legs per side.
+fn accrual_point(day: i64, deposits: &[(&str, &str)], borrows: &[(&str, &str)]) -> String {
+    assert!((0..31).contains(&day), "January only");
+    let legs = |side: &[(&str, &str)]| {
+        side.iter()
+            .map(|(mint, amount)| format!(r#"{{"mintAddress":"{mint}","amount":"{amount}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    format!(
+        r#"{{"timestamp":"2026-01-{:02}T00:00:00Z","deposits":[{}],"borrows":[{}]}}"#,
+        day + 1,
+        legs(deposits),
+        legs(borrows)
+    )
+}
+
+/// The Unix timestamp of [`accrual_point`]'s `day`.
+fn day_ts(day: i64) -> Timestamp {
+    Timestamp(1_767_225_600 + day * 86_400)
+}
+
+type Ev = (EventKind, String, Decimal, Timestamp);
+
+async fn accrual_events(points: &[String]) -> Vec<Ev> {
+    let history = format!(r#"{{"history":[{}]}}"#, points.join(","));
+    read_history_with(&history_ctx(&history), &explicit())
+        .await
+        .expect("read_history")
+        .events
+        .into_iter()
+        .map(|e| (e.kind, e.amount.token.symbol, e.amount.amount, e.at))
+        .collect()
+}
+
+fn ev(kind: EventKind, symbol: &str, amount: &str, day: i64) -> Ev {
+    (
+        kind,
+        symbol.to_string(),
+        Decimal::from_str_exact(amount).unwrap(),
+        day_ts(day),
+    )
+}
+
+#[tokio::test]
+async fn daily_accrual_is_reported_as_interest() {
+    let points = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+        accrual_point(
+            2,
+            &[("MINT_SOL", "5000800000")],
+            &[("MINT_USDC", "100060000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&points).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 2),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 2),
+        ],
+        "growth within the daily bound is interest, not a deposit or a borrow"
+    );
+
+    // The synthetic id names the interest kind, so it never collides with a Deposit/Borrow id.
+    let history = format!(r#"{{"history":[{},{}]}}"#, points[0], points[1]);
+    let history = read_history_with(&history_ctx(&history), &explicit())
+        .await
+        .expect("read_history");
+    let ids: Vec<_> = history.events.iter().map(|e| e.tx.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![
+            "kamino:ob1:1767312000:supply_interest:MINT_SOL",
+            "kamino:ob1:1767312000:borrow_interest:MINT_USDC",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn growth_far_above_the_bound_is_a_deposit_or_borrow_of_the_whole_delta() {
+    let points = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+        // A 2 SOL deposit and a 50 USDC borrow, each on top of the day's accrual.
+        accrual_point(
+            2,
+            &[("MINT_SOL", "7000800000")],
+            &[("MINT_USDC", "150060000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&points).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+            ev(EventKind::Deposit, "SOL", "2.0004", 2),
+            ev(EventKind::Borrow, "USDC", "50.03", 2),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_bound_scales_with_the_time_between_points() {
+    // 0.025 SOL and 0.5 USDC: over one day's bound (0.01 / 0.2), within three days' (0.03 / 0.6).
+    let three_days = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            3,
+            &[("MINT_SOL", "5025000000")],
+            &[("MINT_USDC", "100500000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&three_days).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.025", 3),
+            ev(EventKind::BorrowInterest, "USDC", "0.5", 3),
+        ],
+        "a three-day gap allows three days of accrual"
+    );
+
+    let one_day = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5025000000")],
+            &[("MINT_USDC", "100500000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&one_day).await,
+        vec![
+            ev(EventKind::Deposit, "SOL", "0.025", 1),
+            ev(EventKind::Borrow, "USDC", "0.5", 1),
+        ],
+        "the same growth over one day is over the bound"
+    );
+}
+
+#[tokio::test]
+async fn growth_at_the_bound_is_interest_and_just_above_is_an_action() {
+    let at = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5010000000")],
+            &[("MINT_USDC", "100200000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&at).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.01", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.2", 1),
+        ],
+        "exactly 0.2% in one day is still interest"
+    );
+
+    // One base unit over the bound on each side.
+    let above = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5010000001")],
+            &[("MINT_USDC", "100200001")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&above).await,
+        vec![
+            ev(EventKind::Deposit, "SOL", "0.010000001", 1),
+            ev(EventKind::Borrow, "USDC", "0.200001", 1),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn decreases_stay_withdraw_and_repay() {
+    let points = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+        // 1 SOL withdrawn and 40 USDC repaid.
+        accrual_point(
+            2,
+            &[("MINT_SOL", "4000400000")],
+            &[("MINT_USDC", "60030000")],
+        ),
+        // A fall far smaller than a day's accrual is still a withdrawal / repayment.
+        accrual_point(
+            3,
+            &[("MINT_SOL", "4000300000")],
+            &[("MINT_USDC", "60020000")],
+        ),
+    ];
+    assert_eq!(
+        accrual_events(&points).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+            ev(EventKind::Withdraw, "SOL", "1", 2),
+            ev(EventKind::Repay, "USDC", "40", 2),
+            ev(EventKind::Withdraw, "SOL", "0.0001", 3),
+            ev(EventKind::Repay, "USDC", "0.01", 3),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn growth_from_zero_is_a_deposit_or_borrow() {
+    let points = [
+        accrual_point(0, &[("MINT_SOL", "5000000000")], &[]),
+        // A first borrow opens the debt, however small.
+        accrual_point(1, &[("MINT_SOL", "5000400000")], &[("MINT_USDC", "10000")]),
+        accrual_point(2, &[("MINT_SOL", "5000800000")], &[("MINT_USDC", "10000")]),
+    ];
+    assert_eq!(
+        accrual_events(&points).await,
+        vec![
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
+            ev(EventKind::Borrow, "USDC", "0.01", 1),
+            ev(EventKind::SupplyInterest, "SOL", "0.0004", 2),
+        ]
+    );
+
+    // A supply opened from nothing is a deposit, however small.
+    let opened = [
+        accrual_point(0, &[], &[("MINT_USDC", "100000000")]),
+        accrual_point(1, &[("MINT_SOL", "1000")], &[("MINT_USDC", "100030000")]),
+    ];
+    assert_eq!(
+        accrual_events(&opened).await,
+        vec![
+            ev(EventKind::Deposit, "SOL", "0.000001", 1),
+            ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn non_base58_selector_is_refused_before_any_request() {
     for selector in [

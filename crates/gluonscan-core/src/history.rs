@@ -6,6 +6,12 @@
 use crate::{Amount, Chain, Protocol, Provenance, Timestamp};
 
 /// A normalized protocol event kind.
+///
+/// [`Deposit`](Self::Deposit), [`Withdraw`](Self::Withdraw), [`Borrow`](Self::Borrow),
+/// [`Repay`](Self::Repay), [`Liquidation`](Self::Liquidation) and
+/// [`CollectFees`](Self::CollectFees) are owner actions (or a liquidation of the owner);
+/// [`SupplyInterest`](Self::SupplyInterest) and [`BorrowInterest`](Self::BorrowInterest) are
+/// interest accrual, not actions.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
@@ -21,6 +27,16 @@ pub enum EventKind {
     Liquidation,
     /// Collected (claimed) fees.
     CollectFees,
+    /// A supplied balance grew by the interest it earned between two readings. Not an action
+    /// of the owner: no tokens moved in or out, the amount is the growth of the supplied balance.
+    /// Only emitted by sources whose history is derived from balance readings (Kamino), never
+    /// alongside a [`Deposit`](Self::Deposit) of the same token at the same time.
+    SupplyInterest,
+    /// A borrowed balance grew by the interest owed between two readings. Not an action of the
+    /// owner: nothing was borrowed, the amount is the growth of the debt. Only emitted by sources
+    /// whose history is derived from balance readings (Kamino), never alongside a
+    /// [`Borrow`](Self::Borrow) of the same token at the same time.
+    BorrowInterest,
 }
 
 /// One historical event: what happened, to how much of which token, and when.
