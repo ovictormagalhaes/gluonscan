@@ -407,6 +407,7 @@ impl Gluonscan {
 
     /// Whether `owner` still holds anything in the Morpho Blue market `market_id`, read on-chain.
     /// See [`gluonscan_morpho::holds_market`]: any failure is an error, never `false`.
+    #[cfg(feature = "morpho")]
     pub async fn morpho_holds_market(
         &self,
         chain: Chain,

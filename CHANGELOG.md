@@ -22,12 +22,16 @@ lockstep: one version, one tag, all crates.
 - **`gluonscan_morpho::holds_market`.** Asks the Morpho Blue singleton (`position(id, user)`)
   whether a wallet still holds anything in a market, so a consumer can confirm a market that
   vanished from the API before accepting it as closed. Any failure is an error, never `false`.
-  The facade exposes it over the engine's RPC as `Gluonscan::morpho_holds_market`.
+  The facade exposes it over the engine's RPC as `Gluonscan::morpho_holds_market` (behind the
+  `morpho` feature). A chain outside Ethereum and Base is refused as `Error::Permanent`. Supply
+  shares worth less than one unit of the loan asset (what withdrawing by assets can leave) are not
+  a holding, matching the API, which reports that market as empty.
 - **`WalletBalance::gated` and `WalletGate`.** Marks a balance a hygiene gate would hide.
 
 ### Changed
 
-- **Alchemy wallet readers report gated balances instead of dropping them.** An unpriced
+- **Breaking (behaviour): Alchemy wallet readers report gated balances instead of dropping them.**
+  An unpriced
   unverified token is reported with no USD amount and `gated: Some(Unpriced)`; a balance worth less
   than the $1 dust floor keeps its value and `gated: Some(BelowDust)`. A held token whose quote
   dipped under the floor or went missing for a day used to vanish and come back, which read as a
@@ -499,7 +503,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.1...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.2...HEAD
+[0.3.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.1...v0.3.0-beta.2
 [0.3.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.5...v0.3.0-beta.1
 [0.2.5]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.3...v0.2.4

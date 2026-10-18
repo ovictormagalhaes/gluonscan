@@ -412,16 +412,39 @@ const MARKET: &str = "0x5b347b3dcfed096f09040cd30a174ae354ecc0a35c996493b8fa490d
 const HELD: &str = r#"{"jsonrpc":"2.0","id":1,"result":"0x000000000000000000000000000000000000000000000000000000003b9aca0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}"#;
 const EMPTY: &str = r#"{"jsonrpc":"2.0","id":1,"result":"0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}"#;
 const REVERT: &str = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"boom"}}"#;
+// 1,000 supply shares and nothing else: worth 0 units of the loan asset in the market below.
+const DUST: &str = r#"{"jsonrpc":"2.0","id":1,"result":"0x00000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}"#;
+const SHORT: &str = r#"{"jsonrpc":"2.0","id":1,"result":"0x"}"#;
+// `market(0x5b347b…79d7)` on Base (2026-10-17): 2,567,447 supply assets for 123,022,419,256
+// supply shares, so 1e9 shares are worth 20,869 units and 1,000 shares none.
+const MARKET_STATE: &str = r#"{"jsonrpc":"2.0","id":1,"result":"0x0000000000000000000000000000000000000000000000000000000000272d170000000000000000000000000000000000000000000000000000001ca4b52538000000000000000000000000000000000000000000000000000000000010b75d00000000000000000000000000000000000000000000000000000000d3d14968000000000000000000000000000000000000000000000000000000006abee36b0000000000000000000000000000000000000000000000000000000000000000"}"#;
 
 async fn holds_with(reply: &str, market: &str) -> Result<bool, gluonscan_core::Error> {
-    let rpc = gluonscan_testing::MockChainProvider::new().on(
-        Match::all([
-            Match::method("eth_call"),
-            Match::body_contains("bbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb"),
-            Match::body_contains("93c520625b347b3d"),
-        ]),
-        reply,
-    );
+    holds_with_market(reply, MARKET_STATE, market).await
+}
+
+async fn holds_with_market(
+    reply: &str,
+    state: &str,
+    market: &str,
+) -> Result<bool, gluonscan_core::Error> {
+    let rpc = gluonscan_testing::MockChainProvider::new()
+        .on(
+            Match::all([
+                Match::method("eth_call"),
+                Match::body_contains("bbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb"),
+                Match::body_contains("93c520625b347b3d"),
+            ]),
+            reply,
+        )
+        .on(
+            Match::all([
+                Match::method("eth_call"),
+                Match::body_contains("bbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb"),
+                Match::body_contains("5c60e39a5b347b3d"),
+            ]),
+            state,
+        );
     gluonscan_morpho::holds_market(
         &rpc,
         Chain::Base,
@@ -472,4 +495,57 @@ async fn holds_market_fails_instead_of_answering_false() {
         malformed,
         Err(gluonscan_core::Error::Integrity { .. })
     ));
+}
+
+#[tokio::test]
+async fn shares_worth_less_than_one_unit_are_not_a_holding() {
+    // Arrange
+    let reply = DUST;
+
+    // Act
+    let held = holds_with(reply, MARKET).await;
+
+    // Assert
+    assert_eq!(held.ok(), Some(false));
+}
+
+#[tokio::test]
+async fn a_short_or_failed_answer_is_an_error_never_false() {
+    // Arrange: no code at the address answers "0x"; the market read can fail on its own.
+
+    // Act
+    let short_position = holds_with(SHORT, MARKET).await;
+    let short_market = holds_with_market(DUST, SHORT, MARKET).await;
+    let failed_market = holds_with_market(HELD, REVERT, MARKET).await;
+
+    // Assert
+    assert!(matches!(
+        short_position,
+        Err(gluonscan_core::Error::Integrity { .. })
+    ));
+    assert!(matches!(
+        short_market,
+        Err(gluonscan_core::Error::Integrity { .. })
+    ));
+    assert!(failed_market.is_err());
+}
+
+#[tokio::test]
+async fn holds_market_refuses_a_chain_where_the_singleton_is_elsewhere() {
+    // Arrange: an RPC that would answer "held" for any call.
+    let rpc = gluonscan_testing::MockChainProvider::new().on(Match::method("eth_call"), HELD);
+
+    // Act
+    let held = gluonscan_morpho::holds_market(
+        &rpc,
+        Chain::Arbitrum,
+        MARKET,
+        "0x000000000000000000000000000000000000dEaD"
+            .parse()
+            .unwrap(),
+    )
+    .await;
+
+    // Assert
+    assert!(matches!(held, Err(gluonscan_core::Error::Permanent { .. })));
 }
