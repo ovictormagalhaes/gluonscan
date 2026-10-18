@@ -9,7 +9,7 @@ use gluonscan_core::{
     Chain, Ctx, Detail, Error, EventKind, Position, Protocol, ProtocolAdapter, RateBasis,
     RateWindow, Rates, Source, Timestamp, Wallet,
 };
-use gluonscan_kamino::KaminoApi;
+use gluonscan_kamino::{KaminoApi, HISTORY_DAY_SECS, HISTORY_SETTLE_SECS};
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
 use rust_decimal::Decimal;
 
@@ -312,8 +312,8 @@ const OWNED: &str = r#"[{"obligationAddress":"ob1"}]"#;
 const OTHER_MARKET: &str = "ByVuX9fRdEHsZomwLVryQQHRhQi3yMXZ6uz6DA4gutja";
 
 /// The clock of a history read: 2026-06-01, after the last day of every history fixture has
-/// closed. The open day's point yields no events, so a clock inside a fixture's last day would
-/// silently drop its last window.
+/// settled. A point yields no events until it settles, so a clock inside (or just after) a
+/// fixture's last day would silently drop its last window.
 const HISTORY_NOW: i64 = 1_780_272_000;
 
 /// A history read against `history`, with `owned` as `WALLET`'s obligation list in the main
@@ -571,8 +571,8 @@ async fn exponent_form_dust_leg_reads_as_nothing_held() {
 /// legs per side.
 fn accrual_point(day: i64, deposits: &[(&str, &str)], borrows: &[(&str, &str)]) -> String {
     assert!(
-        day_ts(day).0 + 86_400 <= HISTORY_NOW,
-        "the day must have closed by HISTORY_NOW"
+        settled_at(day) <= HISTORY_NOW,
+        "the day must have settled by HISTORY_NOW"
     );
     let legs = |side: &[(&str, &str)]| {
         side.iter()
@@ -588,6 +588,11 @@ fn accrual_point(day: i64, deposits: &[(&str, &str)], borrows: &[(&str, &str)]) 
         legs(deposits),
         legs(borrows)
     )
+}
+
+/// When `day`'s point is final: its last hourly point is published after the day closes.
+fn settled_at(day: i64) -> i64 {
+    day_ts(day).0 + HISTORY_DAY_SECS + HISTORY_SETTLE_SECS
 }
 
 /// The Unix timestamp of [`accrual_point`]'s `day`.
@@ -793,7 +798,7 @@ async fn a_long_data_gap_credits_two_days_of_accrual() {
 }
 
 #[tokio::test]
-async fn the_open_day_yields_no_events_until_it_closes() {
+async fn a_day_yields_no_events_until_its_point_settles() {
     let points = [
         accrual_point(
             0,
@@ -805,36 +810,78 @@ async fn the_open_day_yields_no_events_until_it_closes() {
             &[("MINT_SOL", "5000400000")],
             &[("MINT_USDC", "100030000")],
         ),
-        // Day 2's point: the accrual so far plus a 2 SOL deposit, revised by the API until day 3.
+        // Day 2's point: the accrual so far plus a 2 SOL deposit. The API revises it until day 2's
+        // 23:00 hourly point is published, after day 2 closes.
         accrual_point(
             2,
             &[("MINT_SOL", "7000800000")],
             &[("MINT_USDC", "100060000")],
         ),
     ];
-    let closed = vec![
+    let settled = vec![
         ev(EventKind::SupplyInterest, "SOL", "0.0004", 1),
         ev(EventKind::BorrowInterest, "USDC", "0.03", 1),
     ];
-    let day2 = day_ts(2).0;
-    for now in [day2, day2 + 12 * 3_600, day2 + 86_399] {
+    let day3 = day_ts(3).0;
+    // From day 1's settlement until one second before day 2's; including day 3 00:00, when day 2
+    // has closed but its last hourly point is not published yet.
+    for now in [
+        settled_at(1),
+        day_ts(2).0 + 12 * 3_600,
+        day3,
+        settled_at(2) - 1,
+    ] {
         assert_eq!(
             accrual_events_at(&points, now).await,
-            closed,
-            "day 2 is still open at {now}: only the closed days' windows"
+            settled,
+            "day 2's point is not final at {now}: only the settled days' windows"
         );
     }
 
-    let mut all = closed;
+    let mut all = settled;
     all.extend([
         ev(EventKind::Deposit, "SOL", "2.0004", 2),
         ev(EventKind::BorrowInterest, "USDC", "0.03", 2),
     ]);
     assert_eq!(
-        accrual_events_at(&points, day2 + 86_400).await,
+        accrual_events_at(&points, settled_at(2)).await,
         all,
-        "once day 2 closes its window is emitted"
+        "once day 2's point settles its window is emitted"
     );
+    assert_eq!(
+        settled_at(2),
+        day3 + 4 * 3_600,
+        "settles 4h after the day closes"
+    );
+}
+
+#[tokio::test]
+async fn a_clock_before_the_points_yields_no_events() {
+    let points = [
+        accrual_point(
+            0,
+            &[("MINT_SOL", "5000000000")],
+            &[("MINT_USDC", "100000000")],
+        ),
+        accrual_point(
+            1,
+            &[("MINT_SOL", "5000400000")],
+            &[("MINT_USDC", "100030000")],
+        ),
+    ];
+    for now in [
+        i64::MIN,
+        0,
+        day_ts(0).0 - 1,
+        day_ts(1).0 - 1,
+        settled_at(1) - 1,
+    ] {
+        assert_eq!(
+            accrual_events_at(&points, now).await,
+            vec![],
+            "no settled point at {now}"
+        );
+    }
 }
 
 #[tokio::test]

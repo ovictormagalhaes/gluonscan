@@ -33,10 +33,12 @@
 //! included), as is a rise from a zero balance; every fall is a [`EventKind::Withdraw`] /
 //! [`EventKind::Repay`] (net of that period's accrual).
 //!
-//! The newest daily point (stamped at the day's 00:00 UTC) is a live reading the API revises until
-//! the day closes, so a point less than [`HISTORY_DAY_SECS`] old (by the context clock) yields no
-//! events: its amounts, and with them the event kind and id, could still change. A day's activity
-//! appears once that day has closed.
+//! A daily point (stamped at the day's 00:00 UTC) carries the newest hourly point published inside
+//! that day, so the API revises it until the day's last hourly point (23:00) is published, about
+//! 1-2h after the UTC day closes. A point is final only [`HISTORY_DAY_SECS`] +
+//! [`HISTORY_SETTLE_SECS`] after its timestamp (by the context clock); before that it yields no
+//! events, since its amounts, and with them the event kind and id, could still change. A day's
+//! activity appears a few hours after that day has closed.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
@@ -90,19 +92,26 @@ const RATE_HISTORY_CONCURRENCY: usize = 4;
 
 /// Largest growth of a held balance per day, as a fraction of the previous balance, that history
 /// reads as interest accrual (0.2%/day, about 73% APR). Scaled by the exact time between two
-/// points; a growth at or under the scaled bound is [`EventKind::SupplyInterest`] /
-/// [`EventKind::BorrowInterest`], one above it a [`EventKind::Deposit`] / [`EventKind::Borrow`].
-/// A reserve whose daily accrual exceeds the bound (FDUSD paid about 159% APY for weeks) therefore
-/// reads as [`EventKind::Deposit`] / [`EventKind::Borrow`] every day, and an action small enough to
-/// fit under the bound reads as interest.
+/// points, credited for at most [`MAX_ACCRUAL_GAP_SECS`]; a growth at or under the scaled bound is
+/// [`EventKind::SupplyInterest`] / [`EventKind::BorrowInterest`], one above it a
+/// [`EventKind::Deposit`] / [`EventKind::Borrow`]. A reserve whose daily accrual exceeds the bound
+/// (FDUSD paid about 159% APY for weeks), or accrual across a data gap longer than
+/// [`MAX_ACCRUAL_GAP_SECS`] that exceeds the capped bound, therefore reads as
+/// [`EventKind::Deposit`] / [`EventKind::Borrow`], and an action small enough to fit under the
+/// bound reads as interest.
 pub const MAX_ACCRUAL_PER_DAY: Decimal = Decimal::from_parts(2, 0, 0, false, 3);
 /// Most time between two history points credited to accrual (2 days). Across a longer data gap the
 /// uncapped bound would cover a real deposit or borrow (about 20% of the balance over 103 days), so
 /// a rise there is interest only within two days' bound.
-pub const MAX_ACCRUAL_GAP_SECS: u64 = 2 * HISTORY_DAY_SECS as u64;
-/// Span of one daily history point: a point younger than this, by the context clock, is the
-/// still-open day and yields no events.
+pub const MAX_ACCRUAL_GAP_SECS: u64 = 2 * HISTORY_DAY_SECS.unsigned_abs();
+/// Span of one daily history point. A point is final [`HISTORY_DAY_SECS`] +
+/// [`HISTORY_SETTLE_SECS`] after its timestamp.
 pub const HISTORY_DAY_SECS: i64 = 86_400;
+/// How long after a day closes its daily point may still be revised: the point carries the newest
+/// hourly point published inside the day, and the day's last hourly point (23:00) is published
+/// about 1-2h after the day closes. The same margin as [`MAX_POINT_AGE_SECS`], which bounds how
+/// late an hourly point is published.
+pub const HISTORY_SETTLE_SECS: i64 = MAX_POINT_AGE_SECS;
 
 /// Kamino adapter backed by the public HTTP API + on-chain mint decimals.
 #[derive(Debug, Default, Clone)]
@@ -337,9 +346,14 @@ impl ProtocolAdapter for KaminoApi {
         let mut events: Vec<HistoryEvent> = Vec::new();
         for window in snaps.windows(2) {
             let (prev, curr) = (&window[0], &window[1]);
-            // The open day's point is still revised by the API: its delta (and so the event kind and
-            // id) is not final until the day closes.
-            if curr.ts.saturating_add(HISTORY_DAY_SECS) > now.0 {
+            // A point is revised by the API until the day's last hourly point is published: its
+            // delta (and so the event kind and id) is not final before then. A clock before the
+            // point is the same case.
+            let settled_at = curr
+                .ts
+                .saturating_add(HISTORY_DAY_SECS)
+                .saturating_add(HISTORY_SETTLE_SECS);
+            if settled_at > now.0 {
                 continue;
             }
             // Sorted, so never negative; equal timestamps allow no accrual.
@@ -802,7 +816,7 @@ struct SideKinds {
 /// 86_400`, compared as `growth * 10^scale * 86_400 <= prev * mantissa * t` in 512 bits, where no
 /// operand can overflow. A zero `prev` or `gap_secs` allows no accrual.
 fn within_accrual_bound(prev: U256, growth: U256, gap_secs: u64) -> bool {
-    const SECS_PER_DAY: u64 = 86_400;
+    const SECS_PER_DAY: u64 = HISTORY_DAY_SECS.unsigned_abs();
     let credited_secs = gap_secs.min(MAX_ACCRUAL_GAP_SECS);
     let mantissa = MAX_ACCRUAL_PER_DAY.mantissa().unsigned_abs();
     let denominator = 10u128.pow(MAX_ACCRUAL_PER_DAY.scale());
@@ -1445,8 +1459,10 @@ mod tests {
     }
 
     #[test]
-    fn max_accrual_per_day_is_two_tenths_of_a_percent() {
+    fn history_constants_have_their_documented_values() {
         assert_eq!(MAX_ACCRUAL_PER_DAY, d("0.002"));
-        assert_eq!(MAX_ACCRUAL_GAP_SECS, 172_800);
+        assert_eq!(HISTORY_DAY_SECS, 86_400);
+        assert_eq!(MAX_ACCRUAL_GAP_SECS, 2 * 86_400);
+        assert_eq!(HISTORY_SETTLE_SECS, 4 * 3_600);
     }
 }
