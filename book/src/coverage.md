@@ -56,6 +56,12 @@ factor), `LiquidityPosition` (principal, uncollected/deposited/withdrawn/collect
 in-range), `LockPosition`, `StakePosition`, `YieldPosition` (PT/YT with maturity), `PerpPosition`
 (side, size, entry/mark/liquidation price, PnL, funding), `NftPosition`.
 
+`YieldPosition` also names its `accounting_asset` when the source does, on the position's own
+chain: the unit a PT is nominally worth one of at maturity (USDe for PT-sUSDe, not the sUSDe it
+wraps). Within that field a token without an address is the chain's native coin (ETH); price it by
+chain, not by symbol. On a YT it is only the market's unit of account, never a cost basis. It is
+`None` when the source does not name one, never the wrapped underlying.
+
 `LendingPosition`, `LiquidityPosition` and `StakePosition` also carry claimable `rewards`
 (emission/incentive tokens, distinct from LP trading fees) when a source exposes them — surfaced by
 the `Rewards` capability.
