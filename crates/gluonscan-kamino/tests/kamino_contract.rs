@@ -305,27 +305,57 @@ const HISTORY: &str = r#"{"history":[
   {"timestamp":"2026-01-02T00:00:00Z","deposits":[{"mintAddress":"MINT_SOL","amount":"7000000000"}],"borrows":[{"mintAddress":"MINT_USDC","amount":"100000000"}]}
 ]}"#;
 
-#[tokio::test]
-async fn reads_obligation_history_as_snapshot_deltas() {
-    let http = MockHttp::new()
-        .on(Match::primary_contains("/reserves/metrics"), RESERVES)
-        .on(Match::primary_contains("/metrics/history"), HISTORY);
+/// The owner's obligation list in the main market, which a supplied market is checked against.
+const OWNED: &str = r#"[{"obligationAddress":"ob1"}]"#;
+
+/// A history read against `history`, with `owned` as the owner's obligation list in the main
+/// market. The mock is returned too, so a test can inspect the requests made.
+fn history_ctx_with(owned: &str, history: &str) -> (Arc<MockHttp>, Ctx) {
+    let http = Arc::new(
+        MockHttp::new()
+            .on(
+                Match::primary_contains(format!("{MAIN_MARKET}/users/")),
+                owned,
+            )
+            .on(Match::primary_contains("/reserves/metrics"), RESERVES)
+            .on(Match::primary_contains("/metrics/history"), history),
+    );
     let rpc = MockChainProvider::new()
         .on(Match::body_contains("MINT_SOL"), mint_account(9))
         .on(Match::body_contains("MINT_USDC"), mint_account(6));
-    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let cx = Ctx::new(http.clone(), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    (http, cx)
+}
 
-    let history = KaminoApi::new()
+fn history_ctx(history: &str) -> Ctx {
+    history_ctx_with(OWNED, history).1
+}
+
+async fn read_history_with(
+    cx: &Ctx,
+    selector: &str,
+) -> Result<gluonscan_core::History, gluonscan_core::Error> {
+    KaminoApi::new()
         .read_history(
             &Wallet::Solana(WALLET.to_string()),
             Chain::Solana,
-            Some(&format!("ob1|{MAIN_MARKET}")),
+            Some(selector),
             None,
-            &cx,
+            cx,
         )
         .await
-        .expect("read_history")
-        .into_inner();
+        .map(|h| h.into_inner())
+}
+
+fn explicit() -> String {
+    format!("ob1|{MAIN_MARKET}")
+}
+
+#[tokio::test]
+async fn reads_obligation_history_as_snapshot_deltas() {
+    let history = read_history_with(&history_ctx(HISTORY), &explicit())
+        .await
+        .expect("read_history");
 
     assert_eq!(history.protocol, Protocol::Kamino);
     assert_eq!(
@@ -402,6 +432,164 @@ async fn resolves_market_from_owner_obligations_when_selector_omits_it() {
         2,
         "same deltas as the explicit-market form"
     );
+}
+
+// The live API prints amounts with accrued fractions of a base unit. Whole base units are compared,
+// as the live reader does: 5.42 -> 7.9 SOL base units is a 2 SOL deposit, 0.5 -> 100.76 USDC base
+// units a 100 USDC borrow (the 0.5 base unit is under one unit and reads as nothing held).
+const FRACTIONAL_HISTORY: &str = r#"{"history":[
+  {"timestamp":"2026-01-01T00:00:00Z","deposits":[{"mintAddress":"MINT_SOL","amount":"5000000000.42793513"}],"borrows":[{"mintAddress":"MINT_USDC","amount":"0.5"}]},
+  {"timestamp":"2026-01-02T00:00:00Z","deposits":[{"mintAddress":"MINT_SOL","amount":"7000000000.9"}],"borrows":[{"mintAddress":"MINT_USDC","amount":"100000000.76060026660765739627231855281"}]}
+]}"#;
+
+#[tokio::test]
+async fn fractional_history_amounts_give_whole_unit_deltas() {
+    let history = read_history_with(&history_ctx(FRACTIONAL_HISTORY), &explicit())
+        .await
+        .expect("fractional amounts are read");
+    assert_eq!(history.events.len(), 2, "got {:?}", history.events);
+    let sol = &history.events[0];
+    assert_eq!(sol.kind, EventKind::Deposit);
+    assert_eq!(sol.amount.token.symbol, "SOL");
+    assert_eq!(sol.amount.amount, Decimal::from_str_exact("2").unwrap());
+    let usdc = &history.events[1];
+    assert_eq!(usdc.kind, EventKind::Borrow);
+    assert_eq!(usdc.amount.token.symbol, "USDC");
+    assert_eq!(usdc.amount.amount, Decimal::from_str_exact("100").unwrap());
+}
+
+#[tokio::test]
+async fn mixed_integer_and_fractional_points_give_no_phantom_events() {
+    // The balance only accrues a fraction of a base unit between the first two points, then one
+    // whole SOL is deposited. A fractional point read as zero would show the full balance withdrawn
+    // and re-deposited, and the debt repaid and re-borrowed.
+    let mixed = r#"{"history":[
+  {"timestamp":"2026-01-01T00:00:00Z","deposits":[{"mintAddress":"MINT_SOL","amount":"5000000000"}],"borrows":[{"mintAddress":"MINT_USDC","amount":"100000000"}]},
+  {"timestamp":"2026-01-02T00:00:00Z","deposits":[{"mintAddress":"MINT_SOL","amount":"5000000000.75"}],"borrows":[{"mintAddress":"MINT_USDC","amount":"100000000.5"}]},
+  {"timestamp":"2026-01-03T00:00:00Z","deposits":[{"mintAddress":"MINT_SOL","amount":"6000000000"}],"borrows":[{"mintAddress":"MINT_USDC","amount":"100000000"}]}
+]}"#;
+    let history = read_history_with(&history_ctx(mixed), &explicit())
+        .await
+        .expect("mixed amounts are read");
+    assert_eq!(history.events.len(), 1, "got {:?}", history.events);
+    let sol = &history.events[0];
+    assert_eq!(sol.kind, EventKind::Deposit);
+    assert_eq!(sol.amount.amount, Decimal::from_str_exact("1").unwrap());
+    assert_eq!(sol.at, Timestamp(1_767_398_400)); // 2026-01-03
+}
+
+#[tokio::test]
+async fn unreadable_history_points_fail_closed() {
+    let cases = [
+        // An amount that is not a non-negative decimal.
+        HISTORY.replace(r#""amount":"7000000000""#, r#""amount":"7e9""#),
+        HISTORY.replace(r#""amount":"7000000000""#, r#""amount":"-7000000000""#),
+        HISTORY.replace(r#","amount":"7000000000""#, ""),
+        // A leg without its mint.
+        HISTORY.replace(r#""mintAddress":"MINT_USDC","#, ""),
+        // A point without a side array or a timestamp.
+        HISTORY.replace(r#","borrows":[]"#, ""),
+        HISTORY.replace(r#""2026-01-01T00:00:00Z""#, r#""yesterday""#),
+        // A body without the `history` array.
+        "{}".to_string(),
+        r#"{"history":{}}"#.to_string(),
+    ];
+    for history in cases {
+        let err = read_history_with(&history_ctx(&history), &explicit())
+            .await
+            .expect_err("an unreadable history must fail closed");
+        assert!(
+            matches!(err, Error::Integrity { .. }),
+            "expected Integrity for {history}, got {err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn non_base58_selector_is_refused_before_any_request() {
+    for selector in [
+        format!("ob1/../x|{MAIN_MARKET}"),
+        "ob1?x=1".to_string(),
+        format!("ob1|{MAIN_MARKET}/../x"),
+        "ob1|".to_string(),
+        format!("|{MAIN_MARKET}"),
+        "0b1".to_string(),
+    ] {
+        let (http, cx) = history_ctx_with(OWNED, HISTORY);
+        let err = read_history_with(&cx, &selector)
+            .await
+            .expect_err("a non-base58 selector is refused");
+        assert!(
+            matches!(&err, Error::Permanent { message } if message.contains("base58")),
+            "expected Permanent(base58) for {selector:?}, got {err:?}"
+        );
+        assert!(
+            http.calls().is_empty(),
+            "no request for {selector:?}: {:?}",
+            http.calls()
+        );
+    }
+
+    let (http, cx) = history_ctx_with(OWNED, HISTORY);
+    let err = KaminoApi::new()
+        .read_history(
+            &Wallet::Solana("So1/../x".to_string()),
+            Chain::Solana,
+            Some(&explicit()),
+            None,
+            &cx,
+        )
+        .await
+        .expect_err("a non-base58 wallet is refused");
+    assert!(matches!(err, Error::Permanent { .. }), "got {err:?}");
+    assert!(http.calls().is_empty());
+}
+
+#[tokio::test]
+async fn foreign_obligation_with_a_market_is_refused() {
+    // The supplied market holds other obligations for this wallet, and one that differs from the
+    // selector only in case (base58 is case-sensitive): ob1 is not the owner's.
+    let (http, cx) = history_ctx_with(
+        r#"[{"obligationAddress":"ob2"},{"obligationAddress":"oB1"}]"#,
+        HISTORY,
+    );
+    let err = read_history_with(&cx, &explicit())
+        .await
+        .expect_err("another owner's obligation is refused");
+    assert!(
+        matches!(&err, Error::Permanent { message } if message.contains("not held by the owner")),
+        "expected Permanent(not held), got {err:?}"
+    );
+    assert!(
+        !http
+            .calls()
+            .iter()
+            .any(|(url, _)| url.contains("/metrics/history")),
+        "the foreign obligation's history is never fetched"
+    );
+}
+
+#[tokio::test]
+async fn ownership_read_failure_is_retryable_never_ok() {
+    let http = MockHttp::new()
+        .on_transient(Match::primary_contains("/users/"))
+        .on(Match::primary_contains("/reserves/metrics"), RESERVES)
+        .on(Match::primary_contains("/metrics/history"), HISTORY);
+    let rpc = MockChainProvider::new()
+        .on(Match::body_contains("MINT_SOL"), mint_account(9))
+        .on(Match::body_contains("MINT_USDC"), mint_account(6));
+    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+    let err = read_history_with(&cx, &explicit())
+        .await
+        .expect_err("an unverified ownership is not a history");
+    assert!(err.is_retryable(), "expected retryable, got {err:?}");
+
+    // A malformed ownership list fails closed too.
+    let (_, cx) = history_ctx_with("{}", HISTORY);
+    let err = read_history_with(&cx, &explicit())
+        .await
+        .expect_err("a malformed ownership list is not a history");
+    assert!(matches!(err, Error::Integrity { .. }), "got {err:?}");
 }
 
 #[tokio::test]

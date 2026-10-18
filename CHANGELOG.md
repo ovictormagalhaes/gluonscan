@@ -8,6 +8,41 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.3] - 2026-10-18
+
+### Added
+
+- **`gluonscan_aave::HISTORY_PAGE_SIZE` and `MAX_HISTORY_PAGES`**, the page size and per-kind page
+  limit of the paginated Aave history read.
+
+### Fixed
+
+- **Kamino: history with fractional amounts.** `read_history` parsed each `metrics/history` amount
+  as an integer and read anything else as zero, while the API prints amounts with accrued fractions
+  of a base unit (`"5200000000.42793513"`). A history of fractional points produced no events; a mix
+  of integer and fractional points produced Deposit/Withdraw/Borrow/Repay events of the full balance
+  around every fractional point. Amounts are now whole base units, the fraction dropped exactly as
+  the live reader drops it.
+- **Breaking (behaviour): Kamino history fails closed on an unreadable point.** A missing or
+  non-array `history`, a point without an RFC 3339 `timestamp` or a `deposits` / `borrows` array, a
+  leg without `mintAddress`, or an amount that is not a non-negative decimal is now
+  `Error::Integrity`. A missing `history` array used to read as an empty history, and the others
+  as a zero balance.
+- **Breaking (behaviour): Kamino history checks the selector and the obligation's owner.** Every
+  part of the `"obligation"` / `"obligation|market"` selector, and the wallet, must be base58, or
+  the read is refused as `Error::Permanent` before any request. With a market supplied, the
+  obligation must be listed among the owner's obligations in that market
+  (`users/{wallet}/obligations`, the list the market-resolving form already used): one that is not
+  is `Error::Permanent`, and a failed ownership read is an error, never a history. The obligation
+  match is now exact (base58 is case-sensitive) in both forms.
+- **Aave: history reads every event.** Each event kind was one page of 500 with no pagination,
+  while consumers checkpoint on the newest event across kinds: an account with more than 500
+  supplies and a newer repay lost every supply past the 500th for good. Each kind is now paged by
+  `id` until a page comes back short, and the kinds are merged oldest-first. Any failed page, a
+  page with GraphQL errors, a requested kind absent from the response (which used to read as no
+  events), a page repeating an event, or a kind longer than `MAX_HISTORY_PAGES` fails the whole
+  read.
+
 ## [0.3.0-beta.2] - 2026-10-17
 
 ### Added
@@ -502,7 +537,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.2...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.3...HEAD
+[0.3.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.2...v0.3.0-beta.3
 [0.3.0-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.1...v0.3.0-beta.2
 [0.3.0-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.5...v0.3.0-beta.1
 [0.2.5]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.2.4...v0.2.5

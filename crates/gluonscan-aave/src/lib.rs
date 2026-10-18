@@ -4,10 +4,15 @@
 //! account health factor from the official Aave V3 GraphQL API and normalizes them into a
 //! [`LendingPosition`]. No RPC — this backend is HTTP-only.
 //!
+//! History reads the chain's Aave V3 subgraph: supplies, withdrawals, borrows and repays, each kind
+//! paged by `id` ([`HISTORY_PAGE_SIZE`] per page) until a page comes back short, then merged
+//! oldest-first. Any page that fails, carries GraphQL errors or lacks a requested kind fails the
+//! whole read; so does a kind longer than [`MAX_HISTORY_PAGES`] pages.
+//!
 //! A future on-chain backend would live in a sibling crate and register for the same
 //! [`Protocol::AaveV3`]; the engine routes capabilities between them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use alloy_primitives::{Address, U256};
@@ -187,30 +192,77 @@ impl ProtocolAdapter for AaveApi {
         };
 
         let since_ts = since.map(|t| t.0).unwrap_or(0);
-        let body = events_query(&format!("{owner:#x}"), since_ts);
-        let raw = cx.http.post(subgraph, body, &[]).await?;
-        let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
-            message: format!("Aave events response not JSON: {e}"),
-        })?;
-        check_graphql_errors(&json)?;
-        let data = json.get("data").ok_or_else(|| Error::Integrity {
-            message: "Aave events response missing `data`".into(),
-        })?;
+        let user = format!("{owner:#x}");
 
+        // Each kind is paged on its own `id` cursor until a page comes back short. A consumer
+        // checkpoints on the newest event across kinds, so a kind cut at a page boundary would lose
+        // its later events for good: every kind is read to its end or the read fails.
+        let mut cursors: Vec<Option<String>> = vec![Some(String::new()); EVENT_KINDS.len()];
+        let mut seen: Vec<HashSet<String>> = vec![HashSet::new(); EVENT_KINDS.len()];
         let mut events = Vec::new();
-        for (field, kind) in [
-            ("supplies", EventKind::Deposit),
-            ("redeemUnderlyings", EventKind::Withdraw),
-            ("borrows", EventKind::Borrow),
-            ("repays", EventKind::Repay),
-        ] {
-            for node in data
-                .get(field)
-                .and_then(|v| v.as_array())
-                .into_iter()
-                .flatten()
-            {
-                events.push(parse_event(node, kind)?);
+        for page in 0.. {
+            let open: Vec<(usize, &str)> = cursors
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| c.as_deref().map(|c| (i, c)))
+                .collect();
+            if open.is_empty() {
+                break;
+            }
+            if page == MAX_HISTORY_PAGES {
+                return Err(Error::Integrity {
+                    message: format!(
+                        "Aave history exceeds {MAX_HISTORY_PAGES} pages of {HISTORY_PAGE_SIZE} events per kind"
+                    ),
+                });
+            }
+            let body = events_query(&user, since_ts, &open);
+            let raw = cx.http.post(subgraph, body, &[]).await?;
+            let json: serde_json::Value =
+                serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+                    message: format!("Aave events response not JSON: {e}"),
+                })?;
+            check_graphql_errors(&json)?;
+            let data = json.get("data").ok_or_else(|| Error::Integrity {
+                message: "Aave events response missing `data`".into(),
+            })?;
+
+            let mut next = Vec::with_capacity(open.len());
+            for &(i, _) in &open {
+                let (field, kind) = EVENT_KINDS[i];
+                // A requested kind that is absent is the query failing, not a user without events.
+                let nodes =
+                    data.get(field)
+                        .and_then(|v| v.as_array())
+                        .ok_or_else(|| Error::Integrity {
+                            message: format!("Aave events response has no `{field}` array"),
+                        })?;
+                let mut last = None;
+                for node in nodes {
+                    let id = node
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .filter(|id| !id.is_empty())
+                        .ok_or_else(|| Error::Integrity {
+                            message: format!("Aave `{field}` event missing `id`"),
+                        })?;
+                    // A repeated id means the cursor did not advance: paging would never end.
+                    if !seen[i].insert(id.to_string()) {
+                        return Err(Error::Integrity {
+                            message: format!("Aave `{field}` page repeated event {id}"),
+                        });
+                    }
+                    events.push(parse_event(node, kind)?);
+                    last = Some(id);
+                }
+                let cursor = match last {
+                    Some(id) if nodes.len() >= HISTORY_PAGE_SIZE => Some(id.to_string()),
+                    _ => None,
+                };
+                next.push((i, cursor));
+            }
+            for (i, cursor) in next {
+                cursors[i] = cursor;
             }
         }
         events.sort_by_key(|e| e.at.0);
@@ -223,16 +275,37 @@ impl ProtocolAdapter for AaveApi {
     }
 }
 
-/// The GraphQL query for a user's lending events after `since` (one page of 500 per kind).
-fn events_query(user: &str, since: i64) -> String {
+/// The subgraph event entities read as history, with the kind each one maps to.
+const EVENT_KINDS: [(&str, EventKind); 4] = [
+    ("supplies", EventKind::Deposit),
+    ("redeemUnderlyings", EventKind::Withdraw),
+    ("borrows", EventKind::Borrow),
+    ("repays", EventKind::Repay),
+];
+
+/// Events of one kind requested per page (The Graph's largest `first`). A page this full means the
+/// kind may hold more, so the next page is read.
+pub const HISTORY_PAGE_SIZE: usize = 1000;
+
+/// Pages read per kind before a history is refused as too large to read completely.
+pub const MAX_HISTORY_PAGES: usize = 100;
+
+/// The GraphQL query for one page of a user's lending events after `since`: for each still-open
+/// kind (`(index into EVENT_KINDS, id cursor)`), the next [`HISTORY_PAGE_SIZE`] events in `id`
+/// order after the cursor. `id` is unique, so unlike a timestamp cursor no event sharing a block
+/// with the page boundary is skipped.
+fn events_query(user: &str, since: i64, open: &[(usize, &str)]) -> String {
     const FIELDS: &str = "id timestamp amount txHash reserve{symbol name underlyingAsset decimals}";
-    let q = format!(
-        "query($user:Bytes!,$since:Int!){{\
-         supplies(where:{{user:$user,timestamp_gt:$since}},orderBy:timestamp,orderDirection:asc,first:500){{{FIELDS}}} \
-         redeemUnderlyings(where:{{user:$user,timestamp_gt:$since}},orderBy:timestamp,orderDirection:asc,first:500){{{FIELDS}}} \
-         borrows(where:{{user:$user,timestamp_gt:$since}},orderBy:timestamp,orderDirection:asc,first:500){{{FIELDS}}} \
-         repays(where:{{user:$user,timestamp_gt:$since}},orderBy:timestamp,orderDirection:asc,first:500){{{FIELDS}}}}}"
-    );
+    let mut fields = String::new();
+    for &(i, after) in open {
+        let (field, _) = EVENT_KINDS[i];
+        // A JSON string literal is a valid GraphQL string literal, so the cursor is escaped.
+        let after = serde_json::Value::from(after);
+        fields.push_str(&format!(
+            "{field}(where:{{user:$user,timestamp_gt:$since,id_gt:{after}}},orderBy:id,orderDirection:asc,first:{HISTORY_PAGE_SIZE}){{{FIELDS}}} "
+        ));
+    }
+    let q = format!("query($user:Bytes!,$since:Int!){{{fields}}}");
     serde_json::json!({ "query": q, "variables": { "user": user, "since": since } }).to_string()
 }
 
