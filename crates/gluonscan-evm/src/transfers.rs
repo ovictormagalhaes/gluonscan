@@ -1,7 +1,14 @@
 //! Cost-basis chain reads over the injected [`ChainProvider`]: a wallet's inbound ERC-20 transfers
-//! (`alchemy_getAssetTransfers`), the ERC-20 `Transfer` logs of a transaction receipt, and the latest
-//! block number. The RPC URL carries the provider key — no API key is handled here. The consumer owns
-//! the cost-basis math (pairing the inbound leg with what was paid, pricing, averaging).
+//! (`alchemy_getAssetTransfers`), a transaction's sender, native value and ERC-20 `Transfer` logs
+//! ([`read_receipt`]), and the latest block number. The RPC URL carries the provider key — no API key
+//! is handled here. The consumer owns the cost-basis math (pairing the inbound leg with what was paid,
+//! pricing, averaging).
+//!
+//! [`read_receipt`] reads each distinct token's `decimals()` at the latest block. A token that gives
+//! no usable answer (no code, a revert, an invalid opcode, a return that is not one word or exceeds
+//! `u8`, or a log address that is not an address) has `None`. Any other failure of one token's read
+//! fails the whole read, retryably: a node that keeps failing that way means the receipt never
+//! resolves, which the caller should bound rather than read as "nothing was paid".
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -29,6 +36,7 @@ pub struct AssetTransfer {
 }
 
 /// One ERC-20 `Transfer` log decoded from a transaction receipt.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiptTransfer {
     /// The ERC-20 contract address (lowercased `0x…`).
@@ -39,9 +47,27 @@ pub struct ReceiptTransfer {
     pub to: String,
     /// Raw amount as hex (`0x…`).
     pub value_raw: String,
-    /// The token's `decimals()`, or `None` when the contract gives no usable answer (no code at the
-    /// address, a revert, a return that is not one word or does not fit a `u8`). Never guessed.
+    /// The token's `decimals()` at the latest block, or `None` when the contract gives no usable
+    /// answer (no code at the address, a revert, an invalid opcode, a return that is not one word or
+    /// does not fit a `u8`) or the log's address is not an address. Never guessed.
     pub token_decimals: Option<u8>,
+}
+
+/// A mined transaction as a cost-basis read sees it: who sent it, the native coin it carried and
+/// its ERC-20 `Transfer` logs. A purchase paid in the native coin has no outbound ERC-20 leg from
+/// the wallet (the router wraps it, and WETH emits `Deposit`, not `Transfer`), so `from` and
+/// `value_wei` are what tell it apart from a plain transfer in.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiptRead {
+    /// The transaction's sender, from the receipt.
+    pub from: Address,
+    /// The called address, from the receipt; `None` for a contract creation.
+    pub to: Option<Address>,
+    /// The native coin the transaction carried, in wei (`eth_getTransactionByHash`).
+    pub value_wei: U256,
+    /// The ERC-20 `Transfer` logs, in log order.
+    pub transfers: Vec<ReceiptTransfer>,
 }
 
 /// Extract `result`, mapping an RPC `error` to a retryable [`Error::Transient`] and a missing result
@@ -142,19 +168,28 @@ pub async fn asset_transfers_in(
 /// ERC-20 `decimals()` calldata.
 const DECIMALS_CALL: &str = "0x313ce567";
 
-/// Whether a JSON-RPC `error` is the contract reverting, a definitive answer, rather than the node
-/// failing to answer.
-fn is_revert(error: &serde_json::Value) -> bool {
-    error.get("code").and_then(|c| c.as_i64()) == Some(3)
-        || error
-            .get("message")
-            .and_then(|m| m.as_str())
-            .is_some_and(|m| m.to_lowercase().contains("revert"))
+/// Whether a JSON-RPC `error` from an `eth_call` is the contract's own answer (a revert, code 3 or
+/// named in the message or `data`, or an invalid opcode) rather than the node failing to answer.
+fn is_contract_failure(error: &serde_json::Value) -> bool {
+    if error.get("code").and_then(|c| c.as_i64()) == Some(3) {
+        return true;
+    }
+    let text = |k: &str| {
+        error
+            .get(k)
+            .map(|v| match v.as_str() {
+                Some(s) => s.to_lowercase(),
+                None => v.to_string().to_lowercase(),
+            })
+            .unwrap_or_default()
+    };
+    [text("message"), text("data")]
+        .iter()
+        .any(|t| t.contains("revert") || t.contains("invalid opcode"))
 }
 
-/// `token`'s `decimals()`: `None` on a definitive non-answer (no code, a revert, a short or
-/// out-of-range return), an error when the node did not answer, so the caller retries rather than
-/// reading the token as one without decimals.
+/// `token`'s `decimals()` at the latest block: `None` on a definitive non-answer, an error when the
+/// node did not answer, so the caller retries rather than reading the token as one without decimals.
 async fn token_decimals(
     rpc: &dyn ChainProvider,
     chain: Chain,
@@ -167,7 +202,7 @@ async fn token_decimals(
     let raw = rpc.call(chain, "eth_call", params).await?;
     let json = parse_json(&raw, "decimals")?;
     if let Some(e) = json.get("error").filter(|e| !e.is_null()) {
-        if is_revert(e) {
+        if is_contract_failure(e) {
             return Ok(None);
         }
         return Err(Error::Transient {
@@ -188,21 +223,73 @@ async fn token_decimals(
     Ok((decimals <= U256::from(u8::MAX)).then(|| decimals.to::<u8>()))
 }
 
-/// The ERC-20 `Transfer` logs of transaction `tx` (empty if the tx is unknown or has none), each
-/// with its token's decimals, read once per distinct token.
-pub async fn receipt_transfers(
+/// The `result` of a by-hash read, where `null` means the node has not seen the transaction yet
+/// (a load-balanced node lagging the indexer that surfaced it): retryable, never "nothing there".
+fn mined<'a>(
+    json: &'a serde_json::Value,
+    ctx: &str,
+    tx: &str,
+) -> Result<&'a serde_json::Value, Error> {
+    let res = rpc_result(json, ctx)?;
+    if res.is_null() {
+        return Err(Error::Transient {
+            message: format!("{ctx}: no result for tx {tx}"),
+            retry_after: None,
+        });
+    }
+    Ok(res)
+}
+
+/// An optional address field of a receipt: absent or `null` is `None`, anything unparseable an error.
+fn address_field(v: &serde_json::Value, key: &str, tx: &str) -> Result<Option<Address>, Error> {
+    match v.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(a) => a
+            .as_str()
+            .and_then(|s| Address::from_str(s).ok())
+            .map(Some)
+            .ok_or_else(|| Error::Integrity {
+                message: format!("receipt of {tx} has an unparseable `{key}`"),
+            }),
+    }
+}
+
+/// Transaction `tx`'s sender, native value and ERC-20 `Transfer` logs, each with its token's
+/// decimals, read once per distinct token. A receipt or transaction the node does not return is a
+/// retryable error, never an empty read.
+pub async fn read_receipt(
     rpc: &dyn ChainProvider,
     chain: Chain,
     tx: &str,
-) -> Result<Vec<ReceiptTransfer>, Error> {
+) -> Result<ReceiptRead, Error> {
     let params = serde_json::json!([tx]).to_string();
-    let raw = rpc.call(chain, "eth_getTransactionReceipt", params).await?;
+    let raw = rpc
+        .call(chain, "eth_getTransactionReceipt", params.clone())
+        .await?;
     let json = parse_json(&raw, "getTransactionReceipt")?;
-    let res = rpc_result(&json, "getTransactionReceipt")?;
-    let Some(logs) = res.get("logs").and_then(|v| v.as_array()) else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::new();
+    let receipt = mined(&json, "getTransactionReceipt", tx)?;
+    let from = address_field(receipt, "from", tx)?.ok_or_else(|| Error::Integrity {
+        message: format!("receipt of {tx} has no `from`"),
+    })?;
+    let to = address_field(receipt, "to", tx)?;
+    let logs = receipt
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("receipt of {tx} has no `logs`"),
+        })?;
+
+    let raw = rpc.call(chain, "eth_getTransactionByHash", params).await?;
+    let json = parse_json(&raw, "getTransactionByHash")?;
+    let value_wei = mined(&json, "getTransactionByHash", tx)?
+        .get("value")
+        .and_then(|v| v.as_str())
+        .and_then(|s| U256::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        .ok_or_else(|| Error::Integrity {
+            message: format!("transaction {tx} has no parseable `value`"),
+        })?;
+
+    let mut transfers = Vec::new();
     let mut decimals: HashMap<String, Option<u8>> = HashMap::new();
     for log in logs {
         let topics: Vec<&str> = log
@@ -226,7 +313,7 @@ pub async fn receipt_transfers(
                 d
             }
         };
-        out.push(ReceiptTransfer {
+        transfers.push(ReceiptTransfer {
             token,
             from: topic_address(topics[1]),
             to: topic_address(topics[2]),
@@ -238,7 +325,12 @@ pub async fn receipt_transfers(
             token_decimals,
         });
     }
-    Ok(out)
+    Ok(ReceiptRead {
+        from,
+        to,
+        value_wei,
+        transfers,
+    })
 }
 
 /// One log of a mined transaction receipt, as returned by the node.
@@ -252,8 +344,8 @@ pub struct ReceiptLog {
     pub data: String,
 }
 
-/// Every log of transaction `tx`. Unlike [`receipt_transfers`], a receipt the node does not return
-/// is an error, never an empty list: a caller rebuilding amounts from these logs must not read a
+/// Every log of transaction `tx`. As in [`read_receipt`], a receipt the node does not return is an
+/// error, never an empty list: a caller rebuilding amounts from these logs must not read a
 /// missing receipt as a tx that emitted nothing. It is retryable, since a load-balanced node lagging
 /// behind the indexer that surfaced the tx is the usual cause.
 pub async fn receipt_logs(
