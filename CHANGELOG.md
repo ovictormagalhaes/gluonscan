@@ -23,6 +23,12 @@ lockstep: one version, one tag, all crates.
   of integer and fractional points produced Deposit/Withdraw/Borrow/Repay events of the full balance
   around every fractional point. Amounts are now whole base units, the fraction dropped exactly as
   the live reader drops it.
+- **Breaking (behaviour): Kamino amount parsing, live reader and history.** Amounts are read by one
+  parser for both. A junk or second fraction (`"5.junk"`, `"5.3.2"`), which used to pass on its
+  integer part, is now rejected (`Error::Integrity` at the caller). Exponent form with a negative
+  exponent, which the API prints for values under 1e-7 (`"4e-7"`, `"5E-8"`), is now read as its whole
+  base units (0 below one base unit) instead of failing: a dust leg in that form no longer fails a
+  live read or a whole history. A sign, or a zero or positive exponent, is still rejected.
 - **Breaking (behaviour): Kamino history fails closed on an unreadable point.** A missing or
   non-array `history`, a point without an RFC 3339 `timestamp` or a `deposits` / `borrows` array, a
   leg without `mintAddress`, or an amount that is not a non-negative decimal is now
@@ -35,13 +41,18 @@ lockstep: one version, one tag, all crates.
   (`users/{wallet}/obligations`, the list the market-resolving form already used): one that is not
   is `Error::Permanent`, and a failed ownership read is an error, never a history. The obligation
   match is now exact (base58 is case-sensitive) in both forms.
-- **Aave: history reads every event.** Each event kind was one page of 500 with no pagination,
-  while consumers checkpoint on the newest event across kinds: an account with more than 500
-  supplies and a newer repay lost every supply past the 500th for good. Each kind is now paged by
-  `id` until a page comes back short, and the kinds are merged oldest-first. Any failed page, a
-  page with GraphQL errors, a requested kind absent from the response (which used to read as no
-  events), a page repeating an event, or a kind longer than `MAX_HISTORY_PAGES` fails the whole
-  read.
+- **Breaking (behaviour): Aave history reads every event, at one block.** Each event kind was one
+  page of 500 with no pagination, while consumers checkpoint on the newest event across kinds: an
+  account with more than 500 supplies and a newer repay lost every supply past the 500th for good.
+  Each kind is now paged by `id` (`HISTORY_PAGE_SIZE` per page) until a page comes back short, and
+  the kinds are merged oldest-first. The first page asks for `_meta { block { number } }` and every
+  later page is pinned to that block (`block: { number }`), so a gateway serving later pages from a
+  lagging indexer cannot drop events. These now fail the whole read: any failed page, a page with
+  GraphQL errors, a requested kind absent from the response (which used to read as no events), an
+  event without `id`, a page repeating an event, a first page without `_meta.block.number`
+  (`Error::Integrity`), and a kind still open after `MAX_HISTORY_PAGES` pages (`Error::Integrity`).
+  A later page whose indexer has not reached the pinned block yet is a retryable
+  `Error::Transient`.
 
 ## [0.3.0-beta.2] - 2026-10-17
 
