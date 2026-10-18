@@ -23,7 +23,7 @@ Mapping notes:
 - `userByAddress: null` or a null amount is the API failing (a never-seen wallet answers an empty
   list), so it is a retryable `Transient` error, never an empty reading.
 - `holds_market(rpc, chain, market_id, owner)` confirms on-chain whether a market the API dropped is
-  really closed: supply worth at least one unit of the loan asset, any borrow shares or any
+  really closed: supply worth at least one base unit of the loan asset, any borrow shares or any
   collateral count as held. Any failure is an error, never `false`.
 - Claimable incentives moved to Merkl (a separate per-wallet system) and are a planned follow-up;
   `rewards` is left empty rather than guessed.
