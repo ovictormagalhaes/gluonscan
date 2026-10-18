@@ -1,5 +1,6 @@
 //! The facade's on-chain Morpho market check: routed through the engine's RPC, failing closed
 //! when there is no RPC to ask.
+#![cfg(feature = "morpho")]
 
 use std::sync::Arc;
 

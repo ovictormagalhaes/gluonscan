@@ -1,9 +1,10 @@
 //! Wallet-token sources backed by Alchemy's Data API, with full wallet hygiene applied and USD
 //! attached from the bundled prices. [`AlchemyWallet`] reads EVM ERC-20 balances; [`AlchemySolanaWallet`]
 //! reads SPL balances (including native SOL). Both are opinionated, batteries-included sources: they
-//! drop disguised (Unicode-spoofed), implausible (value > $1e10 or unit price > $1e12), unpriced, and
-//! sub-$1 dust leaves, and sanitize the surviving display strings — so a scam airdrop can neither
-//! inflate a total nor render a hidden symbol. A non-hex balance from a succeeded response fails
+//! drop disguised (Unicode-spoofed) and implausible (value > $1e10 or unit price > $1e12) leaves,
+//! report unpriced and sub-$1 dust leaves flagged with [`WalletBalance::gated`] (a consumer that
+//! sums values drops every flagged leaf), and sanitize the surviving display strings — so a scam
+//! airdrop can neither inflate a total nor render a hidden symbol. A non-hex balance from a succeeded response fails
 //! closed (`Integrity`); an astronomical balance beyond `Decimal` range drops that leaf, not the chain.
 //!
 //! Unlike [`EvmWallet`](crate::EvmWallet) / [`SolanaWallet`](crate::SolanaWallet) (raw readers that
@@ -204,7 +205,8 @@ impl AlchemyWallet {
     }
 }
 
-/// One EVM Alchemy token entry -> a clean [`Position::Wallet`], or `None` if a hygiene gate drops it.
+/// One EVM Alchemy token entry -> a clean [`Position::Wallet`] (flagged when gated), or `None` when
+/// it is spoofed or implausible.
 /// `Err` only on data corruption (non-hex balance) so the caller fails closed.
 fn evm_entry_to_position(entry: &serde_json::Value) -> Result<Option<Position>, Error> {
     if entry_errored(entry) {
