@@ -4,6 +4,17 @@
 //! fees come from an on-chain `collect()` static call per active position (Full detail only). It
 //! returns the **complete** position resource: principal amounts (from the Q64.96 liquidity math),
 //! lifetime deposited/withdrawn/collected, fee tier, tick range, and the in-range flag.
+//!
+//! Collected amounts carry a [`CollectBasis`]. A `Collect` sends out the principal released by
+//! `decreaseLiquidity` together with the fees, so amounts rebuilt from `Collect` receipts are
+//! [`CollectBasis::IncludesPrincipal`] (each collect event also names the principal its own
+//! transaction released). What a subgraph's `collectedFeesToken*` hold depends on the deployment's
+//! mapping: Uniswap's from July 2021 stores `collected - withdrawn` (fees only), the one from March
+//! 2022 adds each collect's whole amount (principal included, and token0's amount into token1 as
+//! well). The adapter cannot tell them apart, so a subgraph amount is
+//! [`CollectBasis::FeesOnly`] only where that token was never withdrawn (no principal to include on
+//! either mapping), else what [`UniswapV3::with_subgraph_collect_basis`] declares for the chain, else
+//! [`CollectBasis::Unknown`].
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -11,9 +22,9 @@ use std::str::FromStr;
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use gluonscan_core::{
-    scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Detail, Error, EventKind,
-    History, HistoryEvent, LiquidityPosition, Position, PositionStatus, Protocol, ProtocolAdapter,
-    Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet,
+    scaled, Amount, Capability, Chain, ChainProvider, CollectBasis, Complete, Ctx, Detail, Error,
+    EventKind, History, HistoryEvent, LiquidityPosition, Position, PositionStatus, Protocol,
+    ProtocolAdapter, Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet,
 };
 use gluonscan_evm::transfers::receipt_logs;
 use gluonscan_evm::{decode_two_u256, encode_collect, eth_call};
@@ -26,10 +37,15 @@ const CAPABILITIES: &[Capability] = &[Capability::Positions, Capability::Fees, C
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Ethereum, Chain::Base, Chain::Arbitrum];
 
 /// `keccak256("Collect(uint256,address,uint256,uint256)")`: the NonfungiblePositionManager event
-/// carrying what one collect sent out, with the token id as topic1. Like the subgraph's
-/// `collectedFeesToken*` (which it reproduces to the wei on healthy positions), it includes the
-/// principal released by `decreaseLiquidity`; consumers net withdrawn principal out of it.
+/// carrying what one collect sent out, with the token id as topic1. It includes the principal
+/// released by `decreaseLiquidity` (on Ethereum's subgraph, whose mapping adds each collect's whole
+/// amount, healthy positions' `collectedFeesToken*` reproduce it to the wei).
 const COLLECT_TOPIC: &str = "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01";
+
+/// `keccak256("DecreaseLiquidity(uint256,uint128,uint256,uint256)")`: the NonfungiblePositionManager
+/// event naming the principal `(amount0, amount1)` a liquidity decrease released into what the
+/// position is owed, with the token id as topic1.
+const DECREASE_TOPIC: &str = "0x26f6a048ee9138f2c0ce266f322cb99228e8d619ae2bff30c67f8dcf9d2377b4";
 
 /// The subgraph's page size for a position's snapshots; a full page may be truncated.
 const SNAPSHOT_PAGE: usize = 1000;
@@ -39,6 +55,7 @@ const SNAPSHOT_PAGE: usize = 1000;
 #[derive(Debug, Default, Clone)]
 pub struct UniswapV3 {
     subgraphs: HashMap<Chain, String>,
+    collect_bases: HashMap<Chain, CollectBasis>,
 }
 
 impl UniswapV3 {
@@ -46,6 +63,7 @@ impl UniswapV3 {
     pub fn new() -> Self {
         UniswapV3 {
             subgraphs: HashMap::new(),
+            collect_bases: HashMap::new(),
         }
     }
 
@@ -59,6 +77,31 @@ impl UniswapV3 {
     pub fn with_subgraphs(mut self, subgraphs: HashMap<Chain, String>) -> Self {
         self.subgraphs = subgraphs;
         self
+    }
+
+    /// Declare what one chain's subgraph `collectedFeesToken*` hold once principal was withdrawn:
+    /// [`CollectBasis::FeesOnly`] for a mapping that subtracts the withdrawn principal,
+    /// [`CollectBasis::IncludesPrincipal`] for one that adds each collect's whole amount. Only the
+    /// consumer that chose the deployment can know which; undeclared, such amounts are
+    /// [`CollectBasis::Unknown`]. Amounts rebuilt from receipts are unaffected (always
+    /// [`CollectBasis::IncludesPrincipal`]).
+    pub fn with_subgraph_collect_basis(mut self, chain: Chain, basis: CollectBasis) -> Self {
+        self.collect_bases.insert(chain, basis);
+        self
+    }
+
+    /// The basis of a subgraph collected amount of a token whose lifetime withdrawn total, as of the
+    /// same snapshot, is `withdrawn`. Nothing withdrawn means no principal was ever owed, so the
+    /// amount is fees on every mapping.
+    fn subgraph_basis(&self, chain: Chain, withdrawn: Decimal) -> CollectBasis {
+        if withdrawn == Decimal::ZERO {
+            CollectBasis::FeesOnly
+        } else {
+            self.collect_bases
+                .get(&chain)
+                .copied()
+                .unwrap_or(CollectBasis::Unknown)
+        }
     }
 
     fn subgraph_url(&self, chain: Chain) -> Result<&str, Error> {
@@ -270,13 +313,19 @@ impl ProtocolAdapter for UniswapV3 {
                     collected_corrupt = true;
                 }
                 if d_col0 > Decimal::ZERO || d_col1 > Decimal::ZERO {
-                    push_pair(
+                    push_collect(
                         &mut events,
-                        EventKind::CollectFees,
                         &token0,
-                        &token1,
                         d_col0.max(Decimal::ZERO),
+                        (self.subgraph_basis(chain, curr.wd0), None),
+                        &tx,
+                        curr.ts,
+                    )?;
+                    push_collect(
+                        &mut events,
+                        &token1,
                         d_col1.max(Decimal::ZERO),
+                        (self.subgraph_basis(chain, curr.wd1), None),
                         &tx,
                         curr.ts,
                     )?;
@@ -308,25 +357,37 @@ impl ProtocolAdapter for UniswapV3 {
                         collects_from_receipts(rpc.as_ref(), chain, token_id, &txs).await?;
                     let raw0 = collects
                         .iter()
-                        .fold(U256::ZERO, |acc, (_, a0, _)| acc.saturating_add(*a0));
+                        .fold(U256::ZERO, |acc, c| acc.saturating_add(c.amount0));
                     if scaled(raw0, token0.decimals)? == last_col0 - baseline_col0 {
                         events.retain(|e| e.kind != EventKind::CollectFees);
-                        for (tx, raw0, raw1) in collects {
+                        for c in collects {
                             let ts = event_txs
                                 .iter()
-                                .find(|(t, _)| t.to_lowercase() == tx)
+                                .find(|(t, _)| t.to_lowercase() == c.tx)
                                 .map(|(_, ts)| *ts)
                                 .ok_or_else(|| Error::Integrity {
-                                    message: format!("Uniswap collect tx {tx} has no snapshot"),
+                                    message: format!("Uniswap collect tx {} has no snapshot", c.tx),
                                 })?;
-                            push_pair(
+                            push_collect(
                                 &mut events,
-                                EventKind::CollectFees,
                                 &token0,
+                                scaled(c.amount0, token0.decimals)?,
+                                (
+                                    CollectBasis::IncludesPrincipal,
+                                    Some(scaled(c.released0, token0.decimals)?),
+                                ),
+                                &c.tx,
+                                ts,
+                            )?;
+                            push_collect(
+                                &mut events,
                                 &token1,
-                                scaled(raw0, token0.decimals)?,
-                                scaled(raw1, token1.decimals)?,
-                                &tx,
+                                scaled(c.amount1, token1.decimals)?,
+                                (
+                                    CollectBasis::IncludesPrincipal,
+                                    Some(scaled(c.released1, token1.decimals)?),
+                                ),
+                                &c.tx,
                                 ts,
                             )?;
                         }
@@ -399,8 +460,8 @@ impl UniswapV3 {
             collects_from_receipts(rpc.as_ref(), chain, parse_token_id(id)?, &txs).await?;
         let (sum0, sum1) = collects
             .into_iter()
-            .fold((U256::ZERO, U256::ZERO), |(s0, s1), (_, a0, a1)| {
-                (s0.saturating_add(a0), s1.saturating_add(a1))
+            .fold((U256::ZERO, U256::ZERO), |(s0, s1), c| {
+                (s0.saturating_add(c.amount0), s1.saturating_add(c.amount1))
             });
         if scaled(sum0, decimals0)? != col0 {
             return Err(Error::Integrity {
@@ -507,6 +568,15 @@ impl UniswapV3 {
             _ => None,
         };
         let collected_corrupt = collected_corrupt && rebuilt.is_none();
+        // Both tokens' totals together: fees only only if each token's is.
+        let collected_fees_basis = if rebuilt.is_some() {
+            CollectBasis::IncludesPrincipal
+        } else {
+            withdrawn
+                .iter()
+                .map(|a| self.subgraph_basis(chain, a.amount))
+                .fold(CollectBasis::FeesOnly, CollectBasis::join)
+        };
         let collected_fees = if let Some((raw0, raw1)) = rebuilt {
             vec![
                 raw_amount(token0.clone(), raw0)?,
@@ -573,6 +643,7 @@ impl UniswapV3 {
         .with_deposited(deposited)
         .with_withdrawn(withdrawn)
         .with_collected_fees(collected_fees)
+        .with_collected_fees_basis(collected_fees_basis)
         .with_status(status);
         Ok(Position::Liquidity(if collected_corrupt {
             position.with_collected_fees_unavailable()
@@ -588,15 +659,26 @@ fn parse_token_id(id: &str) -> Result<U256, Error> {
     })
 }
 
-/// The position manager's `Collect` amounts for `token_id` in each of `txs`, summed per tx, in tx
-/// order (txs without one are omitted). A tx hash the subgraph left empty cannot be checked, so it
-/// fails the read rather than possibly hiding a collect.
+/// What one tx's receipt shows for a position: the raw amounts its `Collect`s sent out and the
+/// principal its `DecreaseLiquidity`s released, each summed over the tx.
+struct ReceiptCollect {
+    tx: String,
+    amount0: U256,
+    amount1: U256,
+    released0: U256,
+    released1: U256,
+}
+
+/// The position manager's `Collect` amounts for `token_id` in each of `txs`, summed per tx, with the
+/// principal the same tx's `DecreaseLiquidity` released, in tx order (txs without a collect are
+/// omitted). A tx hash the subgraph left empty cannot be checked, so it fails the read rather than
+/// possibly hiding a collect.
 async fn collects_from_receipts(
     rpc: &dyn ChainProvider,
     chain: Chain,
     token_id: U256,
     txs: &[String],
-) -> Result<Vec<(String, U256, U256)>, Error> {
+) -> Result<Vec<ReceiptCollect>, Error> {
     let manager = UniswapV3::position_manager(chain).ok_or_else(|| Error::Permanent {
         message: format!("no Uniswap position manager for {chain:?}"),
     })?;
@@ -615,33 +697,49 @@ async fn collects_from_receipts(
             continue;
         }
         let mut sum: Option<(U256, U256)> = None;
+        let (mut released0, mut released1) = (U256::ZERO, U256::ZERO);
         for log in receipt_logs(rpc, chain, &tx).await? {
-            let is_collect = log.address == manager
-                && log.topics.first().map(String::as_str) == Some(COLLECT_TOPIC)
-                && log.topics.get(1) == Some(&id_topic);
-            if !is_collect {
+            if log.address != manager || log.topics.get(1) != Some(&id_topic) {
                 continue;
             }
-            let (a0, a1) = decode_collect_data(&log.data)?;
-            let (s0, s1) = sum.unwrap_or((U256::ZERO, U256::ZERO));
-            sum = Some((s0.saturating_add(a0), s1.saturating_add(a1)));
+            match log.topics.first().map(String::as_str) {
+                Some(COLLECT_TOPIC) => {
+                    let (a0, a1) = decode_amounts(&log.data, "Collect")?;
+                    let (s0, s1) = sum.unwrap_or((U256::ZERO, U256::ZERO));
+                    sum = Some((s0.saturating_add(a0), s1.saturating_add(a1)));
+                }
+                Some(DECREASE_TOPIC) => {
+                    let (a0, a1) = decode_amounts(&log.data, "DecreaseLiquidity")?;
+                    released0 = released0.saturating_add(a0);
+                    released1 = released1.saturating_add(a1);
+                }
+                _ => {}
+            }
         }
-        if let Some((a0, a1)) = sum {
-            out.push((tx, a0, a1));
+        if let Some((amount0, amount1)) = sum {
+            out.push(ReceiptCollect {
+                tx,
+                amount0,
+                amount1,
+                released0,
+                released1,
+            });
         }
     }
     Ok(out)
 }
 
-/// `Collect` data is `(address recipient, uint256 amount0, uint256 amount1)`, one 32-byte word each.
-fn decode_collect_data(data: &str) -> Result<(U256, U256), Error> {
+/// The `(amount0, amount1)` words of a `Collect` (`address recipient, uint256 amount0, uint256
+/// amount1`) or `DecreaseLiquidity` (`uint128 liquidity, uint256 amount0, uint256 amount1`) log:
+/// the second and third 32-byte words of either.
+fn decode_amounts(data: &str, event: &str) -> Result<(U256, U256), Error> {
     let hex = data.trim_start_matches("0x");
     let word = |i: usize| {
         hex.get(i * 64..(i + 1) * 64)
             .and_then(|w| U256::from_str_radix(w, 16).ok())
             .ok_or_else(|| Error::Integrity {
                 message: format!(
-                    "Uniswap Collect log data malformed ({} hex chars)",
+                    "Uniswap {event} log data malformed ({} hex chars)",
                     hex.len()
                 ),
             })
@@ -800,6 +898,34 @@ impl SnapshotTotals {
     }
 }
 
+/// Emit one token's collect when its amount is positive, stating its basis and, when the source
+/// knows it, the principal its tx released (`(basis, released)`).
+fn push_collect(
+    events: &mut Vec<HistoryEvent>,
+    token: &Token,
+    amount: Decimal,
+    (basis, released): (CollectBasis, Option<Decimal>),
+    tx: &str,
+    ts: i64,
+) -> Result<(), Error> {
+    if amount > Decimal::ZERO {
+        let released = released
+            .map(|r| Amount::from_decimal(token.clone(), r))
+            .transpose()?;
+        events.push(
+            HistoryEvent::new(
+                EventKind::CollectFees,
+                Amount::from_decimal(token.clone(), amount)?,
+                tx,
+                Timestamp(ts),
+            )
+            .with_collect_basis(basis)
+            .with_released_principal(released),
+        );
+    }
+    Ok(())
+}
+
 /// Emit a two-token delta as paired single-token events: one per non-zero side, sharing `kind`, `tx`
 /// and `ts`. The consumer re-pairs by token address.
 #[allow(
@@ -833,4 +959,22 @@ fn push_pair(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_topics_are_the_position_manager_signatures() {
+        let topic = |sig: &str| format!("{:#x}", alloy_primitives::keccak256(sig));
+        assert_eq!(
+            topic("Collect(uint256,address,uint256,uint256)"),
+            COLLECT_TOPIC
+        );
+        assert_eq!(
+            topic("DecreaseLiquidity(uint256,uint128,uint256,uint256)"),
+            DECREASE_TOPIC
+        );
+    }
 }

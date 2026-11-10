@@ -1,0 +1,345 @@
+{
+ "position_id": "999524",
+ "snapshots": {
+  "data": {
+   "positionSnapshots": [
+    {
+     "timestamp": "1748521115",
+     "depositedToken0": "25267.617204966578080584",
+     "depositedToken1": "0.19",
+     "withdrawnToken0": "0",
+     "withdrawnToken1": "0",
+     "collectedFeesToken0": "0",
+     "collectedFeesToken1": "0",
+     "transaction": {
+      "id": "0xb06f6615f024c4bbbcd1ec18e2b1e858096137f292ec1862cf67d4c269066d08"
+     },
+     "pool": {
+      "token0": {
+       "id": "0x0b34b2474a30c1bff0d89f851d69cc9bb87a122d",
+       "symbol": "SPION",
+       "name": "Spioniro",
+       "decimals": "18"
+      },
+      "token1": {
+       "id": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+       "symbol": "WETH",
+       "name": "Wrapped Ether",
+       "decimals": "18"
+      }
+     }
+    },
+    {
+     "timestamp": "1748527811",
+     "depositedToken0": "25267.617204966578080584",
+     "depositedToken1": "0.19",
+     "withdrawnToken0": "32.281040390224433303",
+     "withdrawnToken1": "0.009518101693693813",
+     "collectedFeesToken0": "91.556866850008555367",
+     "collectedFeesToken1": "91.556866850008555367",
+     "transaction": {
+      "id": "0x336adcba947e3e0fc3419c62504a80e63046f5d958af09a70499a8152de039ea"
+     },
+     "pool": {
+      "token0": {
+       "id": "0x0b34b2474a30c1bff0d89f851d69cc9bb87a122d",
+       "symbol": "SPION",
+       "name": "Spioniro",
+       "decimals": "18"
+      },
+      "token1": {
+       "id": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+       "symbol": "WETH",
+       "name": "Wrapped Ether",
+       "decimals": "18"
+      }
+     }
+    },
+    {
+     "timestamp": "1751914655",
+     "depositedToken0": "25267.617204966578080584",
+     "depositedToken1": "0.19",
+     "withdrawnToken0": "32.281040390224433303",
+     "withdrawnToken1": "0.009518101693693813",
+     "collectedFeesToken0": "104.008467403774385446",
+     "collectedFeesToken1": "104.008467403774385446",
+     "transaction": {
+      "id": "0x85ef7c611e6895fd5fc14f2c1b1dcb5e4f0669f4199904e9ac18c944fdc1df8e"
+     },
+     "pool": {
+      "token0": {
+       "id": "0x0b34b2474a30c1bff0d89f851d69cc9bb87a122d",
+       "symbol": "SPION",
+       "name": "Spioniro",
+       "decimals": "18"
+      },
+      "token1": {
+       "id": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+       "symbol": "WETH",
+       "name": "Wrapped Ether",
+       "decimals": "18"
+      }
+     }
+    },
+    {
+     "timestamp": "1751916311",
+     "depositedToken0": "25267.617204966578080584",
+     "depositedToken1": "0.19",
+     "withdrawnToken0": "39.45824766943848246",
+     "withdrawnToken1": "0.051645604790207285",
+     "collectedFeesToken0": "111.185674682988434603",
+     "collectedFeesToken1": "111.185674682988434603",
+     "transaction": {
+      "id": "0x186bc9d960dd6a06192a212b7a4f358851c16c7c5c6fc1f0c0f2e6134f7afd9d"
+     },
+     "pool": {
+      "token0": {
+       "id": "0x0b34b2474a30c1bff0d89f851d69cc9bb87a122d",
+       "symbol": "SPION",
+       "name": "Spioniro",
+       "decimals": "18"
+      },
+      "token1": {
+       "id": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+       "symbol": "WETH",
+       "name": "Wrapped Ether",
+       "decimals": "18"
+      }
+     }
+    }
+   ]
+  }
+ },
+ "position": {
+  "id": "999524",
+  "liquidity": "68183970764526402077",
+  "depositedToken0": "25267.617204966578080584",
+  "depositedToken1": "0.19",
+  "withdrawnToken0": "39.45824766943848246",
+  "withdrawnToken1": "0.051645604790207285",
+  "collectedFeesToken0": "111.185674682988434603",
+  "collectedFeesToken1": "111.185674682988434603",
+  "tickLower": {
+   "tickIdx": "-887200"
+  },
+  "tickUpper": {
+   "tickIdx": "887200"
+  },
+  "transaction": {
+   "timestamp": "1748521115"
+  },
+  "pool": {
+   "id": "0x06bc2d8df617c0ff35f3a2c856dbec51703ce0f9",
+   "tick": "-49608",
+   "sqrtPrice": "6633100146471779900255006596",
+   "feeTier": "10000",
+   "token0": {
+    "id": "0x0b34b2474a30c1bff0d89f851d69cc9bb87a122d",
+    "symbol": "SPION",
+    "name": "Spioniro",
+    "decimals": "18"
+   },
+   "token1": {
+    "id": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "symbol": "WETH",
+    "name": "Wrapped Ether",
+    "decimals": "18"
+   }
+  }
+ },
+ "receipts": {
+  "0xb06f6615f024c4bbbcd1ec18e2b1e858096137f292ec1862cf67d4c269066d08": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": {
+    "transactionHash": "0xb06f6615f024c4bbbcd1ec18e2b1e858096137f292ec1862cf67d4c269066d08",
+    "blockNumber": "0x158abc9",
+    "status": "0x1",
+    "logs": [
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+       "0x0000000000000000000000000000000000000000000000000000000000000000",
+       "0x000000000000000000000000035a1fc6122be04bc8dbae89b22f7f3cfb442327",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x",
+      "logIndex": "0x2d"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x3067048beee31b25b2f1681f88dac838c8bba36af25bfb2b7cf7473a5847e35f",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x000000000000000000000000000000000000000000000003c190f24aba018fbf000000000000000000000000000000000000000000000559c2a14657f56a4b4800000000000000000000000000000000000000000000000002a303fe4b530000",
+      "logIndex": "0x2e"
+     }
+    ]
+   }
+  },
+  "0x336adcba947e3e0fc3419c62504a80e63046f5d958af09a70499a8152de039ea": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": {
+    "transactionHash": "0x336adcba947e3e0fc3419c62504a80e63046f5d958af09a70499a8152de039ea",
+    "blockNumber": "0x158aded",
+    "status": "0x1",
+    "logs": [
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
+       "0x000000000000000000000000035a1fc6122be04bc8dbae89b22f7f3cfb442327",
+       "0x0000000000000000000000000000000000000000000000000000000000000000",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x",
+      "logIndex": "0x32"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+       "0x000000000000000000000000035a1fc6122be04bc8dbae89b22f7f3cfb442327",
+       "0x000000000000000000000000fd235968e65b0990584585763f837a5b5330e6de",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x",
+      "logIndex": "0x33"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x000000000000000000000000035a1fc6122be04bc8dbae89b22f7f3cfb442327000000000000000000000000000000000000000000000003369e0a1bbf220ed00000000000000000000000000000000000000000000000000039f289b8c63349",
+      "logIndex": "0x38"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x26f6a048ee9138f2c0ce266f322cb99228e8d619ae2bff30c67f8dcf9d2377b4",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000007b1499e4b374ef9000000000000000000000000000000000000000000000001bffd4b33df5d50970000000000000000000000000000000000000000000000000021d0a9be637f75",
+      "logIndex": "0x3a"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x000000000000000000000000d45dd91df475bfd944335160f538c1a14888dc1c000000000000000000000000000000000000000000000001bffd4b33df5d50970000000000000000000000000000000000000000000000000021d0a9be637f75",
+      "logIndex": "0x3f"
+     }
+    ]
+   }
+  },
+  "0x85ef7c611e6895fd5fc14f2c1b1dcb5e4f0669f4199904e9ac18c944fdc1df8e": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": {
+    "transactionHash": "0x85ef7c611e6895fd5fc14f2c1b1dcb5e4f0669f4199904e9ac18c944fdc1df8e",
+    "blockNumber": "0x15cf504",
+    "status": "0x1",
+    "logs": [
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x000000000000000000000000fd235968e65b0990584585763f837a5b5330e6de000000000000000000000000000000000000000000000000acccf8bb7444fdbf00000000000000000000000000000000000000000000000000c5e6ec99806595",
+      "logIndex": "0x18"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
+       "0x000000000000000000000000fd235968e65b0990584585763f837a5b5330e6de",
+       "0x0000000000000000000000000000000000000000000000000000000000000000",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x",
+      "logIndex": "0x1d"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+       "0x000000000000000000000000fd235968e65b0990584585763f837a5b5330e6de",
+       "0x000000000000000000000000035a1fc6122be04bc8dbae89b22f7f3cfb442327",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x",
+      "logIndex": "0x1e"
+     }
+    ]
+   }
+  },
+  "0x186bc9d960dd6a06192a212b7a4f358851c16c7c5c6fc1f0c0f2e6134f7afd9d": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": {
+    "transactionHash": "0x186bc9d960dd6a06192a212b7a4f358851c16c7c5c6fc1f0c0f2e6134f7afd9d",
+    "blockNumber": "0x15cf58d",
+    "status": "0x1",
+    "logs": [
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
+       "0x000000000000000000000000035a1fc6122be04bc8dbae89b22f7f3cfb442327",
+       "0x0000000000000000000000000000000000000000000000000000000000000000",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x",
+      "logIndex": "0x2a"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+       "0x000000000000000000000000035a1fc6122be04bc8dbae89b22f7f3cfb442327",
+       "0x000000000000000000000000fd235968e65b0990584585763f837a5b5330e6de",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x",
+      "logIndex": "0x2b"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x000000000000000000000000035a1fc6122be04bc8dbae89b22f7f3cfb442327000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001136278fd244",
+      "logIndex": "0x2f"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x26f6a048ee9138f2c0ce266f322cb99228e8d619ae2bff30c67f8dcf9d2377b4",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000007a18884739306a9000000000000000000000000000000000000000000000000639a8ffe74e6b7850000000000000000000000000000000000000000000000000095aabda95783c0",
+      "logIndex": "0x31"
+     },
+     {
+      "address": "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+      "topics": [
+       "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01",
+       "0x00000000000000000000000000000000000000000000000000000000000f4064"
+      ],
+      "data": "0x000000000000000000000000d45dd91df475bfd944335160f538c1a14888dc1c000000000000000000000000000000000000000000000000639a8ffe74e6b7850000000000000000000000000000000000000000000000000095aabda95783c0",
+      "logIndex": "0x36"
+     }
+    ]
+   }
+  }
+ }
+}

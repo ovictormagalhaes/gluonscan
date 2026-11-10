@@ -26,7 +26,7 @@ pub mod rate;
 mod chain;
 pub use chain::{Chain, Ecosystem};
 pub use error::Error;
-pub use history::{EventKind, History, HistoryEvent};
+pub use history::{CollectBasis, EventKind, History, HistoryEvent};
 pub use model::{
     is_dust, scaled, to_raw, Amount, BorrowedAsset, Complete, Currency, LendingPosition,
     LiquidityPosition, LockPosition, MarginMode, Money, NftPosition, PerpPosition, PerpSide,

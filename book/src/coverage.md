@@ -56,6 +56,11 @@ factor), `LiquidityPosition` (principal, uncollected/deposited/withdrawn/collect
 in-range), `LockPosition`, `StakePosition`, `YieldPosition` (PT/YT with maturity), `PerpPosition`
 (side, size, entry/mark/liquidation price, PnL, funding), `NftPosition`.
 
+Collected fees carry a `CollectBasis` (`LiquidityPosition::collected_fees_basis`, and
+`HistoryEvent::collect_basis` on each `CollectFees` event): `FeesOnly`, `IncludesPrincipal` (a
+Uniswap V3 collect also sends out the principal a liquidity decrease released; net it out per
+token) or `Unknown` (derive no fees from it).
+
 `YieldPosition` also names its `accounting_asset` when the source does, on the position's own
 chain: the unit a PT is nominally worth one of at maturity (USDe for PT-sUSDe, not the sUSDe it
 wraps). Within that field a token without an address is the chain's native coin (ETH); price it by
