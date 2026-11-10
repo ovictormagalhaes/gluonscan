@@ -1,6 +1,6 @@
 //! Normalized domain model — the shapes a fetch returns, already converted and priced.
 
-use crate::{Chain, Error, Protocol, Rate, Rates, Source};
+use crate::{Chain, CollectBasis, Error, Protocol, Rate, Rates, Source};
 use alloy_primitives::{Address, U256};
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -630,6 +630,10 @@ pub struct LiquidityPosition {
     /// fees or a fee-based APR for this position. Principal, uncollected fees and the rest of the
     /// position are unaffected.
     pub collected_fees_unavailable: bool,
+    /// Whether [`collected_fees`](Self::collected_fees) are fees only or may include principal
+    /// (taken together over both tokens: see [`CollectBasis::join`]). [`CollectBasis::Unknown`]
+    /// unless the source states it, and whenever the totals are unavailable.
+    pub collected_fees_basis: CollectBasis,
     /// Claimable protocol rewards / incentives (emission tokens), distinct from trading fees —
     /// present only when the source exposes them.
     pub rewards: Vec<Amount>,
@@ -670,6 +674,7 @@ impl LiquidityPosition {
             withdrawn: Vec::new(),
             collected_fees: Vec::new(),
             collected_fees_unavailable: false,
+            collected_fees_basis: CollectBasis::Unknown,
             rewards: Vec::new(),
             rates: Rates::new(),
             status: PositionStatus::Active,
@@ -760,6 +765,15 @@ impl LiquidityPosition {
     pub fn with_collected_fees_unavailable(mut self) -> Self {
         self.collected_fees = Vec::new();
         self.collected_fees_unavailable = true;
+        self.collected_fees_basis = CollectBasis::Unknown;
+        self
+    }
+
+    /// State whether the lifetime collected fees are fees only or may include principal
+    /// (builder-style).
+    #[must_use]
+    pub fn with_collected_fees_basis(mut self, basis: CollectBasis) -> Self {
+        self.collected_fees_basis = basis;
         self
     }
 
@@ -1467,5 +1481,18 @@ mod tests {
             p.collected_fees.is_empty(),
             "unknown fees are never reported"
         );
+    }
+
+    #[test]
+    fn collected_fees_basis_is_unknown_until_stated_and_once_unavailable() {
+        let t0 = Token::new("WETH", None, 18);
+        let t1 = Token::new("USDC", None, 6);
+        let fee = Amount::from_decimal(t0.clone(), Decimal::ONE).unwrap();
+        let p = LiquidityPosition::new(t0, t1, -60, 60, 0, true).with_collected_fees(vec![fee]);
+        assert_eq!(p.collected_fees_basis, CollectBasis::Unknown);
+        let p = p.with_collected_fees_basis(CollectBasis::FeesOnly);
+        assert_eq!(p.collected_fees_basis, CollectBasis::FeesOnly);
+        let p = p.with_collected_fees_unavailable();
+        assert_eq!(p.collected_fees_basis, CollectBasis::Unknown);
     }
 }

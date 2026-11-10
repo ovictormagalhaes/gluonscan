@@ -20,9 +20,9 @@
 use alloy_primitives::U256;
 use async_trait::async_trait;
 use gluonscan_core::{
-    scaled, Amount, Capability, Chain, ChainProvider, Complete, Ctx, Detail, Error, EventKind,
-    History, HistoryEvent, LiquidityPosition, Position, PositionStatus, Protocol, ProtocolAdapter,
-    Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet,
+    scaled, Amount, Capability, Chain, ChainProvider, CollectBasis, Complete, Ctx, Detail, Error,
+    EventKind, History, HistoryEvent, LiquidityPosition, Position, PositionStatus, Protocol,
+    ProtocolAdapter, Provenance, Reading, Source, Staleness, Timestamp, Token, Wallet,
 };
 use gluonscan_math::{
     get_amounts_for_liquidity, get_sqrt_ratio_at_tick, is_in_range, MAX_TICK, MIN_TICK,
@@ -170,7 +170,10 @@ impl ProtocolAdapter for RaydiumClmm {
     /// transaction is classified: an Anchor discriminator (`open_position*`/`increase_liquidity*` →
     /// Deposit, `decrease_liquidity*` → Withdraw, or a `decrease_liquidity` with `liquidity == 0` →
     /// CollectFees) takes precedence; otherwise a positive two-token delta is treated as a fee
-    /// collect. Each two-token movement becomes paired single-token events. Fails closed (ADR-016):
+    /// collect. Each two-token movement becomes paired single-token events. A collect whose
+    /// transaction makes no CLMM liquidity change but `decrease_liquidity(0)` released no principal
+    /// and is [`CollectBasis::FeesOnly`]; any other collect (one the heuristic found, or one beside
+    /// another liquidity change) is [`CollectBasis::Unknown`]. Fails closed (ADR-016):
     /// any transport/RPC failure aborts the whole read so the consumer keeps its checkpoint.
     async fn read_history(
         &self,
@@ -238,7 +241,25 @@ impl ProtocolAdapter for RaydiumClmm {
             // Discriminator classification wins; otherwise fall back to the positive-delta fee-collect
             // heuristic (so a decrease_liquidity(0) and a plain collect are both captured, once).
             if let Some((kind, a0, a1)) = classify_discriminator(&tx, wallet, mint_a, mint_b) {
-                push_pair(&mut events, kind, &token_a, &token_b, a0, a1, sig, at)?;
+                let only_fee_flushes = clmm_event_kinds(&tx)
+                    .iter()
+                    .all(|k| *k == ClmmEventKind::Collect);
+                let basis = if kind == EventKind::CollectFees && only_fee_flushes {
+                    CollectBasis::FeesOnly
+                } else {
+                    CollectBasis::Unknown
+                };
+                push_pair(
+                    &mut events,
+                    kind,
+                    &token_a,
+                    &token_b,
+                    a0,
+                    a1,
+                    sig,
+                    at,
+                    basis,
+                )?;
             } else if let Some((a0, a1)) = classify_collect_heuristic(&tx, wallet, mint_a, mint_b) {
                 push_pair(
                     &mut events,
@@ -249,6 +270,7 @@ impl ProtocolAdapter for RaydiumClmm {
                     a1,
                     sig,
                     at,
+                    CollectBasis::Unknown,
                 )?;
             }
         }
@@ -850,8 +872,8 @@ fn classify_collect_heuristic(
     }
 }
 
-/// Emit a two-token movement as paired single-token events (one per non-zero leg), sharing kind, tx
-/// and timestamp. The consumer re-pairs by token mint address.
+/// Emit a two-token movement as paired single-token events (one per non-zero leg), sharing kind, tx,
+/// timestamp and collect basis. The consumer re-pairs by token mint address.
 #[allow(
     clippy::too_many_arguments,
     reason = "internal helper appending a token-pair event to the output sink; a mix of event data and the accumulator, not a cohesive struct"
@@ -865,22 +887,29 @@ fn push_pair(
     b: Decimal,
     tx: &str,
     at: i64,
+    basis: CollectBasis,
 ) -> Result<(), Error> {
     if a > Decimal::ZERO {
-        events.push(HistoryEvent::new(
-            kind,
-            Amount::from_decimal(token_a.clone(), a)?,
-            tx,
-            Timestamp(at),
-        ));
+        events.push(
+            HistoryEvent::new(
+                kind,
+                Amount::from_decimal(token_a.clone(), a)?,
+                tx,
+                Timestamp(at),
+            )
+            .with_collect_basis(basis),
+        );
     }
     if b > Decimal::ZERO {
-        events.push(HistoryEvent::new(
-            kind,
-            Amount::from_decimal(token_b.clone(), b)?,
-            tx,
-            Timestamp(at),
-        ));
+        events.push(
+            HistoryEvent::new(
+                kind,
+                Amount::from_decimal(token_b.clone(), b)?,
+                tx,
+                Timestamp(at),
+            )
+            .with_collect_basis(basis),
+        );
     }
     Ok(())
 }
@@ -907,8 +936,14 @@ fn anchor_discriminator(method: &str) -> [u8; 8] {
 /// Inspect a parsed transaction's instructions (top-level + inner) for a Raydium CLMM
 /// liquidity-changing call. `open_position*`/`increase_liquidity*` → Deposit, `decrease_liquidity*` →
 /// Withdraw, and a `decrease_liquidity` whose `liquidity_amount == 0` → Collect (the UI's "Claim
-/// Fees" flushes fees via decrease_liquidity(0)).
+/// Fees" flushes fees via decrease_liquidity(0)). The first such call, top-level before inner.
 fn detect_clmm_event_kind(tx: &serde_json::Value) -> Option<ClmmEventKind> {
+    clmm_event_kinds(tx).first().copied()
+}
+
+/// Every Raydium CLMM liquidity-changing call in a parsed transaction, top-level first, then inner,
+/// classified as in [`detect_clmm_event_kind`].
+fn clmm_event_kinds(tx: &serde_json::Value) -> Vec<ClmmEventKind> {
     let deposit_discs: [[u8; 8]; 6] = [
         anchor_discriminator("open_position"),
         anchor_discriminator("open_position_v2"),
@@ -946,25 +981,23 @@ fn detect_clmm_event_kind(tx: &serde_json::Value) -> Option<ClmmEventKind> {
         None
     };
 
-    let scan = |arr: &[serde_json::Value]| -> Option<ClmmEventKind> {
+    let mut kinds = Vec::new();
+    let mut scan = |arr: &[serde_json::Value]| {
         for ix in arr {
             if ix.get("programId").and_then(|p| p.as_str()) != Some(CLMM_PROGRAM_ID) {
                 continue;
             }
             if let Some(kind) = ix.get("data").and_then(|d| d.as_str()).and_then(check) {
-                return Some(kind);
+                kinds.push(kind);
             }
         }
-        None
     };
 
     if let Some(arr) = tx
         .pointer("/transaction/message/instructions")
         .and_then(|i| i.as_array())
     {
-        if let Some(kind) = scan(arr) {
-            return Some(kind);
-        }
+        scan(arr);
     }
     if let Some(inner) = tx
         .pointer("/meta/innerInstructions")
@@ -972,13 +1005,11 @@ fn detect_clmm_event_kind(tx: &serde_json::Value) -> Option<ClmmEventKind> {
     {
         for entry in inner {
             if let Some(arr) = entry.get("instructions").and_then(|i| i.as_array()) {
-                if let Some(kind) = scan(arr) {
-                    return Some(kind);
-                }
+                scan(arr);
             }
         }
     }
-    None
+    kinds
 }
 
 #[cfg(test)]
@@ -1112,6 +1143,12 @@ mod history_tests {
         );
         assert_eq!(collect.tx, "sigCol");
         assert_eq!(collect.at, Timestamp(3000));
+        assert_eq!(
+            collect.collect_basis,
+            CollectBasis::Unknown,
+            "a credit the heuristic read as a collect is not known to be fees only"
+        );
+        assert_eq!(collect.released_principal, None);
         // sorted oldest-first: the 2000 deposit legs precede the 3000 collect.
         assert_eq!(h.events.last().unwrap().at, Timestamp(3000));
     }
@@ -1122,6 +1159,79 @@ mod history_tests {
         let h = history(&ctx(), Some(Timestamp(2500))).await;
         assert_eq!(h.events.len(), 1);
         assert_eq!(h.events[0].kind, EventKind::CollectFees);
+    }
+
+    fn decrease_ix(liquidity: u128) -> String {
+        let mut data = anchor_discriminator("decrease_liquidity_v2").to_vec();
+        data.extend_from_slice(&liquidity.to_le_bytes());
+        data.extend_from_slice(&[0u8; 16]);
+        format!(
+            r#"{{"programId":"{CLMM_PROGRAM_ID}","data":"{}"}}"#,
+            bs58::encode(data).into_string()
+        )
+    }
+
+    // The wallet is credited 0.5 USDT and 2 WSOL by the given CLMM instructions.
+    fn credited_tx(instructions: &[String]) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{
+              "blockTime":3000,
+              "transaction":{{"message":{{"instructions":[{}]}}}},
+              "meta":{{"err":null,
+                "preTokenBalances":[
+                  {{"owner":"{WALLET}","mint":"{MINT_A}","uiTokenAmount":{{"uiAmountString":"0"}}}},
+                  {{"owner":"{WALLET}","mint":"{MINT_B}","uiTokenAmount":{{"uiAmountString":"0"}}}}],
+                "postTokenBalances":[
+                  {{"owner":"{WALLET}","mint":"{MINT_A}","uiTokenAmount":{{"uiAmountString":"0.5"}}}},
+                  {{"owner":"{WALLET}","mint":"{MINT_B}","uiTokenAmount":{{"uiAmountString":"2"}}}}]
+              }}
+            }}}}"#,
+            instructions.join(",")
+        )
+    }
+
+    async fn collects_of(tx: String) -> Vec<HistoryEvent> {
+        let rpc = MockChainProvider::new()
+            .on(
+                Match::method("getSignaturesForAddress"),
+                r#"{"jsonrpc":"2.0","id":1,"result":[{"signature":"sigX","blockTime":3000}]}"#,
+            )
+            .on(Match::body_contains("sigX"), tx)
+            .on(Match::body_contains(MINT_A), mint_account(6))
+            .on(Match::body_contains(MINT_B), mint_account(9));
+        let cx =
+            Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
+        history(&cx, None).await.events
+    }
+
+    #[tokio::test]
+    async fn a_fee_flush_releases_no_principal() {
+        let events = collects_of(credited_tx(&[decrease_ix(0)])).await;
+
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|e| e.kind == EventKind::CollectFees
+            && e.collect_basis == CollectBasis::FeesOnly
+            && e.released_principal.is_none()));
+    }
+
+    #[tokio::test]
+    async fn a_fee_flush_beside_a_liquidity_decrease_is_not_fees_only() {
+        let events = collects_of(credited_tx(&[decrease_ix(0), decrease_ix(1_000)])).await;
+
+        assert_eq!(events.len(), 2);
+        assert!(events
+            .iter()
+            .all(|e| e.kind == EventKind::CollectFees && e.collect_basis == CollectBasis::Unknown));
+    }
+
+    #[tokio::test]
+    async fn a_liquidity_decrease_is_a_withdraw_with_no_collect_basis() {
+        let events = collects_of(credited_tx(&[decrease_ix(1_000)])).await;
+
+        assert_eq!(events.len(), 2);
+        assert!(events
+            .iter()
+            .all(|e| e.kind == EventKind::Withdraw && e.collect_basis == CollectBasis::Unknown));
     }
 
     #[tokio::test]

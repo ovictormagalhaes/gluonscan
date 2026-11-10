@@ -39,6 +39,44 @@ pub enum EventKind {
     BorrowInterest,
 }
 
+/// What a fee collect's amount holds. A concentrated-liquidity collect (Uniswap V3 `collect`) sends
+/// out everything the position is owed: its fees plus any principal a liquidity decrease released
+/// and nothing has collected yet. Whether a reported amount still carries that principal depends on
+/// where it was read, so every collect event and every collected total says which.
+///
+/// A consumer deriving realized fees must net principal out of an
+/// [`IncludesPrincipal`](Self::IncludesPrincipal) amount and must not derive fees from an
+/// [`Unknown`](Self::Unknown) one. Reading either as fees reports principal as profit.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CollectBasis {
+    /// Fees only: no principal is in the amount.
+    FeesOnly,
+    /// Everything the collect sent out: fees plus whatever principal released by a liquidity
+    /// decrease it withdrew (possibly none). Net the principal out, per token, against the
+    /// position's withdrawals.
+    IncludesPrincipal,
+    /// Not known whether the amount includes principal. The default, so a source that does not
+    /// state a basis never reads as fees-only.
+    #[default]
+    Unknown,
+}
+
+impl CollectBasis {
+    /// The basis of a sum of amounts with bases `self` and `other`: unknown if either is, else
+    /// including principal if either does, else fees only. A total is never fees-only unless every
+    /// part of it is.
+    #[must_use]
+    pub fn join(self, other: CollectBasis) -> CollectBasis {
+        use CollectBasis::{FeesOnly, IncludesPrincipal, Unknown};
+        match (self, other) {
+            (Unknown, _) | (_, Unknown) => Unknown,
+            (IncludesPrincipal, _) | (_, IncludesPrincipal) => IncludesPrincipal,
+            (FeesOnly, FeesOnly) => FeesOnly,
+        }
+    }
+}
+
 /// One historical event: what happened, to how much of which token, and when.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +91,18 @@ pub struct HistoryEvent {
     pub at: Timestamp,
     /// Block height, when the source provides it.
     pub block: Option<u64>,
+    /// For an [`EventKind::CollectFees`] event: whether [`amount`](Self::amount) is fees only or
+    /// may include principal. [`CollectBasis::Unknown`] unless the source states it, and on every
+    /// other kind.
+    pub collect_basis: CollectBasis,
+    /// For a collect that includes principal, read from the transaction itself: the principal, in
+    /// this event's token, that a liquidity decrease **in the same transaction** released. When the
+    /// collect sent out everything owed (what wallets and interfaces do) this is the principal part
+    /// of [`amount`](Self::amount); principal that a decrease in an earlier transaction released and
+    /// this collect withdrew is not in it (net that against the earlier
+    /// [`Withdraw`](EventKind::Withdraw)). `None` when the source cannot tell, and on every event
+    /// that is not such a collect.
+    pub released_principal: Option<Amount>,
 }
 
 impl HistoryEvent {
@@ -64,6 +114,8 @@ impl HistoryEvent {
             tx: tx.into(),
             at,
             block: None,
+            collect_basis: CollectBasis::Unknown,
+            released_principal: None,
         }
     }
 
@@ -71,6 +123,21 @@ impl HistoryEvent {
     #[must_use]
     pub fn with_block(mut self, block: Option<u64>) -> Self {
         self.block = block;
+        self
+    }
+
+    /// State whether a collect's amount is fees only or may include principal (builder-style).
+    #[must_use]
+    pub fn with_collect_basis(mut self, basis: CollectBasis) -> Self {
+        self.collect_basis = basis;
+        self
+    }
+
+    /// Attach the principal the same transaction released, in this event's token (builder-style).
+    /// See [`released_principal`](Self::released_principal).
+    #[must_use]
+    pub fn with_released_principal(mut self, principal: Option<Amount>) -> Self {
+        self.released_principal = principal;
         self
     }
 }
@@ -119,6 +186,20 @@ impl History {
         self.collected_fees_unavailable = true;
         self
     }
+
+    /// The basis of this history's collected fees taken together: [`CollectBasis::Unknown`] when
+    /// they are [unavailable](Self::collected_fees_unavailable), else the
+    /// [`join`](CollectBasis::join) of every [`EventKind::CollectFees`] event's basis (fees only
+    /// when there is none, since an empty sum holds no principal).
+    pub fn collected_fees_basis(&self) -> CollectBasis {
+        if self.collected_fees_unavailable {
+            return CollectBasis::Unknown;
+        }
+        self.events
+            .iter()
+            .filter(|e| e.kind == EventKind::CollectFees)
+            .fold(CollectBasis::FeesOnly, |acc, e| acc.join(e.collect_basis))
+    }
 }
 
 #[cfg(test)]
@@ -148,5 +229,98 @@ mod tests {
         assert!(h.collected_fees_unavailable);
         assert_eq!(h.events.len(), 1);
         assert_eq!(h.events[0].kind, EventKind::Deposit);
+    }
+
+    fn history(events: Vec<HistoryEvent>) -> History {
+        History::new(
+            Protocol::UniswapV3,
+            Chain::Ethereum,
+            events,
+            Provenance::new(
+                Source::Subgraph,
+                Chain::Ethereum,
+                Timestamp(1),
+                Staleness::Live,
+            ),
+        )
+    }
+
+    fn one_weth() -> Amount {
+        Amount::from_decimal(Token::new("WETH", None, 18), Decimal::ONE).unwrap()
+    }
+
+    fn collect(basis: CollectBasis) -> HistoryEvent {
+        HistoryEvent::new(EventKind::CollectFees, one_weth(), "0x1", Timestamp(1))
+            .with_collect_basis(basis)
+    }
+
+    #[test]
+    fn a_total_is_fees_only_only_when_every_part_is() {
+        use CollectBasis::{FeesOnly, IncludesPrincipal, Unknown};
+        let all = [FeesOnly, IncludesPrincipal, Unknown];
+        for a in all {
+            for b in all {
+                let expected = if a == Unknown || b == Unknown {
+                    Unknown
+                } else if a == IncludesPrincipal || b == IncludesPrincipal {
+                    IncludesPrincipal
+                } else {
+                    FeesOnly
+                };
+                assert_eq!(a.join(b), expected, "{a:?} {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_event_states_no_basis_until_its_source_does() {
+        let e = HistoryEvent::new(EventKind::CollectFees, one_weth(), "0x1", Timestamp(1));
+        assert_eq!(e.collect_basis, CollectBasis::Unknown);
+        assert_eq!(e.released_principal, None);
+        assert_eq!(CollectBasis::default(), CollectBasis::Unknown);
+        let e = e
+            .with_collect_basis(CollectBasis::IncludesPrincipal)
+            .with_released_principal(Some(one_weth()));
+        assert_eq!(e.collect_basis, CollectBasis::IncludesPrincipal);
+        assert_eq!(e.released_principal, Some(one_weth()));
+    }
+
+    #[test]
+    fn a_mixed_history_never_claims_fees_only() {
+        let h = history(vec![
+            collect(CollectBasis::FeesOnly),
+            collect(CollectBasis::IncludesPrincipal),
+        ]);
+        assert_eq!(h.collected_fees_basis(), CollectBasis::IncludesPrincipal);
+
+        let h = history(vec![
+            collect(CollectBasis::FeesOnly),
+            collect(CollectBasis::IncludesPrincipal),
+            collect(CollectBasis::Unknown),
+        ]);
+        assert_eq!(h.collected_fees_basis(), CollectBasis::Unknown);
+
+        let h = history(vec![
+            collect(CollectBasis::FeesOnly),
+            collect(CollectBasis::FeesOnly),
+        ]);
+        assert_eq!(h.collected_fees_basis(), CollectBasis::FeesOnly);
+    }
+
+    #[test]
+    fn only_collects_count_toward_the_basis() {
+        let withdraw = HistoryEvent::new(EventKind::Withdraw, one_weth(), "0x1", Timestamp(1));
+        let h = history(vec![withdraw, collect(CollectBasis::FeesOnly)]);
+        assert_eq!(h.collected_fees_basis(), CollectBasis::FeesOnly);
+        assert_eq!(
+            history(Vec::new()).collected_fees_basis(),
+            CollectBasis::FeesOnly
+        );
+    }
+
+    #[test]
+    fn unavailable_collects_have_an_unknown_basis() {
+        let h = history(vec![collect(CollectBasis::FeesOnly)]).with_collected_fees_unavailable();
+        assert_eq!(h.collected_fees_basis(), CollectBasis::Unknown);
     }
 }
