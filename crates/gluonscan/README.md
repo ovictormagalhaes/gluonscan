@@ -31,13 +31,13 @@ first run; opt out and cherry-pick when you care about build size.
 
 ```toml
 # Everything (default):
-gluonscan = "0.3.0-beta.5"
+gluonscan = "0.3.0-beta.6"
 
 # Just Aave — pulls no Solana stack:
-gluonscan = { version = "0.3.0-beta.5", default-features = false, features = ["aave"] }
+gluonscan = { version = "0.3.0-beta.6", default-features = false, features = ["aave"] }
 
 # Solana only:
-gluonscan = { version = "0.3.0-beta.5", default-features = false, features = ["kamino", "raydium"] }
+gluonscan = { version = "0.3.0-beta.6", default-features = false, features = ["kamino", "raydium"] }
 ```
 
 Features: `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; ecosystem umbrellas
