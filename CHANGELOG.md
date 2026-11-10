@@ -8,6 +8,52 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.7] - 2026-11-10
+
+### Added
+
+- **`CollectBasis`** (`FeesOnly`, `IncludesPrincipal`, `Unknown`; `Unknown` is the default) says
+  what a fee collect's amount holds. A Uniswap V3 `collect` sends out the principal a
+  `decreaseLiquidity` released together with the fees, and until now nothing told a consumer
+  whether a `CollectFees` event or a collected total still carried it: amounts rebuilt from
+  `Collect` receipts did, and a consumer reading them as fees counted principal as profit (a
+  real Ethereum position, SPION/WETH #999524, reported 0.1237 WETH collected where 0.0720 WETH
+  was fees). `CollectBasis::join` gives the basis of a sum: unknown if any part is, else
+  including principal if any part does, else fees only.
+- **`HistoryEvent::collect_basis`** and **`HistoryEvent::released_principal`** (`Option<Amount>`),
+  with `with_collect_basis` / `with_released_principal`. `released_principal` is the principal, in
+  the event's token, that a liquidity decrease in the same transaction released (when the collect
+  sent out everything owed, the principal part of the amount; principal released by an earlier
+  transaction is not in it, net it against that transaction's `Withdraw`).
+- **`History::collected_fees_basis()`**: the join of every `CollectFees` event's basis, `Unknown`
+  when the collected fees are unavailable, `FeesOnly` when there is no collect.
+- **`LiquidityPosition::collected_fees_basis`** with `with_collected_fees_basis`: the basis of
+  `collected_fees`, both tokens taken together. `with_collected_fees_unavailable` resets it to
+  `Unknown`.
+- **`UniswapV3::with_subgraph_collect_basis(chain, basis)`**: declares what one chain's subgraph
+  `collectedFeesToken*` hold once principal was withdrawn. Uniswap's mapping from July 2021 stores
+  `collected - withdrawn` (fees only); the one from March 2022 adds each collect's whole amount
+  (principal included, and token0's amount into token1). The adapter cannot tell which a
+  deployment runs.
+- **Uniswap V3 marks every collect and total.** Amounts rebuilt from `Collect` receipts are
+  `IncludesPrincipal`, and each rebuilt event carries the principal its own transaction's
+  `DecreaseLiquidity` logs (same position manager, same token id) released, zero when it released
+  none. A subgraph amount is `FeesOnly` where that token's lifetime withdrawn total, as of the same
+  snapshot, is zero (no principal to include on any mapping), else the chain's declared basis, else
+  `Unknown`. Withheld totals are `Unknown`.
+- **Raydium CLMM marks its collects.** A `decrease_liquidity(0)` fee flush in a transaction with no
+  other CLMM liquidity change is `FeesOnly`; a collect found by the credit heuristic, or one beside
+  another liquidity change, is `Unknown`.
+
+### Changed
+
+- No amount changes: every collect event and collected total reports the same numbers as before.
+  `HistoryEvent` and `LiquidityPosition` gain public fields; both are `#[non_exhaustive]`, so no
+  caller outside `gluonscan-core` can build them with a struct literal and nothing that compiled
+  stops compiling. `CollectBasis` is `#[non_exhaustive]`: match it with a wildcard arm, and read
+  any arm you do not know as `Unknown`. A source that sets no basis reads `Unknown`, never
+  `FeesOnly`.
+
 ## [0.3.0-beta.6] - 2026-11-10
 
 ### Added
