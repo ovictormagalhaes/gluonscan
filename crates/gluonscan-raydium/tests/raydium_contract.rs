@@ -52,7 +52,8 @@ fn position_account(
 }
 
 // PoolState: token_mint_0[73..105], token_mint_1[105..137], mint_decimals_0[233],
-// mint_decimals_1[234], sqrt_price_x64[253..269], tick_current[269..273].
+// mint_decimals_1[234], tick_spacing[235..237], sqrt_price_x64[253..269], tick_current[269..273],
+// fee_growth_global_0/1_x64[277..309] (left at 0).
 fn pool_account(
     tick: i32,
     sqrt_x64: u128,
@@ -61,14 +62,61 @@ fn pool_account(
     dec0: u8,
     dec1: u8,
 ) -> Vec<u8> {
-    let mut b = vec![0u8; 273];
+    let mut b = vec![0u8; 309];
     b[73..105].copy_from_slice(mint0);
     b[105..137].copy_from_slice(mint1);
     b[233] = dec0;
     b[234] = dec1;
+    b[235..237].copy_from_slice(&TICK_SPACING.to_le_bytes());
     b[253..269].copy_from_slice(&sqrt_x64.to_le_bytes());
     b[269..273].copy_from_slice(&tick.to_le_bytes());
     b
+}
+
+const TICK_SPACING: u16 = 1;
+
+// TickArrayState: pool_id[8..40], start_tick_index[40..44], 60 TickState of 168 bytes from 44
+// (tick[0..4], liquidity_gross[20..36], fee_growth_outside_0/1_x64[36..68], left at 0). Holds one
+// initialized tick, at the start of the array (tick spacing 1, so the array starts at that tick
+// for -60 and 60). Returns the tick array PDA and its bytes.
+fn tick_array_account(pool: &[u8; 32], tick: i32, liquidity_gross: u128) -> (String, Vec<u8>) {
+    let program = pubkey_bytes(RAYDIUM_CLMM_PROGRAM).unwrap();
+    let (pda, _) = find_program_address(&[b"tick_array", pool, &tick.to_be_bytes()], &program);
+    let mut b = vec![0u8; 8 + 32 + 4 + 60 * 168 + 1 + 115];
+    b[8..40].copy_from_slice(pool);
+    b[40..44].copy_from_slice(&tick.to_le_bytes());
+    b[44..48].copy_from_slice(&tick.to_le_bytes());
+    b[64..80].copy_from_slice(&liquidity_gross.to_le_bytes());
+    (pubkey_str(&pda), b)
+}
+
+// The `getMultipleAccounts` contract the read takes every value from, one slot for all: the
+// position, its pool and the two tick arrays of a [-60, 60) position, in that order.
+fn with_snapshot(
+    rpc: MockChainProvider,
+    position: &[u8],
+    pool: &[u8; 32],
+    pool_data: &[u8],
+    liq: u128,
+) -> MockChainProvider {
+    let (lower, lower_data) = tick_array_account(pool, -60, liq);
+    let (upper, upper_data) = tick_array_account(pool, 60, liq);
+    let values = [position, pool_data, &lower_data, &upper_data]
+        .map(|b| {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(b);
+            format!(r#"{{"data":["{b64}","base64"]}}"#)
+        })
+        .join(",");
+    rpc.on(
+        Match::all([
+            Match::method("getMultipleAccounts"),
+            Match::body_contains(&lower),
+            Match::body_contains(&upper),
+        ]),
+        format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"context":{{"slot":1}},"value":[{values}]}}}}"#
+        ),
+    )
 }
 
 #[tokio::test]
@@ -85,6 +133,8 @@ async fn reads_a_clmm_position_from_chain() {
 
     // sqrt price Q64.64 at tick 0 = 2^64; shifted to Q64.96 it equals get_sqrt_ratio_at_tick(0).
     let sqrt_x64: u128 = 1u128 << 64;
+    let position = position_account(&pool, -60, 60, 1_000_000_000, 1_000_000, 2_000_000);
+    let pool_data = pool_account(0, sqrt_x64, &mint0, &mint1, 9, 6);
 
     let rpc = MockChainProvider::new()
         .on(
@@ -106,22 +156,16 @@ async fn reads_a_clmm_position_from_chain() {
                 Match::method("getAccountInfo"),
                 Match::body_contains(&pda_str),
             ]),
-            account_response(&position_account(
-                &pool,
-                -60,
-                60,
-                1_000_000_000,
-                1_000_000,
-                2_000_000,
-            )),
+            account_response(&position),
         )
         .on(
             Match::all([
                 Match::method("getAccountInfo"),
                 Match::body_contains(&pool_str),
             ]),
-            account_response(&pool_account(0, sqrt_x64, &mint0, &mint1, 9, 6)),
+            account_response(&pool_data),
         );
+    let rpc = with_snapshot(rpc, &position, &pool, &pool_data, 1_000_000_000);
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 
     let reading = RaydiumClmm::new()
@@ -194,7 +238,7 @@ async fn position_with_missing_pool_fails_closed() {
             ]),
             account_response(&position_account(&pool, -60, 60, 1_000_000_000, 0, 0)),
         )
-        // Pool account exists but is far shorter than POOL_MIN_LEN (273) — truncated / malformed.
+        // Pool account exists but is far shorter than POOL_MIN_LEN (309) — truncated / malformed.
         .on(
             Match::all([
                 Match::method("getAccountInfo"),
@@ -235,6 +279,8 @@ async fn discovers_position_under_token_2022() {
     let mint1 = [3u8; 32];
     let pool_str = pubkey_str(&pool);
     let sqrt_x64: u128 = 1u128 << 64;
+    let position = position_account(&pool, -60, 60, 1_000_000_000, 1_000_000, 2_000_000);
+    let pool_data = pool_account(0, sqrt_x64, &mint0, &mint1, 9, 6);
 
     let rpc = MockChainProvider::new()
         .on(
@@ -256,22 +302,16 @@ async fn discovers_position_under_token_2022() {
                 Match::method("getAccountInfo"),
                 Match::body_contains(&pda_str),
             ]),
-            account_response(&position_account(
-                &pool,
-                -60,
-                60,
-                1_000_000_000,
-                1_000_000,
-                2_000_000,
-            )),
+            account_response(&position),
         )
         .on(
             Match::all([
                 Match::method("getAccountInfo"),
                 Match::body_contains(&pool_str),
             ]),
-            account_response(&pool_account(0, sqrt_x64, &mint0, &mint1, 9, 6)),
+            account_response(&pool_data),
         );
+    let rpc = with_snapshot(rpc, &position, &pool, &pool_data, 1_000_000_000);
     let cx = Ctx::new(Arc::new(MockHttp::new()), Arc::new(MockClock(0))).with_rpc(Arc::new(rpc));
 
     let reading = RaydiumClmm::new()
