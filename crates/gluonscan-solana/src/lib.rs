@@ -1,8 +1,9 @@
 //! # gluonscan-solana
 //!
 //! Minimal Solana on-chain helpers over the injected [`ChainProvider`] port: base58 pubkeys,
-//! program-derived addresses ([`find_program_address`]), and the two RPC reads the adapters need
-//! ([`get_token_accounts_by_owner`], [`get_account_info`]). No RPC client is owned here — the
+//! program-derived addresses ([`find_program_address`]), and the RPC reads the adapters need
+//! ([`get_token_accounts_by_owner`], [`get_account_info`], and [`get_multiple_accounts`] for
+//! accounts that must come from one slot). No RPC client is owned here — the
 //! transport is injected, so tests replay recorded RPC contracts.
 
 use base64::Engine;
@@ -158,7 +159,46 @@ pub async fn get_account_info(
     let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
         message: format!("getAccountInfo response not JSON: {e}"),
     })?;
-    match json.pointer("/result/value") {
+    account_data(json.pointer("/result/value"), pubkey)
+}
+
+/// Fetch and base64-decode several accounts in one `getMultipleAccounts` call, so every account
+/// comes from the same slot (separate `getAccountInfo` calls can each land on a different one).
+/// Returns one entry per pubkey, in order, `None` for an account that does not exist. A reply
+/// without exactly one value per pubkey fails closed.
+pub async fn get_multiple_accounts(
+    rpc: &dyn ChainProvider,
+    pubkeys: &[&str],
+) -> Result<Vec<Option<Vec<u8>>>, Error> {
+    let keys = serde_json::to_string(pubkeys).map_err(|e| Error::Permanent {
+        message: format!("getMultipleAccounts pubkeys not encodable: {e}"),
+    })?;
+    let params = format!(r#"[{keys},{{"encoding":"base64"}}]"#);
+    let raw = rpc
+        .call(Chain::Solana, "getMultipleAccounts", params)
+        .await?;
+    let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| Error::Integrity {
+        message: format!("getMultipleAccounts response not JSON: {e}"),
+    })?;
+    let values = json
+        .pointer("/result/value")
+        .and_then(|v| v.as_array())
+        .filter(|v| v.len() == pubkeys.len())
+        .ok_or_else(|| Error::Integrity {
+            message: format!(
+                "getMultipleAccounts response has no value per requested account ({})",
+                pubkeys.len()
+            ),
+        })?;
+    values
+        .iter()
+        .zip(pubkeys)
+        .map(|(value, pubkey)| account_data(Some(value), pubkey))
+        .collect()
+}
+
+fn account_data(value: Option<&serde_json::Value>, pubkey: &str) -> Result<Option<Vec<u8>>, Error> {
+    match value {
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(value) => {
             let data = value
@@ -347,6 +387,47 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(bump_a, bump_b);
         assert!(!is_on_curve(&a));
+    }
+
+    fn multiple_accounts_rpc(reply: &str) -> gluonscan_testing::MockChainProvider {
+        gluonscan_testing::MockChainProvider::new().on(
+            gluonscan_testing::Match::method("getMultipleAccounts"),
+            reply.to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn multiple_accounts_are_one_call_in_request_order() {
+        let rpc = multiple_accounts_rpc(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"context":{"slot":7},"value":[{"data":["AQI=","base64"]},null,{"data":["","base64"]}]}}"#,
+        );
+        let accounts = get_multiple_accounts(&rpc, &["A1", "B2", "C3"])
+            .await
+            .unwrap();
+        assert_eq!(accounts, vec![Some(vec![1, 2]), None, Some(vec![])]);
+        let calls = rpc.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "getMultipleAccounts");
+        assert_eq!(calls[0].1, r#"[["A1","B2","C3"],{"encoding":"base64"}]"#);
+    }
+
+    #[tokio::test]
+    async fn multiple_accounts_reply_with_a_missing_entry_fails_closed() {
+        let rpc = multiple_accounts_rpc(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"context":{"slot":7},"value":[null]}}"#,
+        );
+        let err = get_multiple_accounts(&rpc, &["A1", "B2"])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Integrity { .. }), "{err:?}");
+        let rpc = multiple_accounts_rpc(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32005}}"#);
+        let err = get_multiple_accounts(&rpc, &["A1"]).await.unwrap_err();
+        assert!(matches!(err, Error::Integrity { .. }), "{err:?}");
+        let rpc = multiple_accounts_rpc(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"value":[{"data":["not base64!","base64"]}]}}"#,
+        );
+        let err = get_multiple_accounts(&rpc, &["A1"]).await.unwrap_err();
+        assert!(matches!(err, Error::Integrity { .. }), "{err:?}");
     }
 
     #[test]
