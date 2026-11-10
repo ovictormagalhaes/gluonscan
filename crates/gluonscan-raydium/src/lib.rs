@@ -3,11 +3,19 @@
 //! Raydium concentrated-liquidity (CLMM) adapter, [`Source::OnChain`]: discovers position NFTs
 //! from the wallet's token accounts, derives each position PDA, and decodes the on-chain position,
 //! pool and mint accounts into a [`LiquidityPosition`] (principal amounts via the Q64.96 math,
-//! uncollected fees from the position's owed fields, in-range from the pool tick).
+//! in-range from the pool tick).
 //!
-//! The account byte offsets match the on-chain Raydium CLMM `PersonalPositionState` and `PoolState`
-//! layouts. Discovery queries both the classic SPL Token program and Token-2022 (Raydium's newer
-//! position NFTs mint under Token-2022).
+//! Uncollected fees are what a fee collect would pay now: the position's owed fields plus the fees
+//! accrued since its last checkpoint. The program only moves `token_fees_owed_0/1` when the
+//! position's liquidity changes, so the accrual is computed the way the program does it, from the
+//! pool's global fee growth and the fee growth outside the position's two ticks (read from their
+//! tick arrays). The position, its pool and those tick arrays are read in one `getMultipleAccounts`
+//! call, so they all come from the same slot. A position with liquidity whose tick arrays cannot be
+//! read, or whose accounts disagree, fails the read rather than reporting the owed fields alone.
+//!
+//! The account byte offsets match the on-chain Raydium CLMM `PersonalPositionState`, `PoolState`
+//! and `TickArrayState` layouts. Discovery queries both the classic SPL Token program and
+//! Token-2022 (Raydium's newer position NFTs mint under Token-2022).
 
 use alloy_primitives::U256;
 use async_trait::async_trait;
@@ -20,8 +28,8 @@ use gluonscan_math::{
     get_amounts_for_liquidity, get_sqrt_ratio_at_tick, is_in_range, MAX_TICK, MIN_TICK,
 };
 use gluonscan_solana::{
-    find_program_address, get_account_info, get_mint_decimals, get_token_accounts_by_owner,
-    pubkey_bytes, pubkey_str, RAYDIUM_CLMM_PROGRAM,
+    find_program_address, get_account_info, get_mint_decimals, get_multiple_accounts,
+    get_token_accounts_by_owner, pubkey_bytes, pubkey_str, RAYDIUM_CLMM_PROGRAM,
 };
 use rust_decimal::Decimal;
 
@@ -46,13 +54,16 @@ const POS_POOL: usize = 41;
 const POS_TICK_LOWER: usize = 73;
 const POS_TICK_UPPER: usize = 77;
 const POS_LIQUIDITY: usize = 81;
+const POS_FEE_GROWTH_INSIDE0: usize = 97;
+const POS_FEE_GROWTH_INSIDE1: usize = 113;
 const POS_FEE0: usize = 129;
 const POS_FEE1: usize = 137;
 
 // PoolState layout (byte offsets): token_mint_0[73..105], token_mint_1[105..137],
 // mint_decimals_0[233], mint_decimals_1[234], tick_spacing[235..237], liquidity[237..253],
-// sqrt_price_x64[253..269], tick_current[269..273].
-const POOL_MIN_LEN: usize = 273;
+// sqrt_price_x64[253..269], tick_current[269..273], 4 padding bytes,
+// fee_growth_global_0_x64[277..293], fee_growth_global_1_x64[293..309].
+const POOL_MIN_LEN: usize = 309;
 const POOL_MINT0: usize = 73;
 const POOL_MINT1: usize = 105;
 const POOL_DEC0: usize = 233;
@@ -60,6 +71,23 @@ const POOL_DEC1: usize = 234;
 const POOL_TICK_SPACING: usize = 235;
 const POOL_SQRT_X64: usize = 253;
 const POOL_TICK: usize = 269;
+const POOL_FEE_GROWTH_GLOBAL0: usize = 277;
+const POOL_FEE_GROWTH_GLOBAL1: usize = 293;
+
+// TickArrayState layout (byte offsets): 8-byte discriminator, pool_id[8..40],
+// start_tick_index[40..44], then 60 TickState entries of 168 bytes each from 44. TickState:
+// tick[0..4], liquidity_net[4..20], liquidity_gross[20..36], fee_growth_outside_0_x64[36..52],
+// fee_growth_outside_1_x64[52..68]. PDA: ["tick_array", pool_id, start_tick_index big-endian].
+const TICK_ARRAY_SIZE: i32 = 60;
+const TICK_ARRAY_POOL: usize = 8;
+const TICK_ARRAY_START: usize = 40;
+const TICK_ARRAY_TICKS: usize = 44;
+const TICK_STATE_LEN: usize = 168;
+const TICK_ARRAY_MIN_LEN: usize = TICK_ARRAY_TICKS + TICK_ARRAY_SIZE as usize * TICK_STATE_LEN;
+const TICK_INDEX: usize = 0;
+const TICK_LIQUIDITY_GROSS: usize = 20;
+const TICK_FEE_GROWTH_OUTSIDE0: usize = 36;
+const TICK_FEE_GROWTH_OUTSIDE1: usize = 52;
 
 /// The Raydium CLMM adapter.
 #[derive(Debug, Default, Clone)]
@@ -111,13 +139,14 @@ impl ProtocolAdapter for RaydiumClmm {
         for mint in mints {
             let mint_bytes = pubkey_bytes(&mint)?;
             let (pda, _) = find_program_address(&[b"position", &mint_bytes], &program);
-            let Some(data) = get_account_info(rpc, &pubkey_str(&pda)).await? else {
+            let address = pubkey_str(&pda);
+            let Some(data) = get_account_info(rpc, &address).await? else {
                 continue; // no position PDA → this NFT is not a Raydium position
             };
             if data.len() < POS_MIN_LEN {
                 continue;
             }
-            positions.push(parse_position(rpc, &data, &mint).await?);
+            positions.push(parse_position(rpc, &address, &data, &mint).await?);
         }
 
         let reading = Reading::new(
@@ -242,31 +271,89 @@ impl ProtocolAdapter for RaydiumClmm {
     }
 }
 
+/// Decode one position. The discovery copy of the position account only locates the accounts
+/// (its pool and ticks never change); every value is then taken from one `getMultipleAccounts`
+/// call holding the position, its pool and, when it has liquidity, the tick arrays of its two
+/// ticks, so they all come from the same slot. Read apart, a swap crossing one of the ticks
+/// between the reads flips that tick's fee growth outside while the pool keeps its old current
+/// tick and global growth, and the fee growth inside comes out wrong. The position is part of the
+/// same call because a fee collect or liquidity change between the reads moves its checkpoint,
+/// owed fields and liquidity together with the pool and ticks. The tick array addresses depend on
+/// the pool's tick spacing, so a position with liquidity reads its pool once before the snapshot,
+/// for the spacing only.
 async fn parse_position(
     rpc: &dyn gluonscan_core::ChainProvider,
-    data: &[u8],
+    address: &str,
+    discovered: &[u8],
     nft_mint: &str,
 ) -> Result<Position, Error> {
-    let pool_id = pubkey_at(data, POS_POOL)?;
-    let tick_lower = i32_at(data, POS_TICK_LOWER)?;
-    let tick_upper = i32_at(data, POS_TICK_UPPER)?;
-    let liquidity = u128_at(data, POS_LIQUIDITY)?;
-    let fee0 = u64_at(data, POS_FEE0)?;
-    let fee1 = u64_at(data, POS_FEE1)?;
-
-    // Pool: current tick, sqrt price (Q64.64), and the two mints.
-    let pool = get_account_info(rpc, &pubkey_str(&pool_id))
-        .await?
-        .filter(|d| d.len() >= POOL_MIN_LEN)
-        .ok_or_else(|| Error::Integrity {
-            message: "Raydium pool account missing or too short".into(),
-        })?;
+    let pool_id = pubkey_at(discovered, POS_POOL)?;
+    let tick_lower = i32_at(discovered, POS_TICK_LOWER)?;
+    let tick_upper = i32_at(discovered, POS_TICK_UPPER)?;
     if !(MIN_TICK..=MAX_TICK).contains(&tick_lower) || !(MIN_TICK..=MAX_TICK).contains(&tick_upper)
     {
         return Err(Error::Integrity {
             message: format!("Raydium ticks out of range: {tick_lower}..{tick_upper}"),
         });
     }
+    let pool_address = pubkey_str(&pool_id);
+
+    // Without liquidity nothing accrues and the change that emptied the position settled its owed
+    // fields; its ticks may no longer be initialized, so no tick array is read.
+    let tick_arrays = if u128_at(discovered, POS_LIQUIDITY)? == 0 {
+        None
+    } else {
+        let spacing_pool = get_account_info(rpc, &pool_address)
+            .await?
+            .filter(|d| d.len() >= POOL_MIN_LEN)
+            .ok_or_else(pool_missing)?;
+        let tick_spacing = u16_at(&spacing_pool, POOL_TICK_SPACING)?;
+        if tick_spacing == 0 {
+            return Err(Error::Integrity {
+                message: "Raydium pool tick spacing is 0".into(),
+            });
+        }
+        let lower_start = tick_array_start_index(tick_lower, tick_spacing);
+        let upper_start = tick_array_start_index(tick_upper, tick_spacing);
+        Some(TickArrays {
+            tick_spacing,
+            lower: (lower_start, tick_array_address(&pool_id, lower_start)?),
+            upper: (upper_start, tick_array_address(&pool_id, upper_start)?),
+        })
+    };
+
+    let mut keys = vec![address, pool_address.as_str()];
+    if let Some(arrays) = &tick_arrays {
+        keys.push(&arrays.lower.1);
+        if arrays.upper.1 != arrays.lower.1 {
+            keys.push(&arrays.upper.1);
+        }
+    }
+    let mut snapshot = get_multiple_accounts(rpc, &keys).await?.into_iter();
+    let data = snapshot
+        .next()
+        .flatten()
+        .filter(|d| d.len() >= POS_MIN_LEN)
+        .ok_or_else(|| Error::Transient {
+            message: format!("Raydium position {address} closed between reads"),
+            retry_after: None,
+        })?;
+    if pubkey_at(&data, POS_POOL)? != pool_id
+        || i32_at(&data, POS_TICK_LOWER)? != tick_lower
+        || i32_at(&data, POS_TICK_UPPER)? != tick_upper
+    {
+        return Err(Error::Integrity {
+            message: format!("Raydium position {address} changed its pool or range between reads"),
+        });
+    }
+    let pool = snapshot
+        .next()
+        .flatten()
+        .filter(|d| d.len() >= POOL_MIN_LEN)
+        .ok_or_else(pool_missing)?;
+    let liquidity = u128_at(&data, POS_LIQUIDITY)?;
+    let owed0 = u64_at(&data, POS_FEE0)?;
+    let owed1 = u64_at(&data, POS_FEE1)?;
     let tick_current = i32_at(&pool, POOL_TICK)?;
     let sqrt_x64 = u128_at(&pool, POOL_SQRT_X64)?;
     // The two mints and their decimals live in the pool account itself, so no extra mint reads.
@@ -276,6 +363,64 @@ async fn parse_position(
     let dec1 = *pool.get(POOL_DEC1).ok_or_else(short)?;
     let token0 = Token::solana(String::new(), Some(mint0), dec0);
     let token1 = Token::solana(String::new(), Some(mint1), dec1);
+
+    let (fee0, fee1) = match tick_arrays {
+        _ if liquidity == 0 => (owed0, owed1),
+        None => {
+            return Err(Error::Transient {
+                message: format!("Raydium position {address} gained liquidity between reads"),
+                retry_after: None,
+            })
+        }
+        Some(arrays) => {
+            let tick_spacing = arrays.tick_spacing;
+            if u16_at(&pool, POOL_TICK_SPACING)? != tick_spacing {
+                return Err(Error::Integrity {
+                    message: "Raydium pool tick spacing changed between reads".into(),
+                });
+            }
+            let (lower_start, lower_address) = &arrays.lower;
+            let (upper_start, upper_address) = &arrays.upper;
+            let lower_array = checked_tick_array(
+                snapshot.next().flatten(),
+                lower_address,
+                &pool_id,
+                *lower_start,
+            )?;
+            let upper_array = if upper_address == lower_address {
+                lower_array.clone()
+            } else {
+                checked_tick_array(
+                    snapshot.next().flatten(),
+                    upper_address,
+                    &pool_id,
+                    *upper_start,
+                )?
+            };
+            let lower = tick_fee_growth(&lower_array, *lower_start, tick_lower, tick_spacing)?;
+            let upper = tick_fee_growth(&upper_array, *upper_start, tick_upper, tick_spacing)?;
+            let global = [
+                u128_at(&pool, POOL_FEE_GROWTH_GLOBAL0)?,
+                u128_at(&pool, POOL_FEE_GROWTH_GLOBAL1)?,
+            ];
+            let inside =
+                fee_growth_inside(tick_current, tick_lower, tick_upper, lower, upper, global);
+            (
+                claimable_fees(
+                    owed0,
+                    u128_at(&data, POS_FEE_GROWTH_INSIDE0)?,
+                    inside[0],
+                    liquidity,
+                )?,
+                claimable_fees(
+                    owed1,
+                    u128_at(&data, POS_FEE_GROWTH_INSIDE1)?,
+                    inside[1],
+                    liquidity,
+                )?,
+            )
+        }
+    };
 
     // Principal amounts via the shared Q64.96 math (Raydium's sqrt price is Q64.64 → shift up 32).
     let sqrt_price = U256::from(sqrt_x64) << 32;
@@ -323,6 +468,129 @@ async fn parse_position(
     ))
 }
 
+/// The start index of the tick array holding `tick` (`TickArrayState::get_array_start_index`):
+/// arrays cover 60 initializable ticks, and negative ticks round down to the array below.
+fn tick_array_start_index(tick: i32, tick_spacing: u16) -> i32 {
+    let ticks_in_array = TICK_ARRAY_SIZE * i32::from(tick_spacing);
+    tick.div_euclid(ticks_in_array) * ticks_in_array
+}
+
+/// The tick spacing a position's tick arrays were located with, and each array's start index and
+/// address (`lower` and `upper` are the same array when both ticks fall in it).
+struct TickArrays {
+    tick_spacing: u16,
+    lower: (i32, String),
+    upper: (i32, String),
+}
+
+/// The address of the pool's tick array starting at `start`: PDA `["tick_array", pool, start
+/// big-endian]` under the CLMM program.
+fn tick_array_address(pool_id: &[u8; 32], start: i32) -> Result<String, Error> {
+    let program = pubkey_bytes(RAYDIUM_CLMM_PROGRAM)?;
+    let (pda, _) = find_program_address(&[b"tick_array", pool_id, &start.to_be_bytes()], &program);
+    Ok(pubkey_str(&pda))
+}
+
+/// The pool's tick array starting at `start`, as read. A missing, short or foreign account fails
+/// closed, since without it the accrued fees are unknown.
+fn checked_tick_array(
+    data: Option<Vec<u8>>,
+    address: &str,
+    pool_id: &[u8; 32],
+    start: i32,
+) -> Result<Vec<u8>, Error> {
+    let data = data.ok_or_else(|| Error::Integrity {
+        message: format!("Raydium tick array {address} (start {start}) missing"),
+    })?;
+    if data.len() < TICK_ARRAY_MIN_LEN
+        || pubkey_at(&data, TICK_ARRAY_POOL)? != *pool_id
+        || i32_at(&data, TICK_ARRAY_START)? != start
+    {
+        return Err(Error::Integrity {
+            message: format!(
+                "Raydium tick array {address} is not the pool's array starting at {start}"
+            ),
+        });
+    }
+    Ok(data)
+}
+
+/// `[fee_growth_outside_0_x64, fee_growth_outside_1_x64]` of one position tick. The tick must be
+/// initialized: a position with liquidity always references its two ticks.
+fn tick_fee_growth(
+    array: &[u8],
+    start: i32,
+    tick: i32,
+    tick_spacing: u16,
+) -> Result<[u128; 2], Error> {
+    let offset = (tick - start) / i32::from(tick_spacing);
+    let base = TICK_ARRAY_TICKS + offset as usize * TICK_STATE_LEN;
+    if i32_at(array, base + TICK_INDEX)? != tick
+        || u128_at(array, base + TICK_LIQUIDITY_GROSS)? == 0
+    {
+        return Err(Error::Integrity {
+            message: format!("Raydium tick {tick} is not initialized in its tick array"),
+        });
+    }
+    Ok([
+        u128_at(array, base + TICK_FEE_GROWTH_OUTSIDE0)?,
+        u128_at(array, base + TICK_FEE_GROWTH_OUTSIDE1)?,
+    ])
+}
+
+/// Fee growth per unit of liquidity inside `[tick_lower, tick_upper)`, both tokens, as the program's
+/// `get_fee_growth_inside`: a tick's outside value counts below (lower) or above (upper) the range
+/// when the current tick is on the range's side of it, else its complement from the global growth.
+/// All Q64.64 growth values are modular, so every step wraps.
+fn fee_growth_inside(
+    tick_current: i32,
+    tick_lower: i32,
+    tick_upper: i32,
+    lower_outside: [u128; 2],
+    upper_outside: [u128; 2],
+    global: [u128; 2],
+) -> [u128; 2] {
+    [0, 1].map(|i| {
+        let below = if tick_current >= tick_lower {
+            lower_outside[i]
+        } else {
+            global[i].wrapping_sub(lower_outside[i])
+        };
+        let above = if tick_current < tick_upper {
+            upper_outside[i]
+        } else {
+            global[i].wrapping_sub(upper_outside[i])
+        };
+        global[i].wrapping_sub(below).wrapping_sub(above)
+    })
+}
+
+/// What a fee collect pays now, as the program's `calculate_latest_token_fees`: the owed fields
+/// plus `liquidity * (inside_now - inside_last) / 2^64`, the growth delta wrapping. The program
+/// credits nothing for an accrual of `u64::MAX` or more (and refuses one above `u128`), but no SPL
+/// token amount gets that large: such an accrual means the growth values disagree, so the read
+/// fails rather than report the owed fields alone.
+fn claimable_fees(
+    owed: u64,
+    inside_last: u128,
+    inside_now: u128,
+    liquidity: u128,
+) -> Result<u64, Error> {
+    let accrued: U256 =
+        (U256::from(inside_now.wrapping_sub(inside_last)) * U256::from(liquidity)) >> 64usize;
+    if accrued >= U256::from(u64::MAX) {
+        return Err(Error::Integrity {
+            message: format!(
+                "Raydium accrued fee {accrued} is not below u64::MAX; the fee growth reads disagree"
+            ),
+        });
+    }
+    owed.checked_add(accrued.to::<u64>())
+        .ok_or_else(|| Error::Integrity {
+            message: "Raydium owed plus accrued fees overflow u64".into(),
+        })
+}
+
 fn raw_amount(token: Token, raw: U256) -> Result<Amount, Error> {
     let amount = scaled(raw, token.decimals)?;
     Ok(Amount {
@@ -331,6 +599,12 @@ fn raw_amount(token: Token, raw: U256) -> Result<Amount, Error> {
         amount,
         usd: None,
     })
+}
+
+fn pool_missing() -> Error {
+    Error::Integrity {
+        message: "Raydium pool account missing or too short".into(),
+    }
 }
 
 fn short() -> Error {
@@ -343,6 +617,13 @@ fn i32_at(d: &[u8], o: usize) -> Result<i32, Error> {
     d.get(o..o + 4)
         .and_then(|s| s.try_into().ok())
         .map(i32::from_le_bytes)
+        .ok_or_else(short)
+}
+
+fn u16_at(d: &[u8], o: usize) -> Result<u16, Error> {
+    d.get(o..o + 2)
+        .and_then(|s| s.try_into().ok())
+        .map(u16::from_le_bytes)
         .ok_or_else(short)
 }
 
@@ -856,5 +1137,121 @@ mod history_tests {
             .await
             .expect_err("needs nftMint|mintA|mintB");
         assert!(!err.is_retryable());
+    }
+}
+
+#[cfg(test)]
+mod fee_tests {
+    use super::*;
+
+    const Q64: u128 = 1 << 64;
+
+    #[test]
+    fn tick_array_start_rounds_negative_ticks_down() {
+        assert_eq!(tick_array_start_index(0, 1), 0);
+        assert_eq!(tick_array_start_index(59, 1), 0);
+        assert_eq!(tick_array_start_index(60, 1), 60);
+        assert_eq!(tick_array_start_index(-1, 1), -60);
+        assert_eq!(tick_array_start_index(-60, 1), -60);
+        assert_eq!(tick_array_start_index(-61, 1), -120);
+        assert_eq!(tick_array_start_index(-30161, 1), -30180);
+        assert_eq!(tick_array_start_index(-17721, 1), -17760);
+        assert_eq!(tick_array_start_index(-600, 10), -600);
+        assert_eq!(tick_array_start_index(-610, 10), -1200);
+        // Raydium's MIN_TICK
+        assert_eq!(tick_array_start_index(-443636, 1), -443640);
+    }
+
+    #[test]
+    fn inside_growth_in_range_uses_both_outside_values() {
+        let inside = fee_growth_inside(0, -10, 10, [100, 7], [50, 3], [1000, 20]);
+        assert_eq!(inside, [1000 - 100 - 50, 20 - 7 - 3]);
+    }
+
+    #[test]
+    fn inside_growth_below_range_takes_the_lower_tick_complement() {
+        // below(lower) = global - outside(lower); above(upper) = outside(upper)
+        let inside = fee_growth_inside(-20, -10, 10, [900, 15], [50, 2], [1000, 20]);
+        assert_eq!(inside, [1000 - (1000 - 900) - 50, 20 - (20 - 15) - 2]);
+        assert_eq!(inside, [850, 13]);
+    }
+
+    #[test]
+    fn inside_growth_above_range_takes_the_upper_tick_complement() {
+        // the upper bound is exclusive: tick_current == tick_upper is above the range
+        let inside = fee_growth_inside(10, -10, 10, [100, 1], [700, 12], [1000, 20]);
+        assert_eq!(inside, [1000 - 100 - (1000 - 700), 20 - 1 - (20 - 12)]);
+        assert_eq!(inside, [600, 11]);
+    }
+
+    #[test]
+    fn inside_growth_wraps_when_outside_values_exceed_global() {
+        // Outside values are relative to when a tick was initialized and may exceed the global
+        // growth; the program's arithmetic is modular.
+        let inside = fee_growth_inside(0, -10, 10, [30, 0], [5, 0], [20, 0]);
+        assert_eq!(inside[0], 20u128.wrapping_sub(30).wrapping_sub(5));
+        assert_eq!(inside[0], u128::MAX - 14);
+    }
+
+    #[test]
+    fn claimable_fees_at_the_checkpoint_are_exactly_owed() {
+        assert_eq!(
+            claimable_fees(1234, 99 * Q64, 99 * Q64, 10u128.pow(12)).unwrap(),
+            1234
+        );
+    }
+
+    #[test]
+    fn claimable_fees_add_liquidity_times_growth_delta() {
+        // 3.5 units of growth (Q64.64) over liquidity 1_000 accrue 3_500, floored.
+        let last = 2 * Q64;
+        let now = last + 3 * Q64 + Q64 / 2;
+        assert_eq!(claimable_fees(10, last, now, 1_000).unwrap(), 10 + 3_500);
+        assert_eq!(claimable_fees(0, 0, 1, Q64 - 1).unwrap(), 0, "floors");
+    }
+
+    #[test]
+    fn claimable_fees_wrap_the_growth_delta_past_u128() {
+        // The checkpoint sits just below 2^128 and the growth has since wrapped past zero.
+        let last = u128::MAX - Q64 + 1; // -1.0 in Q64.64
+        let now = 2 * Q64; // +2.0
+        assert_eq!(claimable_fees(0, last, now, 100).unwrap(), 300);
+    }
+
+    #[test]
+    fn claimable_fees_fail_closed_on_an_accrual_no_token_supply_can_hold() {
+        // The program credits an accrual of u64::MAX or more as nothing (`to_underflow_u64`), but
+        // no SPL amount reaches it: it only comes from growth values read out of step, so the
+        // read fails instead of reporting the owed fields alone.
+        let err = claimable_fees(5, 0, Q64, u64::MAX as u128).unwrap_err();
+        assert!(matches!(err, Error::Integrity { .. }));
+        assert_eq!(
+            claimable_fees(0, 0, Q64, u64::MAX as u128 - 1).unwrap(),
+            u64::MAX - 1
+        );
+    }
+
+    #[test]
+    fn claimable_fees_fail_closed_when_the_program_would_refuse() {
+        // liquidity * delta / 2^64 above u128::MAX: the program errors with CalculateOverflow.
+        let err = claimable_fees(0, 0, u128::MAX, u128::MAX).unwrap_err();
+        assert!(matches!(err, Error::Integrity { .. }));
+        // owed + accrued above u64::MAX: same.
+        let err = claimable_fees(u64::MAX, 0, Q64, 1).unwrap_err();
+        assert!(matches!(err, Error::Integrity { .. }));
+    }
+
+    #[test]
+    fn uninitialized_or_misplaced_tick_fails_closed() {
+        let mut array = vec![0u8; TICK_ARRAY_MIN_LEN];
+        let base = TICK_ARRAY_TICKS + 3 * TICK_STATE_LEN;
+        array[base..base + 4].copy_from_slice(&(-57i32).to_le_bytes());
+        array[base + 36..base + 52].copy_from_slice(&42u128.to_le_bytes());
+        // liquidity_gross still 0
+        assert!(tick_fee_growth(&array, -60, -57, 1).is_err());
+        array[base + 20..base + 36].copy_from_slice(&1u128.to_le_bytes());
+        assert_eq!(tick_fee_growth(&array, -60, -57, 1).unwrap(), [42, 0]);
+        // a different tick stored at that slot
+        assert!(tick_fee_growth(&array, -60, -56, 1).is_err());
     }
 }

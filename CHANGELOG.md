@@ -8,6 +8,44 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.6] - 2026-11-10
+
+### Added
+
+- **`gluonscan_solana::get_multiple_accounts`**: reads several accounts in one
+  `getMultipleAccounts` call (one slot), one `Option<Vec<u8>>` per pubkey in request order; a
+  reply without one value per pubkey is an integrity error.
+
+### Fixed
+
+- **Raydium CLMM uncollected fees include the fees accrued since the position's last change.**
+  `uncollected_fees` was read from the position's `token_fees_owed_0/1` alone, but the program
+  only moves those fields when the position's liquidity changes (`increase_liquidity` /
+  `decrease_liquidity`), so a position nobody touched since then read zero, or a stale amount,
+  however much it had earned. It is now what a fee collect would pay at the read: the owed fields
+  plus `liquidity * (fee_growth_inside_now - fee_growth_inside_last) / 2^64`, where the growth
+  inside the range comes from the pool's `fee_growth_global_0/1_x64` and the two ticks'
+  `fee_growth_outside_0/1_x64` against the current tick, all wrapping, as the program computes it.
+  Checked against the program on mainnet: for an untouched SOL/USDC position whose owed fields
+  were both 0, the read now matches the 30.379588775 SOL and 2,628.882180 USDC a simulated
+  zero-liquidity `decrease_liquidity_v2` pays out.
+
+### Changed
+
+- **Breaking (behaviour): a Raydium position is read from one slot.** Its position account, pool
+  and, when it has liquidity, the tick arrays holding its lower and upper ticks (PDA
+  `["tick_array", pool, start_tick_index big-endian]`) come from one `getMultipleAccounts` call,
+  so a swap crossing one of its ticks between separate reads cannot skew the fees. A position
+  with liquidity first reads its pool alone for the tick spacing that locates the tick arrays;
+  every value comes from the single call. A position without liquidity reads no tick arrays and
+  reports its owed fields, which nothing can grow. The read fails, never falling back to the owed
+  fields: a transport failure propagates as before; a position that closed or gained liquidity
+  between the two reads is a retryable `Transient` error; a missing tick array, one of another
+  pool or start index, a position tick that is not initialized, a tick spacing or position range
+  that differs between the reads, an accrual of `u64::MAX` or more (no SPL amount reaches it, so
+  the growth values disagree), or owed plus accrued above `u64` is an integrity error. The pool
+  account must now be at least 309 bytes (it reads `fee_growth_global_0/1_x64`).
+
 ## [0.3.0-beta.5] - 2026-10-18
 
 ### Added
