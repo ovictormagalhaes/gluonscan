@@ -15,7 +15,11 @@
 //! 24h and 7d trailing means of the reserve's hourly `metrics/history`, each emitted only when the
 //! window holds at least [`MIN_TRAILING_COVERAGE_PCT`] of its hourly points and the newest point is
 //! at most [`MAX_RATE_POINT_AGE_SECS`] old. The instantaneous borrow APY swings with utilization within a
-//! day, so a single sample can sit far from what the debt actually accrued.
+//! day, so a single sample can sit far from what the debt actually accrued. A trailing window that
+//! is not emitted carries its [`RateGap`] in the leg's [`Rates`]: `Unavailable` when the history
+//! could not be read (a retryable failure is retried up to [`RATE_HISTORY_ATTEMPTS`] times for that
+//! reserve alone, a body that does not parse is not), `InsufficientCoverage` or `StalePoint` when it
+//! was read but cannot support the mean. The read itself never fails over a reserve's history.
 //!
 //! History ([`ProtocolAdapter::read_history`]) is the per-mint delta between consecutive points of
 //! the obligation's `metrics/history`, in whole base units (fractions of a base unit dropped, as
@@ -59,8 +63,8 @@ use futures_util::stream::{self, StreamExt};
 use gluonscan_core::{
     Amount, BorrowedAsset, Capability, Chain, ChainProvider, Complete, Ctx, Currency, Detail,
     Error, EventKind, History, HistoryEvent, LendingPosition, Money, Position, Protocol,
-    ProtocolAdapter, Provenance, Rate, RateBasis, RateWindow, Rates, Reading, Source, Staleness,
-    SuppliedAsset, Timestamp, Token, Wallet,
+    ProtocolAdapter, Provenance, Rate, RateBasis, RateGap, RateWindow, Rates, Reading, Source,
+    Staleness, SuppliedAsset, Timestamp, Token, Wallet,
 };
 use gluonscan_solana::get_mint_decimals;
 use rust_decimal::Decimal;
@@ -99,6 +103,8 @@ pub const MAX_RATE_POINT_AGE_SECS: i64 = 3 * 3600;
 const RATE_LOOKBACK_SECS: i64 = (168 + 4) * 3600;
 /// Reserve rate histories fetched at once.
 const RATE_HISTORY_CONCURRENCY: usize = 4;
+/// Attempts at a reserve's rate history when the request fails as retryable.
+pub const RATE_HISTORY_ATTEMPTS: u32 = 3;
 
 /// Largest growth of a held balance per day, as a fraction of the previous balance, that history
 /// reads as interest accrual (0.2%/day, about 73% APR). Scaled by the exact time between two
@@ -568,21 +574,21 @@ struct LegRates<'a> {
 }
 
 impl LegRates<'_> {
-    /// The leg's rates: the trailing means of its reserve, plus the instantaneous APY from
-    /// `reserves/metrics`, which carries no timestamp and is dated at the read.
+    /// The leg's rates: the trailing means of its reserve (or their gaps), plus the instantaneous
+    /// APY from `reserves/metrics`, which carries no timestamp and is dated at the read.
     fn for_leg(&self, reserve: &str, borrow: bool) -> Rates {
-        let trailing = self.trailing.get(reserve);
         let meta = self.reserves.get(reserve);
-        let (mut rates, instant) = if borrow {
-            (
-                trailing.map(|t| t.borrow.clone()).unwrap_or_default(),
+        let (mut rates, instant) = match self.trailing.get(reserve) {
+            Some(t) if borrow => (t.borrow.clone(), meta.and_then(|m| m.borrow_apy)),
+            Some(t) => (t.supply.clone(), meta.and_then(|m| m.supply_apy)),
+            None if borrow => (
+                gaps_only(RateGap::Unavailable),
                 meta.and_then(|m| m.borrow_apy),
-            )
-        } else {
-            (
-                trailing.map(|t| t.supply.clone()).unwrap_or_default(),
+            ),
+            None => (
+                gaps_only(RateGap::Unavailable),
                 meta.and_then(|m| m.supply_apy),
-            )
+            ),
         };
         if let Some(apy) = instant {
             rates.insert(Rate::new(
@@ -597,8 +603,15 @@ impl LegRates<'_> {
     }
 }
 
-/// The trailing rates of every `held` reserve, fetched concurrently. Best-effort: a reserve whose
-/// history cannot be fetched or parsed just has no trailing rates; the read never fails over them.
+/// Rates holding only `gap`, for every [`TRAILING_WINDOWS`] entry.
+fn gaps_only(gap: RateGap) -> Rates {
+    TRAILING_WINDOWS.iter().fold(Rates::new(), |rates, &hours| {
+        rates.with_gap(RateWindow::Trailing { hours }, gap)
+    })
+}
+
+/// The trailing rates of every `held` reserve, fetched concurrently. A reserve whose history cannot
+/// be read gets [`RateGap::Unavailable`] for each window; the read never fails over them.
 async fn trailing_rates(
     base: &str,
     market: &str,
@@ -633,40 +646,52 @@ async fn reserve_trailing_rates(
     now: i64,
     cx: &Ctx,
 ) -> (String, ReserveRates) {
-    let rates = reserve_history(base, market, &reserve, now, cx)
-        .await
-        .map(|hist| reserve_rates(&hist, now))
-        .unwrap_or_default();
+    let rates = match reserve_history(base, market, &reserve, now, cx).await {
+        Some(history) => reserve_rates(&history, now),
+        None => ReserveRates {
+            supply: gaps_only(RateGap::Unavailable),
+            borrow: gaps_only(RateGap::Unavailable),
+        },
+    };
     (reserve, rates)
 }
 
+/// The `history` points of a reserve's hourly rate history, or `None` when it cannot be read: a
+/// request still failing as retryable after [`RATE_HISTORY_ATTEMPTS`], a non-retryable failure, or
+/// a body that does not parse or has no `history` array.
 async fn reserve_history(
     base: &str,
     market: &str,
     reserve: &str,
     now: i64,
     cx: &Ctx,
-) -> Option<serde_json::Value> {
+) -> Option<Vec<serde_json::Value>> {
     let url = format!(
         "{base}/kamino-market/{market}/reserves/{reserve}/metrics/history?env=mainnet-beta&start={}&end={}&frequency=hour",
         rfc3339(now - RATE_LOOKBACK_SECS),
         rfc3339(now + 3600)
     );
-    let raw = cx.http.get(&url, &[]).await.ok()?;
-    serde_json::from_str(&raw).ok()
+    let mut attempt = 1;
+    let raw = loop {
+        match cx.http.get(&url, &[]).await {
+            Ok(raw) => break raw,
+            Err(e) if e.is_retryable() && attempt < RATE_HISTORY_ATTEMPTS => attempt += 1,
+            Err(_) => return None,
+        }
+    };
+    let mut body: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    match body.get_mut("history")?.take() {
+        serde_json::Value::Array(points) => Some(points),
+        _ => None,
+    }
 }
 
-/// The trailing APYs of a reserve's hourly history (`{"history":[{"timestamp","metrics":{...}}]}`),
-/// one per [`TRAILING_WINDOWS`] entry that passes [`trailing_mean`]'s coverage rule.
-fn reserve_rates(hist: &serde_json::Value, now: i64) -> ReserveRates {
+/// The trailing APYs of a reserve's hourly history points (`{"timestamp","metrics":{...}}`): per
+/// [`TRAILING_WINDOWS`] entry, the mean when it passes [`trailing_mean`]'s rules, else its gap.
+fn reserve_rates(history: &[serde_json::Value], now: i64) -> ReserveRates {
     let mut supply = BTreeMap::new();
     let mut borrow = BTreeMap::new();
-    for point in hist
-        .get("history")
-        .and_then(|h| h.as_array())
-        .into_iter()
-        .flatten()
-    {
+    for point in history {
         let ts = snapshot_ts(point);
         if ts <= 0 {
             continue;
@@ -679,19 +704,25 @@ fn reserve_rates(hist: &serde_json::Value, now: i64) -> ReserveRates {
         }
     }
     let windows = |points: &BTreeMap<i64, Decimal>| -> Rates {
-        TRAILING_WINDOWS
-            .iter()
-            .filter_map(|&hours| {
-                let (mean, as_of) = trailing_mean(points, hours, now)?;
-                Some(Rate::new(
-                    mean,
-                    RateBasis::Apy,
-                    RateWindow::Trailing { hours },
-                    Source::Api,
-                    Timestamp(as_of),
-                ))
-            })
-            .collect()
+        let mut rates = Rates::new();
+        for &hours in TRAILING_WINDOWS {
+            let window = RateWindow::Trailing { hours };
+            match trailing_mean(points, hours, now) {
+                Ok((mean, as_of)) => {
+                    rates.insert(Rate::new(
+                        mean,
+                        RateBasis::Apy,
+                        window,
+                        Source::Api,
+                        Timestamp(as_of),
+                    ));
+                }
+                Err(gap) => {
+                    rates.insert_gap(window, gap);
+                }
+            }
+        }
+        rates
     };
     ReserveRates {
         supply: windows(&supply),
@@ -700,13 +731,23 @@ fn reserve_rates(hist: &serde_json::Value, now: i64) -> ReserveRates {
 }
 
 /// The arithmetic mean of the hourly `points` (unix seconds -> value) in the `hours` window ending
-/// at the newest point, and that point's timestamp. `None` unless the newest point is not after
-/// `now` and at most [`MAX_RATE_POINT_AGE_SECS`] old, and the window's points fall in at least
-/// [`MIN_TRAILING_COVERAGE_PCT`] of its `hours` distinct clock hours.
-fn trailing_mean(points: &BTreeMap<i64, Decimal>, hours: u32, now: i64) -> Option<(Decimal, i64)> {
-    let (&newest, _) = points.last_key_value()?;
-    if hours == 0 || newest > now || now - newest > MAX_RATE_POINT_AGE_SECS {
-        return None;
+/// at the newest point, and that point's timestamp. [`RateGap::StalePoint`] unless the newest point
+/// is not after `now` and at most [`MAX_RATE_POINT_AGE_SECS`] old; [`RateGap::InsufficientCoverage`]
+/// unless the window's points fall in at least [`MIN_TRAILING_COVERAGE_PCT`] of its `hours` distinct
+/// clock hours (no points at all included); [`RateGap::Unavailable`] if the sum overflows.
+fn trailing_mean(
+    points: &BTreeMap<i64, Decimal>,
+    hours: u32,
+    now: i64,
+) -> Result<(Decimal, i64), RateGap> {
+    let (&newest, _) = points
+        .last_key_value()
+        .ok_or(RateGap::InsufficientCoverage)?;
+    if hours == 0 {
+        return Err(RateGap::InsufficientCoverage);
+    }
+    if newest > now || now - newest > MAX_RATE_POINT_AGE_SECS {
+        return Err(RateGap::StalePoint);
     }
     let start = newest - i64::from(hours) * 3600;
     let mut count = 0u64;
@@ -715,13 +756,16 @@ fn trailing_mean(points: &BTreeMap<i64, Decimal>, hours: u32, now: i64) -> Optio
     let mut covered_hours = BTreeSet::new();
     for (ts, value) in points.range(start + 1..=newest) {
         count += 1;
-        sum = sum.checked_add(*value)?;
+        sum = sum.checked_add(*value).ok_or(RateGap::Unavailable)?;
         covered_hours.insert(ts.div_euclid(3600));
     }
     if (covered_hours.len() as u64) * 100 < u64::from(hours) * MIN_TRAILING_COVERAGE_PCT {
-        return None;
+        return Err(RateGap::InsufficientCoverage);
     }
-    Some((sum.checked_div(Decimal::from(count))?, newest))
+    let mean = sum
+        .checked_div(Decimal::from(count))
+        .ok_or(RateGap::Unavailable)?;
+    Ok((mean, newest))
 }
 
 /// Whether `s` is non-empty base58, so it is safe to interpolate into a request path.
@@ -1264,17 +1308,23 @@ mod tests {
         // 10h window: 9 of 10 points is exactly 90% and passes; 8 does not.
         assert_eq!(
             trailing_mean(&hourly(newest, 9, "0.05"), 10, newest),
-            Some((d("0.05"), newest))
+            Ok((d("0.05"), newest))
         );
-        assert_eq!(trailing_mean(&hourly(newest, 8, "0.05"), 10, newest), None);
+        assert_eq!(
+            trailing_mean(&hourly(newest, 8, "0.05"), 10, newest),
+            Err(RateGap::InsufficientCoverage)
+        );
         // 24h: 21.6 points needed, so 22 passes and 21 does not.
-        assert!(trailing_mean(&hourly(newest, 22, "0.05"), 24, newest).is_some());
-        assert_eq!(trailing_mean(&hourly(newest, 21, "0.05"), 24, newest), None);
+        assert!(trailing_mean(&hourly(newest, 22, "0.05"), 24, newest).is_ok());
+        assert_eq!(
+            trailing_mean(&hourly(newest, 21, "0.05"), 24, newest),
+            Err(RateGap::InsufficientCoverage)
+        );
         // 168h: 151.2 needed, so 152 passes and 151 does not.
-        assert!(trailing_mean(&hourly(newest, 152, "0.05"), 168, newest).is_some());
+        assert!(trailing_mean(&hourly(newest, 152, "0.05"), 168, newest).is_ok());
         assert_eq!(
             trailing_mean(&hourly(newest, 151, "0.05"), 168, newest),
-            None
+            Err(RateGap::InsufficientCoverage)
         );
     }
 
@@ -1285,26 +1335,26 @@ mod tests {
         // different value, so including them would move the mean.
         let mut points = hourly(newest, 24, "0.06");
         points.extend((24..30).map(|i| (newest - i * H, d("0.90"))));
-        assert_eq!(
-            trailing_mean(&points, 24, newest),
-            Some((d("0.06"), newest))
-        );
+        assert_eq!(trailing_mean(&points, 24, newest), Ok((d("0.06"), newest)));
         // A gap inside the window counts against coverage, it is not filled from outside.
         let gappy: BTreeMap<i64, Decimal> = hourly(newest, 30, "0.06")
             .into_iter()
             .filter(|(ts, _)| (newest - ts) / H % 8 != 3)
             .collect();
-        assert_eq!(trailing_mean(&gappy, 24, newest), None);
+        assert_eq!(
+            trailing_mean(&gappy, 24, newest),
+            Err(RateGap::InsufficientCoverage)
+        );
     }
 
     #[test]
     fn trailing_mean_rejects_a_stale_newest_point() {
         let newest = 1_000 * H;
         let points = hourly(newest, 24, "0.05");
-        assert!(trailing_mean(&points, 24, newest + MAX_RATE_POINT_AGE_SECS).is_some());
+        assert!(trailing_mean(&points, 24, newest + MAX_RATE_POINT_AGE_SECS).is_ok());
         assert_eq!(
             trailing_mean(&points, 24, newest + MAX_RATE_POINT_AGE_SECS + 1),
-            None
+            Err(RateGap::StalePoint)
         );
     }
 
@@ -1314,20 +1364,29 @@ mod tests {
         // 24 points five minutes apart cover only 2 clock hours of a 24h window.
         let dense: BTreeMap<i64, Decimal> =
             (0..24).map(|i| (newest - i * 300, d("0.05"))).collect();
-        assert_eq!(trailing_mean(&dense, 24, newest), None);
+        assert_eq!(
+            trailing_mean(&dense, 24, newest),
+            Err(RateGap::InsufficientCoverage)
+        );
     }
 
     #[test]
     fn trailing_mean_rejects_a_newest_point_after_now() {
         let newest = 1_000 * H;
         let points = hourly(newest, 24, "0.05");
-        assert!(trailing_mean(&points, 24, newest).is_some());
-        assert_eq!(trailing_mean(&points, 24, newest - 1), None);
+        assert!(trailing_mean(&points, 24, newest).is_ok());
+        assert_eq!(
+            trailing_mean(&points, 24, newest - 1),
+            Err(RateGap::StalePoint)
+        );
     }
 
     #[test]
-    fn trailing_mean_of_empty_history_is_none() {
-        assert_eq!(trailing_mean(&BTreeMap::new(), 24, 1_000 * H), None);
+    fn trailing_mean_of_empty_history_is_insufficient_coverage() {
+        assert_eq!(
+            trailing_mean(&BTreeMap::new(), 24, 1_000 * H),
+            Err(RateGap::InsufficientCoverage)
+        );
     }
 
     #[test]
@@ -1345,7 +1404,7 @@ mod tests {
             })
             .chain([serde_json::json!({"timestamp": "garbage", "metrics": {"borrowInterestAPY": 9}})])
             .collect();
-        let rates = reserve_rates(&serde_json::json!({ "history": history }), newest);
+        let rates = reserve_rates(&history, newest);
         let w24 = RateWindow::Trailing { hours: 24 };
         assert_eq!(
             rates.supply.get(RateBasis::Apy, w24).unwrap().value,
@@ -1359,15 +1418,21 @@ mod tests {
             rates.borrow.get(RateBasis::Apy, w24).unwrap().as_of,
             Timestamp(newest)
         );
-        assert!(rates
-            .supply
-            .get(RateBasis::Apy, RateWindow::Trailing { hours: 168 })
-            .is_none());
+        let w168 = RateWindow::Trailing { hours: 168 };
+        assert!(rates.supply.get(RateBasis::Apy, w168).is_none());
+        assert_eq!(rates.supply.gap(w168), Some(RateGap::InsufficientCoverage));
+        assert_eq!(rates.borrow.gap(w168), Some(RateGap::InsufficientCoverage));
         assert_eq!(rates.supply.len(), 1);
         assert_eq!(rates.borrow.len(), 1);
-        assert!(reserve_rates(&serde_json::json!({}), newest)
-            .supply
-            .is_empty());
+        let empty = reserve_rates(&[], newest);
+        assert!(empty.supply.is_empty());
+        assert_eq!(
+            empty.supply.gaps(),
+            &[
+                (w24, RateGap::InsufficientCoverage),
+                (w168, RateGap::InsufficientCoverage)
+            ]
+        );
     }
 
     #[test]

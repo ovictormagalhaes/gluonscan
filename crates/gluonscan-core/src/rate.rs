@@ -76,28 +76,86 @@ impl Rate {
     }
 }
 
+/// Why an adapter that computes a rate for a window could not emit it. A retryable gap and a real
+/// one read the same as an absent rate, so the adapter records which it is.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RateGap {
+    /// No usable data reached the adapter: a transport failure that outlasted its retries, a body
+    /// that does not parse, or a source it could not request at all. A later read may fill it when
+    /// the cause was transient.
+    Unavailable,
+    /// The source answered, but its points cover too little of the window.
+    InsufficientCoverage,
+    /// The source answered, but its newest point is too old, or dated after the read.
+    StalePoint,
+}
+
 /// A set of [`Rate`]s with at most one per `(basis, window)`, ordered by basis then window. Empty
-/// means the source reported no rate (never a fabricated zero).
+/// means the source reported no rate (never a fabricated zero). It also holds the [`RateGap`] of
+/// each window an adapter tried and failed to rate, keyed by window alone (not by basis); a window
+/// never has both a rate and a gap. Iterating and collecting carry the rates only, not the gaps.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Rates(Vec<Rate>);
+pub struct Rates {
+    rates: Vec<Rate>,
+    gaps: Vec<(RateWindow, RateGap)>,
+}
 
 impl Rates {
     /// An empty set.
     pub fn new() -> Self {
-        Rates(Vec::new())
+        Rates::default()
     }
 
     /// Insert `rate`, replacing and returning any rate already held for the same
-    /// `(basis, window)`. The set stays ordered regardless of insertion order.
+    /// `(basis, window)`, and clearing any gap recorded for its window. The set stays ordered
+    /// regardless of insertion order.
     pub fn insert(&mut self, rate: Rate) -> Option<Rate> {
+        self.gaps.retain(|(w, _)| *w != rate.window);
         let key = (rate.basis, rate.window);
-        match self.0.binary_search_by(|r| (r.basis, r.window).cmp(&key)) {
-            Ok(i) => Some(std::mem::replace(&mut self.0[i], rate)),
+        match self
+            .rates
+            .binary_search_by(|r| (r.basis, r.window).cmp(&key))
+        {
+            Ok(i) => Some(std::mem::replace(&mut self.rates[i], rate)),
             Err(i) => {
-                self.0.insert(i, rate);
+                self.rates.insert(i, rate);
                 None
             }
         }
+    }
+
+    /// Record why `window` has no rate, replacing any gap already recorded for it. Ignored, returning
+    /// `false`, when the set already holds a rate for `window`.
+    pub fn insert_gap(&mut self, window: RateWindow, gap: RateGap) -> bool {
+        if self.rates.iter().any(|r| r.window == window) {
+            return false;
+        }
+        match self.gaps.binary_search_by(|(w, _)| w.cmp(&window)) {
+            Ok(i) => self.gaps[i].1 = gap,
+            Err(i) => self.gaps.insert(i, (window, gap)),
+        }
+        true
+    }
+
+    /// Record a gap (builder-style). See [`Rates::insert_gap`].
+    #[must_use]
+    pub fn with_gap(mut self, window: RateWindow, gap: RateGap) -> Self {
+        self.insert_gap(window, gap);
+        self
+    }
+
+    /// Why each window the adapter tried to rate has no rate, ordered by window.
+    pub fn gaps(&self) -> &[(RateWindow, RateGap)] {
+        &self.gaps
+    }
+
+    /// The gap recorded for `window`, if any.
+    pub fn gap(&self, window: RateWindow) -> Option<RateGap> {
+        self.gaps
+            .binary_search_by(|(w, _)| w.cmp(&window))
+            .ok()
+            .map(|i| self.gaps[i].1)
     }
 
     /// Insert `rate` (builder-style). See [`Rates::insert`].
@@ -109,25 +167,25 @@ impl Rates {
 
     /// The rate for `(basis, window)`, if present. No other window is substituted.
     pub fn get(&self, basis: RateBasis, window: RateWindow) -> Option<&Rate> {
-        self.0
+        self.rates
             .binary_search_by(|r| (r.basis, r.window).cmp(&(basis, window)))
             .ok()
-            .map(|i| &self.0[i])
+            .map(|i| &self.rates[i])
     }
 
     /// The rates, ordered by basis then window.
     pub fn iter(&self) -> std::slice::Iter<'_, Rate> {
-        self.0.iter()
+        self.rates.iter()
     }
 
-    /// Whether no rate is present.
+    /// Whether no rate is present. Gaps are not counted.
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.rates.is_empty()
     }
 
-    /// How many rates are present.
+    /// How many rates are present. Gaps are not counted.
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.rates.len()
     }
 }
 
@@ -164,7 +222,7 @@ impl IntoIterator for Rates {
     type IntoIter = std::vec::IntoIter<Rate>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.rates.into_iter()
     }
 }
 
@@ -262,5 +320,33 @@ mod tests {
             rates.iter().next().unwrap().value,
             Decimal::from_str_exact("0.2").unwrap()
         );
+    }
+
+    #[test]
+    fn a_gap_is_kept_per_window_and_never_beside_a_rate() {
+        let w24 = RateWindow::Trailing { hours: 24 };
+        let w168 = RateWindow::Trailing { hours: 168 };
+        let mut rates = Rates::new()
+            .with_gap(w168, RateGap::StalePoint)
+            .with_gap(w24, RateGap::Unavailable);
+        assert!(rates.is_empty(), "gaps are not rates");
+        assert_eq!(
+            rates.gaps(),
+            &[(w24, RateGap::Unavailable), (w168, RateGap::StalePoint)]
+        );
+
+        assert!(rates.insert_gap(w24, RateGap::InsufficientCoverage));
+        assert_eq!(rates.gap(w24), Some(RateGap::InsufficientCoverage));
+        assert_eq!(rates.gaps().len(), 2);
+
+        rates.insert(rate("0.05", RateBasis::Apy, w24));
+        assert_eq!(rates.gap(w24), None, "a rate clears its window's gap");
+        assert!(
+            !rates.insert_gap(w24, RateGap::Unavailable),
+            "a rated window takes no gap"
+        );
+        assert_eq!(rates.gap(w24), None);
+        assert_eq!(rates.gaps(), &[(w168, RateGap::StalePoint)]);
+        assert_eq!(rates.gap(RateWindow::Instant), None);
     }
 }
