@@ -77,13 +77,16 @@ Supplied and borrowed lending legs, `LiquidityPosition`, `StakePosition` and `Yi
 `rates: Rates`: at most one `Rate` per `(RateBasis, RateWindow)`, each with its value as a fraction,
 its `Source` and its `as_of` timestamp (the upstream timestamp when the source gives one, else the
 read time). `Rates::get(basis, window)` never substitutes another window or basis; an APR is never
-converted into an APY. A window whose data does not cover it is omitted, not filled.
+converted into an APY. A window whose data does not cover it is omitted, not filled. An adapter that
+tried to rate a window and could not records why in `Rates::gaps()` (`Rates::gap(window)` for one):
+`RateGap::Unavailable` (the source could not be read; a later read may fill it),
+`InsufficientCoverage` or `StalePoint`. Gaps are not rates: `len()` and `iter()` skip them.
 
 | Backend | Basis | Windows |
 |---|---|---|
 | `AaveApi` | APY | `Instant` |
 | `Morpho` | APY | `Instant`, `Trailing` 24h / 168h / 720h (the API's daily, weekly and monthly APYs), dated at the market state's timestamp. Collateral carries none. |
-| `KaminoApi` | APY | `Instant` (`reserves/metrics`), `Trailing` 24h / 168h (mean of the reserve's hourly history; emitted with at least 90% of the hourly points and a newest point at most 3h old) |
+| `KaminoApi` | APY | `Instant` (`reserves/metrics`), `Trailing` 24h / 168h (mean of the reserve's hourly history; emitted with at least 90% of the hourly points and a newest point at most 3h old; otherwise a `RateGap`, `Unavailable` after 3 attempts at a retryable failure) |
 | `PendleApi` | APY | `Implied` |
 | `Lido` | APR | `Epoch` 24h (last oracle report), `Trailing` 168h (the API's 7-report SMA) |
 | `EtherFi` | APR | `Epoch` of unstated length |

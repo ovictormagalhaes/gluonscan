@@ -8,6 +8,26 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0-beta.8] - 2026-11-11
+
+### Added
+
+- **`RateGap`** (`Unavailable`, `InsufficientCoverage`, `StalePoint`) and **`Rates::gaps()`** /
+  **`Rates::gap(window)`**, with `insert_gap` / `with_gap`: why an adapter that tried to rate a
+  window could not. A window never holds both a rate and a gap (inserting a rate clears its
+  window's gap). `len()`, `is_empty()` and iteration still count rates only.
+
+### Fixed
+
+- **Kamino reserve rate history no longer fails silently.** A failed GET and an unparseable body
+  both read as "no history", so a transient 503 and a reserve whose history really is too short
+  looked the same, and callers could not tell a retryable gap from a real one. A retryable failure
+  is now retried up to `RATE_HISTORY_ATTEMPTS` (3) times for that reserve alone; a non-retryable
+  failure, a body that does not parse or one without a `history` array is not. Each trailing window
+  that is not emitted carries its gap: `Unavailable` when the history could not be read,
+  `InsufficientCoverage` or `StalePoint` when it was read but cannot support the mean. The coverage
+  and freshness rules are unchanged, and the read still never fails over a reserve's history.
+
 ## [0.3.0-beta.7] - 2026-11-10
 
 ### Added
