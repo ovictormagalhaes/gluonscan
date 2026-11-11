@@ -34,7 +34,7 @@ pub use model::{
     Timestamp, Token, TokenAddress, WalletBalance, WalletGate, YieldKind, YieldPosition,
 };
 pub use ports::{ChainProvider, Clock, Ctx, Http, PriceSource, ProtocolAdapter};
-pub use rate::{Rate, RateBasis, RateWindow, Rates};
+pub use rate::{Rate, RateBasis, RateGap, RateWindow, Rates};
 
 pub use alloy_primitives::{self, Address, U256};
 

@@ -4,12 +4,16 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use base64::Engine;
 use gluonscan_core::{
-    Chain, Ctx, Detail, Error, EventKind, Position, Protocol, ProtocolAdapter, RateBasis,
-    RateWindow, Rates, Source, Timestamp, Wallet,
+    Chain, Ctx, Detail, Error, EventKind, Http, Position, Protocol, ProtocolAdapter, RateBasis,
+    RateGap, RateWindow, Rates, Source, Timestamp, Wallet,
 };
-use gluonscan_kamino::{KaminoApi, HISTORY_DAY_SECS, HISTORY_SETTLE_SECS, HISTORY_STALL_SECS};
+use gluonscan_kamino::{
+    KaminoApi, HISTORY_DAY_SECS, HISTORY_SETTLE_SECS, HISTORY_STALL_SECS, MAX_RATE_POINT_AGE_SECS,
+    RATE_HISTORY_ATTEMPTS,
+};
 use gluonscan_testing::{Match, MockChainProvider, MockClock, MockHttp};
 use rust_decimal::Decimal;
 
@@ -1486,7 +1490,11 @@ fn base58_reserves(s: &str) -> String {
 /// 00:00Z every day, as Kamino's USDC reserve does around the daily rollover; the rest of the day
 /// it sits at 6.8% over the last 24h and 6% before that. Supply is a flat 5%.
 fn usdc_rate_history() -> String {
-    let newest = NOW - 3600;
+    usdc_rate_history_ending(NOW - 3600)
+}
+
+/// [`usdc_rate_history`] with its newest point at `newest`.
+fn usdc_rate_history_ending(newest: i64) -> String {
     let points: Vec<String> = (0..168)
         .map(|i| {
             let ts = newest - i * 3600;
@@ -1513,6 +1521,10 @@ fn usdc_rate_history() -> String {
 }
 
 fn rated_ctx(usdc_history: Option<String>) -> Ctx {
+    ctx_over(Arc::new(rated_http(usdc_history)))
+}
+
+fn rated_http(usdc_history: Option<String>) -> MockHttp {
     let mut http = MockHttp::new();
     http = match usdc_history {
         Some(body) => http.on(
@@ -1523,8 +1535,8 @@ fn rated_ctx(usdc_history: Option<String>) -> Ctx {
             "/reserves/{USDC_RESERVE}/metrics/history"
         ))),
     };
-    let http = http
-        // The SOL reserve's history is unavailable: its trailing rates are simply absent.
+    http
+        // The SOL reserve's history is unavailable on every attempt.
         .on_transient(Match::primary_contains(format!(
             "/reserves/{SOL_RESERVE}/metrics/history"
         )))
@@ -1540,12 +1552,65 @@ fn rated_ctx(usdc_history: Option<String>) -> Ctx {
             Match::primary_contains(MAIN_MARKET),
             base58_reserves(OBLIGATIONS),
         )
-        .on(Match::primary_contains("kamino-market"), "[]");
+        .on(Match::primary_contains("kamino-market"), "[]")
+}
+
+fn ctx_over(http: Arc<dyn Http>) -> Ctx {
     let rpc = MockChainProvider::new()
         .on(Match::body_contains("MINT_SOL"), mint_account(9))
         .on(Match::body_contains("MINT_USDC"), mint_account(6));
-    Ctx::new(Arc::new(http), Arc::new(MockClock(NOW))).with_rpc(Arc::new(rpc))
+    Ctx::new(http, Arc::new(MockClock(NOW))).with_rpc(Arc::new(rpc))
 }
+
+fn usdc_history_url() -> String {
+    format!("/reserves/{USDC_RESERVE}/metrics/history")
+}
+
+/// How many requests went to the USDC reserve's rate history.
+fn usdc_history_calls(http: &MockHttp) -> usize {
+    let url = usdc_history_url();
+    http.calls()
+        .iter()
+        .filter(|(u, _)| u.contains(&url))
+        .count()
+}
+
+/// Fails the first `failures` requests whose URL contains `url` with a retryable 503, then hands
+/// every request to `inner`.
+struct FlakyHttp {
+    inner: MockHttp,
+    url: String,
+    failures: std::sync::Mutex<u32>,
+}
+
+#[async_trait]
+impl Http for FlakyHttp {
+    async fn post(
+        &self,
+        url: &str,
+        body: String,
+        headers: &[(&str, &str)],
+    ) -> Result<String, Error> {
+        self.inner.post(url, body, headers).await
+    }
+
+    async fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<String, Error> {
+        if url.contains(&self.url) {
+            let mut failures = self.failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(Error::Transient {
+                    message: "HTTP 503".into(),
+                    retry_after: None,
+                });
+            }
+        }
+        self.inner.get(url, headers).await
+    }
+}
+
+const W24: RateWindow = RateWindow::Trailing { hours: 24 };
+const W168: RateWindow = RateWindow::Trailing { hours: 168 };
 
 async fn read_lending(cx: &Ctx) -> gluonscan_core::LendingPosition {
     let reading = KaminoApi::new()
@@ -1598,18 +1663,26 @@ async fn trailing_means_smooth_the_daily_borrow_spike() {
     }
     assert_eq!(usdc.len(), 3);
 
-    // The supplied SOL leg: its history failed, so only the instantaneous rate remains.
+    assert!(usdc.gaps().is_empty());
+
+    // The supplied SOL leg: its history failed, so only the instantaneous rate remains and both
+    // trailing windows say why.
     let sol = p.supplied[0].rates();
     assert_eq!(sol.len(), 1);
     assert_eq!(
         instant(sol),
         Some(Decimal::from_str_exact("0.045").unwrap())
     );
+    assert_eq!(
+        sol.gaps(),
+        &[(W24, RateGap::Unavailable), (W168, RateGap::Unavailable)]
+    );
 }
 
 #[tokio::test]
-async fn rate_history_failure_never_fails_the_read() {
-    let p = read_lending(&rated_ctx(None)).await;
+async fn rate_history_failing_every_attempt_is_unavailable_and_never_fails_the_read() {
+    let http = Arc::new(rated_http(None));
+    let p = read_lending(&ctx_over(http.clone())).await;
     let usdc = p.borrowed[0].rates();
     assert_eq!(usdc.len(), 1, "only the instantaneous rate");
     assert_eq!(
@@ -1617,8 +1690,85 @@ async fn rate_history_failure_never_fails_the_read() {
         Some(Decimal::from_str_exact("0.089").unwrap())
     );
     assert_eq!(
+        usdc.gaps(),
+        &[(W24, RateGap::Unavailable), (W168, RateGap::Unavailable)]
+    );
+    assert_eq!(
+        usdc_history_calls(&http),
+        RATE_HISTORY_ATTEMPTS as usize,
+        "a retryable failure is retried, then given up"
+    );
+    assert_eq!(
         p.borrowed[0].amount.amount,
         Decimal::from_str_exact("200.45").unwrap()
+    );
+}
+
+#[tokio::test]
+async fn a_transient_rate_history_failure_is_retried_for_that_reserve() {
+    let http = Arc::new(FlakyHttp {
+        inner: rated_http(Some(usdc_rate_history())),
+        url: usdc_history_url(),
+        failures: std::sync::Mutex::new(RATE_HISTORY_ATTEMPTS - 1),
+    });
+    let p = read_lending(&ctx_over(http.clone())).await;
+    let usdc = p.borrowed[0].rates();
+    assert!(usdc.get(RateBasis::Apy, W24).is_some());
+    assert!(usdc.get(RateBasis::Apy, W168).is_some());
+    assert!(usdc.gaps().is_empty());
+    assert_eq!(
+        usdc_history_calls(&http.inner),
+        1,
+        "the attempt after the 503s reached the source"
+    );
+    assert_eq!(*http.failures.lock().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn an_unreadable_rate_history_is_unavailable_without_a_retry() {
+    for body in [
+        "<html>502 Bad Gateway</html>",
+        r#"{"reserve":"ResUsdc"}"#,
+        r#"{"history":{}}"#,
+    ] {
+        let http = Arc::new(rated_http(Some(body.to_string())));
+        let p = read_lending(&ctx_over(http.clone())).await;
+        let usdc = p.borrowed[0].rates();
+        assert_eq!(usdc.len(), 1, "{body}");
+        assert_eq!(
+            usdc.gaps(),
+            &[(W24, RateGap::Unavailable), (W168, RateGap::Unavailable)],
+            "{body}"
+        );
+        assert_eq!(usdc_history_calls(&http), 1, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn a_permanent_rate_history_failure_is_unavailable_without_a_retry() {
+    let http = Arc::new(rated_http(Some(usdc_rate_history())).on_err(
+        Match::primary_contains(usdc_history_url()),
+        || Error::Permanent {
+            message: "HTTP 404".into(),
+        },
+    ));
+    let p = read_lending(&ctx_over(http.clone())).await;
+    assert_eq!(
+        p.borrowed[0].rates().gaps(),
+        &[(W24, RateGap::Unavailable), (W168, RateGap::Unavailable)]
+    );
+    assert_eq!(usdc_history_calls(&http), 1);
+}
+
+#[tokio::test]
+async fn a_stale_rate_history_is_a_stale_point_gap() {
+    let newest = NOW - MAX_RATE_POINT_AGE_SECS - 1;
+    let p = read_lending(&rated_ctx(Some(usdc_rate_history_ending(newest)))).await;
+    let usdc = p.borrowed[0].rates();
+    assert_eq!(usdc.len(), 1, "only the instantaneous rate");
+    assert_eq!(
+        usdc.gaps(),
+        &[(W24, RateGap::StalePoint), (W168, RateGap::StalePoint)]
     );
 }
 
@@ -1632,12 +1782,10 @@ async fn sparse_rate_history_omits_the_uncovered_window_only() {
 
     let p = read_lending(&rated_ctx(Some(sparse))).await;
     let usdc = p.borrowed[0].rates();
-    assert!(usdc
-        .get(RateBasis::Apy, RateWindow::Trailing { hours: 24 })
-        .is_some());
+    assert!(usdc.get(RateBasis::Apy, W24).is_some());
     assert!(
-        usdc.get(RateBasis::Apy, RateWindow::Trailing { hours: 168 })
-            .is_none(),
+        usdc.get(RateBasis::Apy, W168).is_none(),
         "an uncovered window is omitted, never filled from another"
     );
+    assert_eq!(usdc.gaps(), &[(W168, RateGap::InsufficientCoverage)]);
 }
