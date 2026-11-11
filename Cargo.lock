@@ -1219,7 +1219,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "async-trait",
  "gluonscan-aave",
@@ -1246,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-aave"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-core"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1271,7 +1271,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-ethena"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1286,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-etherfi"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-evm"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "chrono",
@@ -1312,7 +1312,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-hyperliquid"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "async-trait",
  "gluonscan-core",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-kamino"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1341,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-lido"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-math"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "proptest",
@@ -1365,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-morpho"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-pendle"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-raydium"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1411,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-solana"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "base64 0.23.1",
  "bs58",
@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-sources"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1438,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-testing"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "async-trait",
  "gluonscan-core",
@@ -1448,7 +1448,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-uniswap"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -1463,7 +1463,7 @@ dependencies = [
 
 [[package]]
 name = "gluonscan-wallet"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 dependencies = [
  "alloy-primitives",
  "async-trait",
