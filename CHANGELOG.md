@@ -8,6 +8,15 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-16
+
+First stable release of the 0.3 line; the API is the 0.3.0-beta.8 surface, unchanged. Over the
+betas the line made every rate carry its basis, window, source and timestamp, with `RateGap` for a
+window that could not be rated; reported lending interest accrual as `SupplyInterest` /
+`BorrowInterest`; marked what an LP collect's amount includes (`CollectBasis`); named a yield
+token's `accounting_asset` and made receipt reads strict; and tightened the Aave, Kamino and
+Raydium history and live reads to fail closed rather than guess.
+
 ## [0.3.0-beta.8] - 2026-11-11
 
 ### Added
@@ -765,7 +774,11 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.5...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.8...v0.3.0
+[0.3.0-beta.8]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.7...v0.3.0-beta.8
+[0.3.0-beta.7]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.6...v0.3.0-beta.7
+[0.3.0-beta.6]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.5...v0.3.0-beta.6
 [0.3.0-beta.5]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.2...v0.3.0-beta.3
