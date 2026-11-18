@@ -8,6 +8,10 @@ ignore = [
     # `paste` is unmaintained but has no known vulnerability; pulled in transitively by
     # alloy-primitives' ruint. No maintained drop-in replacement is wired upstream yet.
     "RUSTSEC-2024-0436",
+    # `chrono` is unmaintained (informational, no vulnerability, no patched version). It is a direct
+    # dependency of the Ethena, EVM and Kamino crates, used only to parse and format RFC 3339
+    # timestamps, so moving to `jiff` or `time` is a small follow-up.
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]
