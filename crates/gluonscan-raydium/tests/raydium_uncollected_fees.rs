@@ -151,6 +151,8 @@ impl ChainProvider for Accounts {
                     .collect();
                 json!({ "context": { "slot": 1 }, "value": values })
             }
+            // The opening-time lookup: no finalized history yet, so no `created_at`.
+            "getSignaturesForAddress" => json!([]),
             other => panic!("unexpected RPC method {other}"),
         };
         Ok(json!({ "jsonrpc": "2.0", "id": 1, "result": result }).to_string())
