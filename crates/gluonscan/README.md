@@ -41,8 +41,15 @@ gluonscan = { version = "0.3", default-features = false, features = ["kamino", "
 ```
 
 Features: `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; ecosystem umbrellas
-`evm` (aave + uniswap + pendle) and `solana` (kamino + raydium); and `full` (the default). Features
-are additive, so widening them later is never a breaking change.
+`evm` (aave + uniswap + pendle) and `solana` (kamino + raydium); `signature` (wallet signature
+verification for a wallet login, `gluonscan::signature`; or one family with `signature-evm` /
+`signature-solana`); and `full` (the default). Features are additive, so widening them later is never
+a breaking change.
+
+```toml
+# Only wallet signature verification (EIP-191 personal_sign and Solana ed25519), nothing else:
+gluonscan-core = { version = "0.3", features = ["signature"] }
+```
 
 ## License
 

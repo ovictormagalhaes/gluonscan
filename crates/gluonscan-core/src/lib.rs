@@ -22,6 +22,7 @@ pub mod hygiene;
 pub mod model;
 pub mod ports;
 pub mod rate;
+pub mod signature;
 
 mod chain;
 pub use chain::{Chain, Ecosystem};

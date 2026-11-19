@@ -8,6 +8,24 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.1-beta.2] - 2026-11-18
+
+### Added
+
+- **Wallet signature verification**, `gluonscan::signature` (in `gluonscan-core`):
+  `verify_wallet_signature(family, address, message, signature) -> Result<bool, SignatureError>`,
+  with `verify_evm` and `verify_solana`. It checks that the holder of an address signed a message
+  (the ownership proof of a wallet login) without an Ethereum or Solana SDK. EVM is EIP-191
+  `personal_sign`: the signer is recovered with `k256` and compared with the address byte for
+  byte, so case and checksum do not matter, and `v` may be 27/28, 0/1 or an EIP-155 value. Solana
+  is ed25519 `verify_strict` over a base58 key and signature (`ed25519-dalek`). `Ok(false)` is a
+  well-formed proof that does not hold; an input that does not parse is `InvalidAddress` /
+  `InvalidSignature`; nothing panics. The accepted forms match ethers-core 2.0.14 and
+  solana-pubkey 2.4 / solana-signature 2.3, pinned by vectors those implementations produced.
+- Features `signature-evm`, `signature-solana` and `signature` (both) on `gluonscan-core` (all off)
+  and on `gluonscan` (`signature` is part of `full`). Without them nothing of either curve is
+  compiled.
+
 ## [0.3.1-beta.1] - 2026-11-18
 
 ### Added
@@ -790,7 +808,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.1...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.2...HEAD
+[0.3.1-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.1...v0.3.1-beta.2
 [0.3.1-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0...v0.3.1-beta.1
 [0.3.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.8...v0.3.0
 [0.3.0-beta.8]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.7...v0.3.0-beta.8
