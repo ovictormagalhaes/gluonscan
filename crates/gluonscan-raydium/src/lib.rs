@@ -16,6 +16,15 @@
 //! The account byte offsets match the on-chain Raydium CLMM `PersonalPositionState`, `PoolState`
 //! and `TickArrayState` layouts. Discovery queries both the classic SPL Token program and
 //! Token-2022 (Raydium's newer position NFTs mint under Token-2022).
+//!
+//! A position's `created_at` is the block time of the transaction that opened it. The position
+//! NFT's mint is a fresh account the opening creates, and later liquidity changes and fee collects
+//! do not reference it, so its signature history is short: the opening, then any transfer or close.
+//! The read takes one page of it and checks that the oldest successful transaction is an
+//! `open_position*` of this position; the history is never walked further, so the lookup costs at
+//! most two calls per position however long the history is. A position whose opening cannot be
+//! confirmed that way has no `created_at`. Only a [`Detail::Full`] read looks it up; the adapter
+//! keeps no state, so a consumer that has it already stored can read at a lower detail.
 
 use alloy_primitives::U256;
 use async_trait::async_trait;
@@ -45,6 +54,13 @@ const CLMM_PROGRAM_ID: &str = RAYDIUM_CLMM_PROGRAM;
 const SIG_PAGE_LIMIT: usize = 1000;
 const SIG_MAX_PAGES: usize = 5;
 const SUPPORTED_CHAINS: &[Chain] = &[Chain::Solana];
+/// The CLMM instructions that open a position (and create its NFT mint).
+const OPEN_POSITION_METHODS: [&str; 4] = [
+    "open_position",
+    "open_position_v2",
+    "open_position_with_metadata",
+    "open_position_with_token22_nft",
+];
 
 // PersonalPositionState layout (byte offsets): 8-byte discriminator, bump, nft_mint[9..41],
 // pool_id[41..73], tick_lower[73..77], tick_upper[77..81], liquidity[81..97],
@@ -122,7 +138,7 @@ impl ProtocolAdapter for RaydiumClmm {
         &self,
         owner: &Wallet,
         chain: Chain,
-        _detail: Detail,
+        detail: Detail,
         cx: &Ctx,
     ) -> Result<Complete<Reading>, Error> {
         if chain != Chain::Solana {
@@ -146,8 +162,23 @@ impl ProtocolAdapter for RaydiumClmm {
             if data.len() < POS_MIN_LEN {
                 continue;
             }
-            positions.push(parse_position(rpc, &address, &data, &mint).await?);
+            positions.push((
+                parse_position(rpc, &address, &data, &mint).await?,
+                mint,
+                address,
+            ));
         }
+        // The opening times are optional, so they are looked up only once every required read has
+        // succeeded: their calls can then never push a required one into a rate limit.
+        let mut read = Vec::with_capacity(positions.len());
+        for (position, mint, address) in positions {
+            let created_at = match detail {
+                Detail::Full => opened_at(rpc, &mint, &address).await,
+                _ => None,
+            };
+            read.push(Position::Liquidity(position.with_created_at(created_at)));
+        }
+        let positions = read;
 
         let reading = Reading::new(
             Protocol::Raydium,
@@ -308,7 +339,7 @@ async fn parse_position(
     address: &str,
     discovered: &[u8],
     nft_mint: &str,
-) -> Result<Position, Error> {
+) -> Result<LiquidityPosition, Error> {
     let pool_id = pubkey_at(discovered, POS_POOL)?;
     let tick_lower = i32_at(discovered, POS_TICK_LOWER)?;
     let tick_upper = i32_at(discovered, POS_TICK_UPPER)?;
@@ -467,27 +498,25 @@ async fn parse_position(
         raw_amount(token1.clone(), U256::from(fee1))?,
     ];
     // Pool APR would come from the Raydium API, not the on-chain position; left to the consumer.
-    Ok(Position::Liquidity(
-        LiquidityPosition::new(
-            token0,
-            token1,
-            tick_lower,
-            tick_upper,
-            tick_current,
-            is_in_range(tick_current, tick_lower, tick_upper),
-        )
-        .with_id(Some(nft_mint.to_string()))
-        .with_pool(Some(pubkey_str(&pool_id)))
-        .with_sqrt_price(Some(sqrt_price.to_string()))
-        .with_tick_spacing(
-            pool.get(POOL_TICK_SPACING..POOL_TICK_SPACING + 2)
-                .and_then(|s| s.try_into().ok())
-                .map(|b| u16::from_le_bytes(b) as i32),
-        )
-        .with_assets(assets)
-        .with_uncollected_fees(uncollected_fees)
-        .with_status(status),
-    ))
+    Ok(LiquidityPosition::new(
+        token0,
+        token1,
+        tick_lower,
+        tick_upper,
+        tick_current,
+        is_in_range(tick_current, tick_lower, tick_upper),
+    )
+    .with_id(Some(nft_mint.to_string()))
+    .with_pool(Some(pubkey_str(&pool_id)))
+    .with_sqrt_price(Some(sqrt_price.to_string()))
+    .with_tick_spacing(
+        pool.get(POOL_TICK_SPACING..POOL_TICK_SPACING + 2)
+            .and_then(|s| s.try_into().ok())
+            .map(|b| u16::from_le_bytes(b) as i32),
+    )
+    .with_assets(assets)
+    .with_uncollected_fees(uncollected_fees)
+    .with_status(status))
 }
 
 /// The start index of the tick array holding `tick` (`TickArrayState::get_array_start_index`):
@@ -758,6 +787,66 @@ async fn fetch_transaction(rpc: &dyn ChainProvider, sig: &str) -> Result<serde_j
     }
 }
 
+// ---- opening time ----------------------------------------------------------
+
+/// When the position `position` (the PDA of `nft_mint`) was opened, from at most two calls: one
+/// page of the mint's finalized signatures and the transaction of its oldest successful one, which
+/// must be an `open_position*` of this position. The mint is created by the opening and untouched
+/// by liquidity changes and fee collects, so the page normally holds its whole history; a full
+/// page is not walked further and reads as unknown. `None` whenever the opening is not confirmed,
+/// including when a call fails: the opening time is optional, so it never fails the read.
+async fn opened_at(rpc: &dyn ChainProvider, nft_mint: &str, position: &str) -> Option<i64> {
+    let params = serde_json::json!([
+        nft_mint,
+        { "limit": SIG_PAGE_LIMIT, "commitment": "finalized" }
+    ])
+    .to_string();
+    let raw = rpc
+        .call(Chain::Solana, "getSignaturesForAddress", params)
+        .await
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let page = json.get("result")?.as_array()?;
+    if page.len() >= SIG_PAGE_LIMIT {
+        return None;
+    }
+    // Newest first, so the last successful entry is the oldest. A failed attempt to open moved
+    // nothing and is skipped; an entry without an explicit `err: null` is not taken as a success.
+    let oldest = page
+        .iter()
+        .rev()
+        .find(|s| s.get("err").is_some_and(serde_json::Value::is_null))?
+        .get("signature")?
+        .as_str()?;
+    let tx = fetch_transaction(rpc, oldest).await.ok()?;
+    let succeeded = tx
+        .pointer("/meta/err")
+        .is_some_and(serde_json::Value::is_null);
+    if !succeeded || !opens_position(&tx, nft_mint, position) {
+        return None;
+    }
+    tx.get("blockTime")?.as_i64()
+}
+
+/// Whether a parsed transaction calls a CLMM `open_position*` (top-level or through a CPI) whose
+/// accounts include both this NFT mint and this position PDA.
+fn opens_position(tx: &serde_json::Value, nft_mint: &str, position: &str) -> bool {
+    let opens = OPEN_POSITION_METHODS.map(anchor_discriminator);
+    clmm_instructions(tx).into_iter().any(|ix| {
+        let is_open = ix
+            .get("data")
+            .and_then(|d| d.as_str())
+            .and_then(|d| bs58::decode(d).into_vec().ok())
+            .is_some_and(|data| data.len() >= 8 && opens.iter().any(|o| data[..8] == *o));
+        let accounts: Vec<&str> = ix
+            .get("accounts")
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().filter_map(|k| k.as_str()).collect())
+            .unwrap_or_default();
+        is_open && accounts.contains(&nft_mint) && accounts.contains(&position)
+    })
+}
+
 /// Signed (`post - pre`) wallet-owned token deltas for both pool legs, with a native-SOL fallback
 /// when a WSOL leg's SPL delta is zero (wrap/unwrap in the same tx).
 fn signed_token_deltas(
@@ -944,14 +1033,11 @@ fn detect_clmm_event_kind(tx: &serde_json::Value) -> Option<ClmmEventKind> {
 /// Every Raydium CLMM liquidity-changing call in a parsed transaction, top-level first, then inner,
 /// classified as in [`detect_clmm_event_kind`].
 fn clmm_event_kinds(tx: &serde_json::Value) -> Vec<ClmmEventKind> {
-    let deposit_discs: [[u8; 8]; 6] = [
-        anchor_discriminator("open_position"),
-        anchor_discriminator("open_position_v2"),
-        anchor_discriminator("open_position_with_metadata"),
-        anchor_discriminator("open_position_with_token22_nft"),
-        anchor_discriminator("increase_liquidity"),
-        anchor_discriminator("increase_liquidity_v2"),
-    ];
+    let deposit_discs: Vec<[u8; 8]> = OPEN_POSITION_METHODS
+        .iter()
+        .chain(&["increase_liquidity", "increase_liquidity_v2"])
+        .map(|m| anchor_discriminator(m))
+        .collect();
     let withdraw_discs: [[u8; 8]; 2] = [
         anchor_discriminator("decrease_liquidity"),
         anchor_discriminator("decrease_liquidity_v2"),
@@ -981,35 +1067,30 @@ fn clmm_event_kinds(tx: &serde_json::Value) -> Vec<ClmmEventKind> {
         None
     };
 
-    let mut kinds = Vec::new();
-    let mut scan = |arr: &[serde_json::Value]| {
-        for ix in arr {
-            if ix.get("programId").and_then(|p| p.as_str()) != Some(CLMM_PROGRAM_ID) {
-                continue;
-            }
-            if let Some(kind) = ix.get("data").and_then(|d| d.as_str()).and_then(check) {
-                kinds.push(kind);
-            }
-        }
-    };
+    clmm_instructions(tx)
+        .into_iter()
+        .filter_map(|ix| ix.get("data").and_then(|d| d.as_str()).and_then(check))
+        .collect()
+}
 
-    if let Some(arr) = tx
+/// Every instruction of a parsed transaction addressed to the CLMM program, top-level first, then
+/// inner (CPI) ones.
+fn clmm_instructions(tx: &serde_json::Value) -> Vec<&serde_json::Value> {
+    let top = tx
         .pointer("/transaction/message/instructions")
         .and_then(|i| i.as_array())
-    {
-        scan(arr);
-    }
-    if let Some(inner) = tx
+        .into_iter()
+        .flatten();
+    let inner = tx
         .pointer("/meta/innerInstructions")
         .and_then(|i| i.as_array())
-    {
-        for entry in inner {
-            if let Some(arr) = entry.get("instructions").and_then(|i| i.as_array()) {
-                scan(arr);
-            }
-        }
-    }
-    kinds
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("instructions").and_then(|i| i.as_array()))
+        .flatten();
+    top.chain(inner)
+        .filter(|ix| ix.get("programId").and_then(|p| p.as_str()) == Some(CLMM_PROGRAM_ID))
+        .collect()
 }
 
 #[cfg(test)]

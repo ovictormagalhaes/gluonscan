@@ -8,6 +8,22 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.1-beta.1] - 2026-11-18
+
+### Added
+
+- **Raydium positions carry `created_at`**: the block time of the transaction that opened the
+  position. Until now it was always empty, so a consumer could not compute a yield since opening
+  or tell a position opened today from an older one it had just discovered. The read takes one
+  page of the position NFT mint's finalized signatures (the mint is created by the opening, and
+  liquidity changes and fee collects do not reference it, so its history is short) and checks that
+  the oldest successful transaction is an `open_position*` of this position on the CLMM program,
+  top-level or through a CPI. It never pages further: the lookup costs at most two calls per
+  position however long the history is, and it runs only on a `Detail::Full` read. When the
+  opening cannot be confirmed (a call fails, the opening is not finalized yet, the mint's history
+  fills a whole page, or the oldest transaction is not this position's opening) `created_at` stays
+  `None`; it is never estimated, and the lookup never fails the read.
+
 ## [0.3.0] - 2026-11-16
 
 First stable release of the 0.3 line; the API is the 0.3.0-beta.8 surface, unchanged. Over the
@@ -774,7 +790,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.1...HEAD
+[0.3.1-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0...v0.3.1-beta.1
 [0.3.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.8...v0.3.0
 [0.3.0-beta.8]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.7...v0.3.0-beta.8
 [0.3.0-beta.7]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.6...v0.3.0-beta.7
