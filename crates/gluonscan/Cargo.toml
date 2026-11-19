@@ -58,10 +58,14 @@ kamino = ["dep:gluonscan-kamino"]
 raydium = ["dep:gluonscan-raydium"]
 prices = ["dep:gluonscan-sources"]
 wallet = ["dep:gluonscan-wallet"]
+# Wallet signature verification (`gluonscan::signature`), per family.
+signature-evm = ["gluonscan-core/signature-evm"]
+signature-solana = ["gluonscan-core/signature-solana"]
+signature = ["signature-evm", "signature-solana"]
 # Ecosystem umbrellas.
 evm = ["aave", "uniswap", "lido", "morpho", "etherfi", "ethena", "hyperliquid", "pendle"]
 solana = ["kamino", "raydium"]
-full = ["evm", "solana", "prices", "wallet"]
+full = ["evm", "solana", "prices", "wallet", "signature"]
 
 [dev-dependencies]
 gluonscan-testing = { workspace = true }

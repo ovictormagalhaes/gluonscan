@@ -1,0 +1,1037 @@
+{
+  "evm": [
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "plain: v 27/28, 0x",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eaE0270b84555296e05AD10Fdd83329833E82",
+      "message": "siwe-test-message",
+      "name": "plain: checksummed address",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x95ac8e64ae62148fc25cf39f317af72be029fcf5",
+      "message": "siwe-test-message",
+      "name": "plain: wrong address",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-messagex",
+      "name": "plain: tampered message",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "",
+      "name": "empty: v 27/28, 0x",
+      "outcome": "verified",
+      "signature": "0xe44d65c75c99ae3a3c50370fde319a6c098cf0052ea77f6efb6686907279d9c135c7f8dfb630d000645469ef4066567e0216e87e3ce7f13e8ec47381584ae7841c"
+    },
+    {
+      "address": "0x5f2eaE0270b84555296e05AD10Fdd83329833E82",
+      "message": "",
+      "name": "empty: checksummed address",
+      "outcome": "verified",
+      "signature": "0xe44d65c75c99ae3a3c50370fde319a6c098cf0052ea77f6efb6686907279d9c135c7f8dfb630d000645469ef4066567e0216e87e3ce7f13e8ec47381584ae7841c"
+    },
+    {
+      "address": "0x95ac8e64ae62148fc25cf39f317af72be029fcf5",
+      "message": "",
+      "name": "empty: wrong address",
+      "outcome": "not_verified",
+      "signature": "0xe44d65c75c99ae3a3c50370fde319a6c098cf0052ea77f6efb6686907279d9c135c7f8dfb630d000645469ef4066567e0216e87e3ce7f13e8ec47381584ae7841c"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "x",
+      "name": "empty: tampered message",
+      "outcome": "not_verified",
+      "signature": "0xe44d65c75c99ae3a3c50370fde319a6c098cf0052ea77f6efb6686907279d9c135c7f8dfb630d000645469ef4066567e0216e87e3ce7f13e8ec47381584ae7841c"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "héllo ✓ — 署名",
+      "name": "unicode: v 27/28, 0x",
+      "outcome": "verified",
+      "signature": "0x9a6438e057be7c68380701b4240269e83fd0ad791ee736b93453021981d851d54d1b841c6e1ab73364d65de79c524d7e73768fc4e99c1956b35e49f9536aa0891c"
+    },
+    {
+      "address": "0x5f2eaE0270b84555296e05AD10Fdd83329833E82",
+      "message": "héllo ✓ — 署名",
+      "name": "unicode: checksummed address",
+      "outcome": "verified",
+      "signature": "0x9a6438e057be7c68380701b4240269e83fd0ad791ee736b93453021981d851d54d1b841c6e1ab73364d65de79c524d7e73768fc4e99c1956b35e49f9536aa0891c"
+    },
+    {
+      "address": "0x95ac8e64ae62148fc25cf39f317af72be029fcf5",
+      "message": "héllo ✓ — 署名",
+      "name": "unicode: wrong address",
+      "outcome": "not_verified",
+      "signature": "0x9a6438e057be7c68380701b4240269e83fd0ad791ee736b93453021981d851d54d1b841c6e1ab73364d65de79c524d7e73768fc4e99c1956b35e49f9536aa0891c"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "héllo ✓ — 署名x",
+      "name": "unicode: tampered message",
+      "outcome": "not_verified",
+      "signature": "0x9a6438e057be7c68380701b4240269e83fd0ad791ee736b93453021981d851d54d1b841c6e1ab73364d65de79c524d7e73768fc4e99c1956b35e49f9536aa0891c"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "example.org wants you to sign in with your Ethereum account:\n0x5f2eaE0270b84555296e05AD10Fdd83329833E82\n\nSign in.\n\nURI: https://example.org\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2026-11-18T12:00:00Z",
+      "name": "siwe: v 27/28, 0x",
+      "outcome": "verified",
+      "signature": "0xd26689d3230ab28f686dc956de3f90fa03bb1a9d6a236bdad5e49fcea88eecab589c694f9c05660d24919211397434414b5a47a5768775351ef26ed272462b2f1b"
+    },
+    {
+      "address": "0x5f2eaE0270b84555296e05AD10Fdd83329833E82",
+      "message": "example.org wants you to sign in with your Ethereum account:\n0x5f2eaE0270b84555296e05AD10Fdd83329833E82\n\nSign in.\n\nURI: https://example.org\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2026-11-18T12:00:00Z",
+      "name": "siwe: checksummed address",
+      "outcome": "verified",
+      "signature": "0xd26689d3230ab28f686dc956de3f90fa03bb1a9d6a236bdad5e49fcea88eecab589c694f9c05660d24919211397434414b5a47a5768775351ef26ed272462b2f1b"
+    },
+    {
+      "address": "0x95ac8e64ae62148fc25cf39f317af72be029fcf5",
+      "message": "example.org wants you to sign in with your Ethereum account:\n0x5f2eaE0270b84555296e05AD10Fdd83329833E82\n\nSign in.\n\nURI: https://example.org\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2026-11-18T12:00:00Z",
+      "name": "siwe: wrong address",
+      "outcome": "not_verified",
+      "signature": "0xd26689d3230ab28f686dc956de3f90fa03bb1a9d6a236bdad5e49fcea88eecab589c694f9c05660d24919211397434414b5a47a5768775351ef26ed272462b2f1b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "example.org wants you to sign in with your Ethereum account:\n0x5f2eaE0270b84555296e05AD10Fdd83329833E82\n\nSign in.\n\nURI: https://example.org\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2026-11-18T12:00:00Zx",
+      "name": "siwe: tampered message",
+      "outcome": "not_verified",
+      "signature": "0xd26689d3230ab28f686dc956de3f90fa03bb1a9d6a236bdad5e49fcea88eecab589c694f9c05660d24919211397434414b5a47a5768775351ef26ed272462b2f1b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message\n",
+      "name": "trailing newline: v 27/28, 0x",
+      "outcome": "verified",
+      "signature": "0x81148ac0f98cf6251833ce0dd64d7d39da077a2cfddb086114fbaa0de9a650fe0aa9feb98b719d8f705018eb9e56ab8d3c25393022070ee6c03cbb493ef61fa21c"
+    },
+    {
+      "address": "0x5f2eaE0270b84555296e05AD10Fdd83329833E82",
+      "message": "siwe-test-message\n",
+      "name": "trailing newline: checksummed address",
+      "outcome": "verified",
+      "signature": "0x81148ac0f98cf6251833ce0dd64d7d39da077a2cfddb086114fbaa0de9a650fe0aa9feb98b719d8f705018eb9e56ab8d3c25393022070ee6c03cbb493ef61fa21c"
+    },
+    {
+      "address": "0x95ac8e64ae62148fc25cf39f317af72be029fcf5",
+      "message": "siwe-test-message\n",
+      "name": "trailing newline: wrong address",
+      "outcome": "not_verified",
+      "signature": "0x81148ac0f98cf6251833ce0dd64d7d39da077a2cfddb086114fbaa0de9a650fe0aa9feb98b719d8f705018eb9e56ab8d3c25393022070ee6c03cbb493ef61fa21c"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message\nx",
+      "name": "trailing newline: tampered message",
+      "outcome": "not_verified",
+      "signature": "0x81148ac0f98cf6251833ce0dd64d7d39da077a2cfddb086114fbaa0de9a650fe0aa9feb98b719d8f705018eb9e56ab8d3c25393022070ee6c03cbb493ef61fa21c"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "no 0x prefix",
+      "outcome": "verified",
+      "signature": "527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 0/1",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e500"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 0/1, no 0x prefix",
+      "outcome": "verified",
+      "signature": "527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e500"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "uppercase hex",
+      "outcome": "verified",
+      "signature": "0x527C4664590566AE5D3ECF3BF4A9DEEE73BE07901DC9905A532080485F70CCF26492A1AF2FE1B1A3C726BEC53D48F6A646042A9864B3A720DFCAB564886BA5E51B"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "0X prefix",
+      "outcome": "invalid_signature",
+      "signature": "0X527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "double 0x prefix",
+      "outcome": "verified",
+      "signature": "0x0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "space in signature",
+      "outcome": "invalid_signature",
+      "signature": "0x527c466459 0566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "trailing newline in signature",
+      "outcome": "invalid_signature",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b\n"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "64 bytes",
+      "outcome": "invalid_signature",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e5"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "66 bytes",
+      "outcome": "invalid_signature",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b00"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "odd length",
+      "outcome": "invalid_signature",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b0"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "non-hex",
+      "outcome": "invalid_signature",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e5zz"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "empty",
+      "outcome": "invalid_signature",
+      "signature": ""
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "bare 0x",
+      "outcome": "invalid_signature",
+      "signature": "0x"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "deadbeef",
+      "outcome": "invalid_signature",
+      "signature": "0xdeadbeef"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 2 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e502"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 2 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c02"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 3 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e503"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 3 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c03"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 4 (recid 0 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e504"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 4 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c04"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 5 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e505"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 5 (recid 1 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c05"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 6 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e506"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 6 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c06"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 7 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e507"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 7 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c07"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 26 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51a"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 26 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c1a"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 29 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51d"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 29 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c1d"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 30 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51e"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 30 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c1e"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 31 (recid 0 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51f"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 31 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c1f"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 32 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e520"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 32 (recid 1 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c20"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 33 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e521"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 33 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c21"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 34 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e522"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 34 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c22"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 35 (recid 0 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e523"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 35 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c23"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 36 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e524"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 36 (recid 1 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c24"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 37 (recid 0 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e525"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 37 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c25"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 38 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e526"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 38 (recid 1 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c26"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 100 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e564"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 100 (recid 1 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c64"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 101 (recid 0 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e565"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 101 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c65"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 254 (recid 0 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e5fe"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 254 (recid 1 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5cfe"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 255 (recid 0 signature)",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e5ff"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "v 255 (recid 1 signature)",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5cff"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "high-S with flipped v",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c1c"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "high-S with original v",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf29b6d5e50d01e4e5c38d9413ac2b7095874aab24e4a94f91ae007a92847ca9b5c1b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "r = 0",
+      "outcome": "not_verified",
+      "signature": "0x00000000000000000000000000000000000000000000000000000000000000006492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "s = 0",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf200000000000000000000000000000000000000000000000000000000000000001b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "s = n",
+      "outcome": "not_verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf2fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd03641411b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "r = n",
+      "outcome": "not_verified",
+      "signature": "0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd03641416492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "r = 2^256 - 1",
+      "outcome": "not_verified",
+      "signature": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "r = 1",
+      "outcome": "not_verified",
+      "signature": "0x00000000000000000000000000000000000000000000000000000000000000016492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "arbitrary r and s",
+      "outcome": "not_verified",
+      "signature": "0x0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc01261b"
+    },
+    {
+      "address": "0x5F2EAE0270B84555296E05AD10FDD83329833E82",
+      "message": "siwe-test-message",
+      "name": "address uppercase hex",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "address without 0x",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0X5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "address 0X prefix",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eaE0270b84555296e05AD10Fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "address with a wrong EIP-55 checksum",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae02 70b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "address with an inner space",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae02\t70b84555296e05ad10fdd83329833e82\r\n",
+      "message": "siwe-test-message",
+      "name": "address with inner tab and CRLF",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": " 0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "address with a leading space",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e82 ",
+      "message": "siwe-test-message",
+      "name": "address with a trailing space",
+      "outcome": "verified",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e8",
+      "message": "siwe-test-message",
+      "name": "address 39 hex digits",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e820",
+      "message": "siwe-test-message",
+      "name": "address 41 hex digits",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e8200",
+      "message": "siwe-test-message",
+      "name": "address 42 hex digits",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833e8g",
+      "message": "siwe-test-message",
+      "name": "address non-hex",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "",
+      "message": "siwe-test-message",
+      "name": "address empty",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x",
+      "message": "siwe-test-message",
+      "name": "address bare 0x",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x0x5f2eae0270b84555296e05ad10fdd83329833e82",
+      "message": "siwe-test-message",
+      "name": "address double 0x",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0x5f2eae0270b84555296e05ad10fdd83329833eé",
+      "message": "siwe-test-message",
+      "name": "address non-ASCII",
+      "outcome": "invalid_address",
+      "signature": "0x527c4664590566ae5d3ecf3bf4a9deee73be07901dc9905a532080485f70ccf26492a1af2fe1b1a3c726bec53d48f6a646042a9864b3a720dfcab564886ba5e51b"
+    },
+    {
+      "address": "0xnope",
+      "message": "siwe-test-message",
+      "name": "bad address and bad signature",
+      "outcome": "invalid_address",
+      "signature": "0xnope"
+    }
+  ],
+  "outcomes": "verified | not_verified | invalid_address | invalid_signature",
+  "reference": "ethers-core 2.0.14 Signature::recover (personal_sign) with ethers Address::from_str; solana-pubkey 2.4.0 Pubkey::from_str with solana-signature 2.3.0 Signature::from_str + verify (ed25519-dalek 1.0.1 verify_strict)",
+  "solana": [
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "plain: valid",
+      "outcome": "verified",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "J2xccRtuG43drESLYznHhLhQkLTdfepcKYbiQ9BsJVaf",
+      "message": "siwe-test-message",
+      "name": "plain: wrong address",
+      "outcome": "not_verified",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-messagex",
+      "name": "plain: tampered message",
+      "outcome": "not_verified",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "",
+      "name": "empty: valid",
+      "outcome": "verified",
+      "signature": "2XNcpmf7hgtbX5eFcZHXGU8yT54tynsVFkNzszS4Nqt6JvzAozz8AJk4USrsFZ9FZFeGfMWeqqBLumwMiioETaJf"
+    },
+    {
+      "address": "J2xccRtuG43drESLYznHhLhQkLTdfepcKYbiQ9BsJVaf",
+      "message": "",
+      "name": "empty: wrong address",
+      "outcome": "not_verified",
+      "signature": "2XNcpmf7hgtbX5eFcZHXGU8yT54tynsVFkNzszS4Nqt6JvzAozz8AJk4USrsFZ9FZFeGfMWeqqBLumwMiioETaJf"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "x",
+      "name": "empty: tampered message",
+      "outcome": "not_verified",
+      "signature": "2XNcpmf7hgtbX5eFcZHXGU8yT54tynsVFkNzszS4Nqt6JvzAozz8AJk4USrsFZ9FZFeGfMWeqqBLumwMiioETaJf"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "héllo ✓ — 署名",
+      "name": "unicode: valid",
+      "outcome": "verified",
+      "signature": "65W75eN2rwXo84YLYuh9HY2jZ88Kcchvd3GGGrKzdFg2e8wF5RpSipoth1A2SJt9akzRCfoPqHBd94xMaiGMYFXJ"
+    },
+    {
+      "address": "J2xccRtuG43drESLYznHhLhQkLTdfepcKYbiQ9BsJVaf",
+      "message": "héllo ✓ — 署名",
+      "name": "unicode: wrong address",
+      "outcome": "not_verified",
+      "signature": "65W75eN2rwXo84YLYuh9HY2jZ88Kcchvd3GGGrKzdFg2e8wF5RpSipoth1A2SJt9akzRCfoPqHBd94xMaiGMYFXJ"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "héllo ✓ — 署名x",
+      "name": "unicode: tampered message",
+      "outcome": "not_verified",
+      "signature": "65W75eN2rwXo84YLYuh9HY2jZ88Kcchvd3GGGrKzdFg2e8wF5RpSipoth1A2SJt9akzRCfoPqHBd94xMaiGMYFXJ"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "example.org wants you to sign in with your Ethereum account:\n0x5f2eaE0270b84555296e05AD10Fdd83329833E82\n\nSign in.\n\nURI: https://example.org\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2026-11-18T12:00:00Z",
+      "name": "siwe: valid",
+      "outcome": "verified",
+      "signature": "kk9ErWVnuyu31t3diZdG4ZD1NTiaYQU1rmPSvrnSUTkr9jij9h2xGTAfLXTmRAN6ZVaS32aQkNaHEjHX3KPVRU8"
+    },
+    {
+      "address": "J2xccRtuG43drESLYznHhLhQkLTdfepcKYbiQ9BsJVaf",
+      "message": "example.org wants you to sign in with your Ethereum account:\n0x5f2eaE0270b84555296e05AD10Fdd83329833E82\n\nSign in.\n\nURI: https://example.org\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2026-11-18T12:00:00Z",
+      "name": "siwe: wrong address",
+      "outcome": "not_verified",
+      "signature": "kk9ErWVnuyu31t3diZdG4ZD1NTiaYQU1rmPSvrnSUTkr9jij9h2xGTAfLXTmRAN6ZVaS32aQkNaHEjHX3KPVRU8"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "example.org wants you to sign in with your Ethereum account:\n0x5f2eaE0270b84555296e05AD10Fdd83329833E82\n\nSign in.\n\nURI: https://example.org\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2026-11-18T12:00:00Zx",
+      "name": "siwe: tampered message",
+      "outcome": "not_verified",
+      "signature": "kk9ErWVnuyu31t3diZdG4ZD1NTiaYQU1rmPSvrnSUTkr9jij9h2xGTAfLXTmRAN6ZVaS32aQkNaHEjHX3KPVRU8"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message\n",
+      "name": "trailing newline: valid",
+      "outcome": "verified",
+      "signature": "3jQRwrqyximvhBuYo5eT6em2XWGbUxHU5ko7u9rgfjzbZ2gKuow9kgy4WWMBHjJzDJ7DJfzE3ztc2T813xc8S1zm"
+    },
+    {
+      "address": "J2xccRtuG43drESLYznHhLhQkLTdfepcKYbiQ9BsJVaf",
+      "message": "siwe-test-message\n",
+      "name": "trailing newline: wrong address",
+      "outcome": "not_verified",
+      "signature": "3jQRwrqyximvhBuYo5eT6em2XWGbUxHU5ko7u9rgfjzbZ2gKuow9kgy4WWMBHjJzDJ7DJfzE3ztc2T813xc8S1zm"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message\nx",
+      "name": "trailing newline: tampered message",
+      "outcome": "not_verified",
+      "signature": "3jQRwrqyximvhBuYo5eT6em2XWGbUxHU5ko7u9rgfjzbZ2gKuow9kgy4WWMBHjJzDJ7DJfzE3ztc2T813xc8S1zm"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature 63 bytes",
+      "outcome": "invalid_signature",
+      "signature": "SwasTWYJigUrf1hQyE93M5chTxqn7ZuRmbMbgex9EGSR53LCnKV7xJ8bKF2ZEUhEgLhtkEPg4yuvieP4kV3nC"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature 65 bytes",
+      "outcome": "invalid_signature",
+      "signature": "9iNf7hzgt3qJzW9xKCo6kA3YAuX5UZqc9x5FwKBehWts6C48yD81aXpwj232LsMcziWCLKgupbsYDveQJXvTDF2o"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature empty",
+      "outcome": "invalid_signature",
+      "signature": ""
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature invalid base58 char 0",
+      "outcome": "invalid_signature",
+      "signature": "0yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature invalid base58 char l",
+      "outcome": "invalid_signature",
+      "signature": "lyVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature with a space",
+      "outcome": "invalid_signature",
+      "signature": "2yVvVi1PBC yFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature with a trailing newline",
+      "outcome": "invalid_signature",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk\n"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature hex instead of base58",
+      "outcome": "invalid_signature",
+      "signature": "01b3d0991b8cde85f5b81d89cd414c4f1caf8e6fba5b3c6c065ea0a27a78e0668be1e3ffd11e3524bedd0f64eddee89d3f60d70c6a5a6e7e2776969884cc750b"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature 89 chars",
+      "outcome": "invalid_signature",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk11"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature with an extra leading 1",
+      "outcome": "invalid_signature",
+      "signature": "12yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "non-canonical s (s + l)",
+      "outcome": "not_verified",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ7tQ8sdvPm4yuKt6HcayqWXYnxFvY5LHrboGrCnVtAEsU"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "small-order R, s = 0",
+      "outcome": "not_verified",
+      "signature": "2AFv15MNPuA84RmU66xw2uMzGipcVxNpzAffoacGVvjFue3CBmf633fAWuiP9cwL9C3z3CJiGgRSFjJfeEcA6QX"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "signature all zeros",
+      "outcome": "not_verified",
+      "signature": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "leading-zero-46",
+      "name": "signature with a leading zero byte (46)",
+      "outcome": "verified",
+      "signature": "1YUXJecVnw3tpFgfvJZ7Z5f7JuB6R25bZcnkLDwghT3aEhsb6MwoVzrXoFw2zXSsggLG85xckJeSnKWBnPAvdvb"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "leading-zero-100",
+      "name": "signature with a leading zero byte (100)",
+      "outcome": "verified",
+      "signature": "1nru3bLJDsfX9aHPX6qg6xkm6hL5xWC1uKabjsok1ohM5zXnwTBuvryvgDSP5j8xa4knGfXhjNSkagMPRweVDXP"
+    },
+    {
+      "address": "",
+      "message": "siwe-test-message",
+      "name": "address empty",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "4aD4NFuq5L7pAPGyDcag8sHQ8xwpoqZUC7THbhx2rDX",
+      "message": "siwe-test-message",
+      "name": "address 31 bytes",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "2Cbjdkv3Dz3ARNaLbAsLd9a72eaRGeDrEXbxga2QMDjXyA",
+      "message": "siwe-test-message",
+      "name": "address 33 bytes",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "OmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "address invalid char O",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDr ppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "address with a space",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB\n",
+      "message": "siwe-test-message",
+      "name": "address with a trailing newline",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB1",
+      "message": "siwe-test-message",
+      "name": "address 45 chars",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "1GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+      "message": "siwe-test-message",
+      "name": "address with an extra leading 1",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "message": "siwe-test-message",
+      "name": "address hex instead of base58",
+      "outcome": "invalid_address",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "11111111111111111111111111111111",
+      "message": "siwe-test-message",
+      "name": "address all zeros (small order)",
+      "outcome": "not_verified",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM",
+      "message": "siwe-test-message",
+      "name": "address identity point",
+      "outcome": "not_verified",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "8opHzTAnfzRpPEx21XtnrVTX28YQuCpAjcn1PczScKh",
+      "message": "siwe-test-message",
+      "name": "address off the curve",
+      "outcome": "not_verified",
+      "signature": "2yVvVi1PBCyFxAn5NoAzVMdNZc1UJ7zEQKpdv62WPKZ9BEqHm12b7h4cWTWusGVEbNdyVPp75SaCc6ozPYvoGTk"
+    },
+    {
+      "address": "14USdpYogm9MdvuentdbF5hi76CQ7jHMfLpvJubgkF1G",
+      "message": "siwe-test-message",
+      "name": "address with a leading zero byte",
+      "outcome": "verified",
+      "signature": "2Qxr1yvsr8WrYaGgBAcPvow2wsMQPAQS5bzsr22wTPKsoW4nvwwkn6H1g2ajjPvaPD3espgWZM5kzjRgpg5aVfRJ"
+    },
+    {
+      "address": "nope0",
+      "message": "siwe-test-message",
+      "name": "bad address and bad signature",
+      "outcome": "invalid_address",
+      "signature": "nope0"
+    }
+  ]
+}

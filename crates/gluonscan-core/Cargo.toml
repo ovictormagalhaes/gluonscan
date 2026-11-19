@@ -21,6 +21,19 @@ async-trait = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 alloy-primitives = { workspace = true }
+# Wallet signature verification (`signature` module), each curve behind its own feature.
+k256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"], optional = true }
+hex = { version = "0.4", optional = true }
+ed25519-dalek = { version = "3", default-features = false, optional = true }
+bs58 = { workspace = true, optional = true }
+
+[features]
+# EIP-191 personal_sign recovery (secp256k1).
+signature-evm = ["dep:k256", "dep:hex"]
+# Solana ed25519 verification.
+signature-solana = ["dep:ed25519-dalek", "dep:bs58"]
+signature = ["signature-evm", "signature-solana"]
 
 [dev-dependencies]
 proptest = "1"
+serde_json = { workspace = true }
