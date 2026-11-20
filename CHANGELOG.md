@@ -8,6 +8,12 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-20
+
+Stable release of the 0.3.1 line; the API is the 0.3.1-beta.2 surface, unchanged. It adds wallet
+signature verification (`gluonscan::signature`, behind the `signature` features) and Raydium
+positions' `created_at`, the block time of the transaction that opened the position.
+
 ## [0.3.1-beta.2] - 2026-11-18
 
 ### Added
@@ -808,7 +814,8 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.2...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.2...v0.3.1
 [0.3.1-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.1...v0.3.1-beta.2
 [0.3.1-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0...v0.3.1-beta.1
 [0.3.0]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0-beta.8...v0.3.0
