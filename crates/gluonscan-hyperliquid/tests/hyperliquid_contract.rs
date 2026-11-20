@@ -32,14 +32,30 @@ const BTC_TPSL_ORDERS: &str = r#"[
    "orderType":"Stop Market","side":"A","reduceOnly":true,"sz":"0.0006"}
 ]"#;
 
+// The calls the read makes besides `clearinghouseState`, answered for a separate-balance account with
+// no spot balances and no fills, so these tests keep exercising the perp clearinghouse alone. They
+// are registered last: a test's own reply for the same call wins.
+fn with_defaults(http: MockHttp) -> MockHttp {
+    http.on(
+        Match::body_contains("spotClearinghouseState"),
+        r#"{"balances":[]}"#,
+    )
+    .on(Match::body_contains("userAbstraction"), r#""default""#)
+    .on(Match::body_contains("\"userFills\""), "[]")
+}
+
 async fn read_full(
     clearinghouse: &str,
     orders: Option<&str>,
 ) -> Result<gluonscan_core::Reading, gluonscan_core::Error> {
-    let mut http = MockHttp::new().on(Match::body_contains("clearinghouseState"), clearinghouse);
+    let mut http = MockHttp::new().on(
+        Match::body_contains("\"clearinghouseState\""),
+        clearinghouse,
+    );
     if let Some(o) = orders {
         http = http.on(Match::body_contains("frontendOpenOrders"), o);
     }
+    let http = with_defaults(http);
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
     Hyperliquid::new()
         .with_endpoint("https://hl.test/info")
@@ -88,7 +104,8 @@ async fn read_on(
     response: &str,
     chain: Chain,
 ) -> Result<gluonscan_core::Reading, gluonscan_core::Error> {
-    let http = MockHttp::new().on(Match::body_contains("clearinghouseState"), response);
+    let http =
+        with_defaults(MockHttp::new().on(Match::body_contains("\"clearinghouseState\""), response));
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
     Hyperliquid::new()
         .with_endpoint("https://hl.test/info")
@@ -309,7 +326,12 @@ async fn unparseable_liquidation_price_fails_closed() {
 
 #[tokio::test]
 async fn transient_http_failure_is_retryable() {
-    let http = MockHttp::new().on_transient(Match::body_contains("clearinghouseState"));
+    let http = MockHttp::new()
+        .on(
+            Match::body_contains("spotClearinghouseState"),
+            r#"{"balances":[]}"#,
+        )
+        .on_transient(Match::body_contains("\"clearinghouseState\""));
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
     let err = Hyperliquid::new()
         .with_endpoint("https://hl.test/info")
@@ -370,10 +392,11 @@ async fn tpsl_fetch_failure_preserves_equity_and_leaves_levels_none() {
     // failing the whole account over a secondary detail would be strictly worse.
     let http = MockHttp::new()
         .on(
-            Match::body_contains("clearinghouseState"),
+            Match::body_contains("\"clearinghouseState\""),
             BTC_LONG_ISOLATED,
         )
         .on_transient(Match::body_contains("frontendOpenOrders"));
+    let http = with_defaults(http);
     let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
     let reading = Hyperliquid::new()
         .with_endpoint("https://hl.test/info")
@@ -420,11 +443,11 @@ async fn malformed_trigger_price_is_skipped_not_fatal() {
 #[tokio::test]
 async fn tpsl_is_not_fetched_below_full_detail() {
     // At Summary the extra frontendOpenOrders call must not be made: TP/SL is Full-only detail.
-    let http = MockHttp::new().on(
-        Match::body_contains("clearinghouseState"),
+    let http = Arc::new(with_defaults(MockHttp::new().on(
+        Match::body_contains("\"clearinghouseState\""),
         BTC_LONG_ISOLATED,
-    );
-    let cx = Ctx::new(Arc::new(http), Arc::new(MockClock(0)));
+    )));
+    let cx = Ctx::new(http.clone(), Arc::new(MockClock(0)));
     let reading = Hyperliquid::new()
         .with_endpoint("https://hl.test/info")
         .read(
@@ -439,6 +462,10 @@ async fn tpsl_is_not_fetched_below_full_detail() {
     let p = only_perp(&reading);
     // Margin mode still rides in (same payload), but no trigger-order call was made.
     assert_eq!(p.margin_mode, Some(MarginMode::Isolated));
+    assert!(http
+        .calls()
+        .iter()
+        .all(|(_, body)| !body.contains("frontendOpenOrders") && !body.contains("\"userFills\"")));
     assert!(p.take_profit_price.is_none());
     assert!(p.stop_loss_price.is_none());
 }

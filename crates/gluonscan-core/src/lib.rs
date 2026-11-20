@@ -27,7 +27,7 @@ pub mod signature;
 mod chain;
 pub use chain::{Chain, Ecosystem};
 pub use error::Error;
-pub use history::{CollectBasis, EventKind, History, HistoryEvent};
+pub use history::{CollectBasis, EventKind, History, HistoryEvent, PerpFill};
 pub use model::{
     is_dust, scaled, to_raw, Amount, BorrowedAsset, Complete, Currency, LendingPosition,
     LiquidityPosition, LockPosition, MarginMode, Money, NftPosition, PerpPosition, PerpSide,

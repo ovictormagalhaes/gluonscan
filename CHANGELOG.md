@@ -8,6 +8,45 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
+## [0.3.2-beta.1] - 2026-11-20
+
+### Added
+
+- **Hyperliquid spot balances.** The adapter reads `spotClearinghouseState` and emits every spot
+  balance as a `Position::Wallet`: USDC once, and each other spot token priced at the mark of its
+  USDC pair from `spotMetaAndAssetCtxs` (matched by pair name; a token with no USDC pair is left
+  unpriced). An account holding only spot balances, with no open perp, now reports them.
+- **`PerpPosition::opened_at`**: when the position was opened, from the account's recent fills
+  (`userFills`) at `Detail::Full`. Best-effort: `None` when the opening fill is older than the
+  fills Hyperliquid serves or the read fails.
+- **Perp fill history** (`Capability::History` on Hyperliquid): `read_history` returns the
+  account's perp fills from `userFillsByTime`, paged, as the new `EventKind::PerpOpen`,
+  `PerpClose`, `PerpFlip` (and `Liquidation`), each with a `PerpFill` (market, side, price,
+  starting size, realized PnL, fee, fill id) on the new `HistoryEvent::perp`.
+- `History::earlier_events_unavailable`: set when a source's retention limit was reached and older
+  events may exist (Hyperliquid serves an account's most recent 10,000 fills).
+
+### Changed
+
+- **The Hyperliquid read makes more calls and can emit several balances.** Besides
+  `clearinghouseState` it reads `spotClearinghouseState`, `userAbstraction` (skipped for an empty
+  account), `spotMetaAndAssetCtxs` (only when a non-USDC spot token is held) and, at
+  `Detail::Full` with an open position, `userFills`; a separate-balance account reads spot twice
+  and returns `Error::Transient` when its USDC moved between the reads. It emits USDC plus one
+  `Position::Wallet` per other spot token, where it used to emit one USDC equity. A
+  portfolio-margin account, which used to read, now fails with `Error::Permanent`.
+- Perp fill history fails with `Error::Transient` when every page it may read comes back full,
+  rather than returning a history without its newest fills.
+
+### Fixed
+
+- **Hyperliquid unified accounts were undercounted.** The equity was the perp clearinghouse's
+  `accountValue` only, so the USDC a unified account keeps in spot (all of it outside the margin of
+  open positions) was missing, and an account with no open position read as empty. The account mode
+  (`userAbstraction`) now decides: unified, the spot balance (which already holds the perp margin
+  and its PnL); separate (`disabled`, `default`, `dexAbstraction`), spot plus perp equity.
+  Portfolio margin, which can borrow against spot, and unrecognized modes fail closed.
+
 ## [0.3.1] - 2026-11-20
 
 Stable release of the 0.3.1 line; the API is the 0.3.1-beta.2 surface, unchanged. It adds wallet

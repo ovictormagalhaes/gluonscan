@@ -1106,6 +1106,9 @@ pub struct PerpPosition {
     pub take_profit_price: Option<Decimal>,
     /// Resting stop-loss trigger price attached to this position, when one is set.
     pub stop_loss_price: Option<Decimal>,
+    /// When the position was opened: the fill that took it from flat (or from the opposite side) to
+    /// its current side. `None` when the source cannot place that fill, never an estimate.
+    pub opened_at: Option<Timestamp>,
 }
 
 impl PerpPosition {
@@ -1125,6 +1128,7 @@ impl PerpPosition {
             margin_mode: None,
             take_profit_price: None,
             stop_loss_price: None,
+            opened_at: None,
         }
     }
 
@@ -1195,6 +1199,13 @@ impl PerpPosition {
     #[must_use]
     pub fn with_stop_loss_price(mut self, stop_loss_price: Option<Decimal>) -> Self {
         self.stop_loss_price = stop_loss_price;
+        self
+    }
+
+    /// Set when the position was opened (builder-style). See [`opened_at`](Self::opened_at).
+    #[must_use]
+    pub fn with_opened_at(mut self, opened_at: Option<Timestamp>) -> Self {
+        self.opened_at = opened_at;
         self
     }
 }
