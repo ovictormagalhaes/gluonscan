@@ -3,7 +3,9 @@
 //! This is the raw, normalized event stream. Storage, valuation, and derived analytics (PnL,
 //! impermanent loss, cost basis) are the consumer's job — the engine only reads and normalizes.
 
-use crate::{Amount, Chain, Protocol, Provenance, Timestamp};
+use rust_decimal::Decimal;
+
+use crate::{Amount, Chain, Money, PerpSide, Protocol, Provenance, Timestamp};
 
 /// A normalized protocol event kind.
 ///
@@ -11,7 +13,10 @@ use crate::{Amount, Chain, Protocol, Provenance, Timestamp};
 /// [`Repay`](Self::Repay), [`Liquidation`](Self::Liquidation) and
 /// [`CollectFees`](Self::CollectFees) are owner actions (or a liquidation of the owner);
 /// [`SupplyInterest`](Self::SupplyInterest) and [`BorrowInterest`](Self::BorrowInterest) are
-/// interest accrual, not actions.
+/// interest accrual, not actions. [`PerpOpen`](Self::PerpOpen), [`PerpClose`](Self::PerpClose)
+/// and [`PerpFlip`](Self::PerpFlip) are perpetual fills; they, and a
+/// [`Liquidation`](Self::Liquidation) of a perp position, carry a [`PerpFill`] in
+/// [`HistoryEvent::perp`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
@@ -23,7 +28,8 @@ pub enum EventKind {
     Borrow,
     /// Repaid debt.
     Repay,
-    /// Position was liquidated.
+    /// Position was liquidated. On a perp position ([`HistoryEvent::perp`] set) the amount is the
+    /// size the liquidation closed.
     Liquidation,
     /// Collected (claimed) fees.
     CollectFees,
@@ -37,6 +43,13 @@ pub enum EventKind {
     /// whose history is derived from balance readings (Kamino), never alongside a
     /// [`Borrow`](Self::Borrow) of the same token at the same time.
     BorrowInterest,
+    /// A perpetual fill that opened or increased a position. Carries a [`PerpFill`].
+    PerpOpen,
+    /// A perpetual fill that reduced or closed a position. Carries a [`PerpFill`].
+    PerpClose,
+    /// A single perpetual fill that closed a position and opened the opposite side. Carries a
+    /// [`PerpFill`]; its [`side`](PerpFill::side) is the side it opened.
+    PerpFlip,
 }
 
 /// What a fee collect's amount holds. A concentrated-liquidity collect (Uniswap V3 `collect`) sends
@@ -77,15 +90,76 @@ impl CollectBasis {
     }
 }
 
+/// The trade detail of one perpetual fill. Prices, PnL and fees are as the venue reports them; a
+/// figure the venue does not state stays `None`.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerpFill {
+    /// The market traded, e.g. `"BTC"`.
+    pub market: String,
+    /// The side of the position this fill opened or added to ([`EventKind::PerpOpen`],
+    /// [`EventKind::PerpFlip`]) or reduced ([`EventKind::PerpClose`], [`EventKind::Liquidation`]).
+    pub side: PerpSide,
+    /// Fill price.
+    pub price: Decimal,
+    /// Signed position size before the fill (positive long, negative short, zero flat).
+    pub start_size: Decimal,
+    /// PnL the fill realized on the part of the position it closed, before fees. Zero on a fill
+    /// that only opens.
+    pub realized_pnl: Option<Money>,
+    /// The fee the fill paid (negative = a rebate received), when the fee token is USD-valued.
+    pub fee: Option<Money>,
+    /// The venue's unique identifier for this fill (several fills can share one transaction).
+    pub fill_id: String,
+}
+
+impl PerpFill {
+    /// A fill on `market` for the position `side`, at `price`, from signed `start_size`.
+    pub fn new(
+        market: impl Into<String>,
+        side: PerpSide,
+        price: Decimal,
+        start_size: Decimal,
+        fill_id: impl Into<String>,
+    ) -> Self {
+        PerpFill {
+            market: market.into(),
+            side,
+            price,
+            start_size,
+            realized_pnl: None,
+            fee: None,
+            fill_id: fill_id.into(),
+        }
+    }
+
+    /// Attach the realized PnL (builder-style).
+    #[must_use]
+    pub fn with_realized_pnl(mut self, realized_pnl: Option<Money>) -> Self {
+        self.realized_pnl = realized_pnl;
+        self
+    }
+
+    /// Attach the fee (builder-style).
+    #[must_use]
+    pub fn with_fee(mut self, fee: Option<Money>) -> Self {
+        self.fee = fee;
+        self
+    }
+}
+
 /// One historical event: what happened, to how much of which token, and when.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEvent {
     /// What happened.
     pub kind: EventKind,
-    /// The token and quantity involved (USD left `None` — valuation is the consumer's).
+    /// The token and quantity involved (USD left `None` — valuation is the consumer's). On a perp
+    /// fill ([`perp`](Self::perp) set) it is the fill's size in the market's base asset, under an
+    /// address-less token named after the market: a quantity traded, not a token transfer.
     pub amount: Amount,
-    /// The transaction identifier (hash / signature).
+    /// The transaction identifier (hash / signature). Several events can share one (fills of one
+    /// order); a perp fill's own identity is [`PerpFill::fill_id`].
     pub tx: String,
     /// When it happened.
     pub at: Timestamp,
@@ -103,6 +177,10 @@ pub struct HistoryEvent {
     /// [`Withdraw`](EventKind::Withdraw)). `None` when the source cannot tell, and on every event
     /// that is not such a collect.
     pub released_principal: Option<Amount>,
+    /// The trade detail of a perpetual fill ([`EventKind::PerpOpen`], [`EventKind::PerpClose`],
+    /// [`EventKind::PerpFlip`], or a [`EventKind::Liquidation`] of a perp position). `None` on
+    /// every other event.
+    pub perp: Option<PerpFill>,
 }
 
 impl HistoryEvent {
@@ -116,7 +194,15 @@ impl HistoryEvent {
             block: None,
             collect_basis: CollectBasis::Unknown,
             released_principal: None,
+            perp: None,
         }
+    }
+
+    /// Attach a perpetual fill's trade detail (builder-style). See [`perp`](Self::perp).
+    #[must_use]
+    pub fn with_perp(mut self, perp: Option<PerpFill>) -> Self {
+        self.perp = perp;
+        self
     }
 
     /// Attach the block height (builder-style).
@@ -158,6 +244,10 @@ pub struct History {
     /// [`EventKind::CollectFees`] events are emitted. Collected fees over this history are
     /// **unknown** (not zero); the other event kinds are unaffected.
     pub collected_fees_unavailable: bool,
+    /// The source serves only its most recent events and this history reached that limit, so
+    /// events before the source's retention boundary may exist but are not in
+    /// [`events`](Self::events).
+    pub earlier_events_unavailable: bool,
 }
 
 impl History {
@@ -174,7 +264,16 @@ impl History {
             events,
             provenance,
             collected_fees_unavailable: false,
+            earlier_events_unavailable: false,
         }
+    }
+
+    /// Mark the history as cut at the source's retention limit (builder-style). See
+    /// [`earlier_events_unavailable`](Self::earlier_events_unavailable).
+    #[must_use]
+    pub fn with_earlier_events_unavailable(mut self) -> Self {
+        self.earlier_events_unavailable = true;
+        self
     }
 
     /// Mark the fee-collection history as unknown (builder-style): drops every

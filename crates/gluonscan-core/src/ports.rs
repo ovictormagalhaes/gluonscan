@@ -129,7 +129,9 @@ pub trait ProtocolAdapter: Send + Sync + 'static {
     ) -> Result<Complete<Reading>, Error>;
 
     /// Read `owner`'s event history for this protocol on `chain`, limited to events after `since`
-    /// (`None` = from the beginning). Defaults to [`Error::Unsupported`]; a backend that can serve
+    /// (`None` = from the beginning). `position` narrows it to one position, in the identity the
+    /// adapter's positions carry (an LP NFT id, a perp market); each adapter documents what it
+    /// accepts and whether it is required. Defaults to [`Error::Unsupported`]; a backend that can serve
     /// [`Capability::History`] overrides it.
     async fn read_history(
         &self,
