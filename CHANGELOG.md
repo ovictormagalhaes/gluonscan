@@ -8,7 +8,15 @@ lockstep: one version, one tag, all crates.
 
 ## [Unreleased]
 
-## [0.3.2-beta.1] - 2026-11-20
+## [0.3.2] - 2026-11-22
+
+Stable release of the 0.3.2 line; the API is the 0.3.2-beta.1 surface, unchanged. Hyperliquid
+reads spot balances by account mode (a unified account's USDC is counted once, from spot), dates
+each open position (`PerpPosition::opened_at`) and serves the account's perp fills as history
+(`EventKind::PerpOpen` / `PerpClose` / `PerpFlip`, `HistoryEvent::perp`,
+`History::earlier_events_unavailable`).
+
+## [0.3.2-beta.1] - 2026-11-21
 
 ### Added
 
@@ -853,7 +861,9 @@ Initial preview release. APIs are pre-1.0 and may change in any release.
   `aave`, `uniswap`, `pendle`, `kamino`, `raydium`, `prices`, `wallet`; the `evm` and `solana`
   umbrellas; and `full` (default).
 
-[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.2-beta.1...v0.3.2
+[0.3.2-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1...v0.3.2-beta.1
 [0.3.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.2...v0.3.1
 [0.3.1-beta.2]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.1-beta.1...v0.3.1-beta.2
 [0.3.1-beta.1]: https://github.com/ovictormagalhaes/gluonscan/compare/v0.3.0...v0.3.1-beta.1
